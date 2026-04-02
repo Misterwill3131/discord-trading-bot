@@ -1,6 +1,6 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const fetch = require('node-fetch');
-const { createCanvas } = require('canvas');
+const { createCanvas } = require('@napi-rs/canvas');
 const express = require('express');
 
 const DISCORD_TOKEN   = process.env.DISCORD_TOKEN;

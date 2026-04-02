@@ -1,4 +1,62 @@
-const { Client, GatewayIntentBits } = require('discord.js');
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────tentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+    ],
+  });
+
+client.once('ready', () => {
+    console.log(`Bot connected as ${client.user.tag}`);
+    console.log(`Listening for channels containing: ${TRADING_CHANNEL}`);
+});
+
+client.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
+  
+    const channelName = message.channel.name || '';
+    console.log(`Message received - channel: "${channelName}", author: ${message.author.username}`);
+  
+    if (!channelName.includes(TRADING_CHANNEL)) return;
+  
+    const content    = message.content;
+    const signalType = classifySignal(content);
+  
+    if (!signalType) {
+          console.log(`Filtered out: ${content.substring(0, 80)}`);
+          return;
+    }
+  
+    console.log(`[${signalType.toUpperCase()}] ${content}`);
+  
+    // Generate image and encode as base64
+    let imageBase64 = null;
+    try {
+          const pngBuffer = generateImage(message.author.username, content, message.createdAt.toISOString());
+          imageBase64 = pngBuffer.toString('base64');
+          console.log('Image generated successfully');
+    } catch (err) {
+          console.error('Image generation error:', err.message);
+    }
+  
+    try {
+          const payload = {
+                  content,
+                  type:       signalType,
+                  author:     message.author.username,
+                  author_id:  message.author.id,
+                  channel:    channelName,
+                  timestamp:  message.createdAt.toISOString(),
+                  message_id: message.id,
+                  image_base64: imageBase64,   // PNG as base64 string (usable in Make.com)
+          };
+      
+          const result = await sendToMake(payload);
+          console.log(`Sent to Make, status: ${result.status}`);
+    } catch (err) {
+          console.error('Error sending to Make:', err.message);
+    }
+});
+
+client.login(DISCORD_TOKEN);const { Client, GatewayIntentBits } = require('discord.js');
 const https = require('https');
 const http = require('http');
 

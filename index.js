@@ -27,6 +27,19 @@ app.post('/generate', (req, res) => {
 
 app.listen(PORT, () => console.log('Image server running on port ' + PORT));
 
+// GET /image endpoint for Make.com Buffer integration
+app.get('/image', (req, res) => {
+  const { username = 'Signal', content = '', timestamp = new Date().toISOString() } = req.query;
+  try {
+    const imgBuf = generateImage(username, decodeURIComponent(content), decodeURIComponent(timestamp));
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'no-cache');
+    res.send(imgBuf);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Image generator
 function generateImage(username, content, timestamp) {
   const W = 600, PADDING = 20, AVATAR = 40;

@@ -12,7 +12,7 @@ const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
     : 'https://discord-trading-bot-production-f159.up.railway.app';
 
 // Express server
-const app = express();
+const app = express();h
 app.use(express.json());
 
 // Image cache
@@ -74,8 +74,8 @@ app.get('/health', (_req, res) => {
     <meta charset="UTF-8">
     <title>Trading Signal Tester</title>
     <style>
-    body{background:#1a1a2e;color:#e0e0e0;font-family:'Segoe UI',sans-serif;display:flex;justify-content:center;padding:20px}
-    .container{width:100%;max-width:500px}
+    body{background:#1a1a2e;color:#e0e0e0;font-family:'Segoe UI',sans-serif;padding:20px}
+    .container{width:100%;max-width:500px;margin:0 auto}
     h1{color:#00d4aa;text-align:center;font-size:1.4em;margin-bottom:20px}
     .presets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
     .preset-btn{padding:6px 12px;border-radius:20px;border:none;cursor:pointer;font-size:0.85em;font-weight:600}

@@ -12,7 +12,7 @@ const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
     : 'https://discord-trading-bot-production-f159.up.railway.app';
 
 // Express server
-const app = express();h
+const app = express();
 app.use(express.json());
 
 // Image cache

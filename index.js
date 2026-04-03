@@ -12,7 +12,7 @@ const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
     : 'https://discord-trading-bot-production-f159.up.railway.app';
 
 // Express server
-const app = express();
+const app = express();h
 app.use(express.json());
 
 // Image cache
@@ -197,8 +197,8 @@ function generateImage(author, content, timestamp) {
     const ctx = canvas.getContext('2d');
 
   const bg = ctx.createLinearGradient(0, 0, width, height);
-    bg.addColorStop(0, '#0a0a1a');
-    bg.addColorStop(1, '#16213e');
+    bg.addColorStop(0, '#1a2744');
+    bg.addColorStop(1, '#2c3e6b');
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, width, height);
 
@@ -216,7 +216,7 @@ function generateImage(author, content, timestamp) {
     ctx.font = 'bold 22px Arial';
     ctx.fillText('TRADING SIGNAL', 30, 42);
 
-  ctx.fillStyle = '#888888';
+  ctx.fillStyle = '#cccccc';
     ctx.font = '14px Arial';
     const ts = timestamp ? new Date(timestamp).toLocaleString('fr-CA') : new Date().toLocaleString('fr-CA');
     ctx.fillText('@' + author + ' - ' + ts, 30, 90);

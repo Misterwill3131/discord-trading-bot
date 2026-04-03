@@ -3,319 +3,296 @@ const fetch = require('node-fetch');
 const { createCanvas } = require('@napi-rs/canvas');
 const express = require('express');
 
-const DISCORD_TOKEN  = process.env.DISCORD_TOKEN;
+const DISCORD_TOKEN   = process.env.DISCORD_TOKEN;
 const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL;
-const TRADING_CHANNEL  = process.env.TRADING_CHANNEL || 'trading-floor';
-const PORT             = process.env.PORT || 3000;
+const TRADING_CHANNEL = process.env.TRADING_CHANNEL || 'trading-floor';
+const PORT            = process.env.PORT || 3000;
+const RAILWAY_URL     = process.env.RAILWAY_PUBLIC_DOMAIN
+  ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+      : 'https://discord-trading-bot-production-f159.up.railway.app';
 
 // Express server
 const app = express();
 app.use(express.json());
 
+// Image cache: stocke la derniere image generee
+let lastImageBuffer = null;
+let lastImageId = null;
+
+// Route GET /image/latest - retourne la derniere image PNG generee
+app.get('/image/latest', (req, res) => {
+      if (!lastImageBuffer) {
+              return res.status(404).json({ error: 'No image available' });
+      }
+      res.set('Content-Type', 'image/png');
+      res.set('Cache-Control', 'no-cache');
+      res.send(lastImageBuffer);
+});
+
 // Trading Signal Tester UI
 app.get('/health', (_req, res) => {
-    const makeUrl = MAKE_WEBHOOK_URL || '';
-    res.set('Content-Type', 'text/html');
-    res.send(`<!DOCTYPE html>
-    <html lang="fr">
-    <head>
-    <meta charset="UTF-8">
-    <title>Trading Signal Tester</title>
-    <style>
-      body{background:#1a1a2e;color:#e0e0e0;font-family:'Segoe UI',sans-serif;display:flex;justify-content:center;padding:20px}
-        .container{width:100%;max-width:500px}
-          h1{color:#00d4aa;text-align:center;font-size:1.4em;margin-bottom:20px}
-            .presets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
-              .preset-btn{padding:6px 12px;border-radius:20px;border:none;cursor:pointer;font-size:0.85em;font-weight:600}
-                .p-entry{background:#00d4aa22;color:#00d4aa;border:1px solid #00d4aa55}
-                  .p-exit{background:#ff6b6b22;color:#ff6b6b;border:1px solid #ff6b6b55}
-                    .p-neutral{background:#ffd70022;color:#ffd700;border:1px solid #ffd70055}
-                      .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
-                        label{font-size:0.8em;color:#888;margin-bottom:4px;display:block}
-                          input,textarea,select{width:100%;background:#16213e;border:1px solid #0f3460;color:#e0e0e0;padding:8px;border-radius:6px;font-size:0.9em;box-sizing:border-box}
-                            textarea{height:80px;resize:vertical}
-                              .send-btn{width:100%;padding:14px;background:linear-gradient(135deg,#00d4aa,#0099cc);border:none;border-radius:8px;color:#fff;font-size:1.1em;font-weight:700;cursor:pointer;margin-top:8px}
-                                .send-btn:hover{opacity:0.9}
-                                  .status-bar{text-align:center;margin:10px 0;font-size:0.9em;min-height:20px}
-                                    .log{background:#0a0a1a;border-radius:6px;padding:10px;height:160px;overflow-y:auto;font-size:0.78em;font-family:monospace}
-                                      .log-entry{margin:2px 0}.log-time{color:#555;margin-right:8px}.log-ok{color:#00d4aa}.log-err{color:#ff6b6b}
-                                        .section-title{font-size:0.75em;color:#555;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
-                                        </style>
-                                        </head>
-                                        <body>
-                                        <div class="container">
-                                          <h1>⚡ Trading Signal Tester</h1>
-                                            <div class="section-title">⚡ Presets rapides</div>
-                                              <div class="presets">
-                                                  <button class="preset-btn p-entry" onclick="preset('Will','entry','AAPL 150.00 entree longue @Momentum')">📈 AAPL Entry</button>
-                                                      <button class="preset-btn p-neutral" onclick="preset('Will','neutral','TSLA 250.00 @Swing surveillance')">📊 TSLA Swing</button>
-                                                          <button class="preset-btn p-entry" onclick="preset('Will','entry','@Scalp AMZN 185.00 scalp rapide')">⚡ AMZN Scalp</button>
-                                                              <button class="preset-btn p-exit" onclick="preset('Will','exit','NVDA 875.00 sortie position objectif atteint')">🔴 NVDA Exit</button>
-                                                                  <button class="preset-btn p-neutral" onclick="preset('Will','neutral','SPY 500.00 niveau cle surveiller')">🔵 SPY Neutral</button>
-                                                                    </div>
-                                                                      <div class="form-row">
-                                                                          <div><label>👤 Auteur</label><input id="author" value="Will"></div>
-                                                                              <div><label>📊 Signal Type</label>
-                                                                                    <select id="signal_type">
-                                                                                            <option value="entry">entry</option>
-                                                                                                    <option value="exit">exit</option>
-                                                                                                            <option value="neutral">neutral</option>
-                                                                                                                  </select>
-                                                                                                                      </div>
+      const makeUrl = MAKE_WEBHOOK_URL || '';
+      res.set('Content-Type', 'text/html');
+      res.send(`<!DOCTYPE html>
+      <html lang="fr">
+      <head>
+      <meta charset="UTF-8">
+      <title>Trading Signal Tester</title>
+      <style>
+        body{background:#1a1a2e;color:#e0e0e0;font-family:'Segoe UI',sans-serif;display:flex;justify-content:center;padding:20px}
+          .container{width:100%;max-width:500px}
+            h1{color:#00d4aa;text-align:center;font-size:1.4em;margin-bottom:20px}
+              .presets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+                .preset-btn{padding:6px 12px;border-radius:20px;border:none;cursor:pointer;font-size:0.85em;font-weight:600}
+                  .p-entry{background:#00d4aa22;color:#00d4aa;border:1px solid #00d4aa55}
+                    .p-exit{background:#ff6b6b22;color:#ff6b6b;border:1px solid #ff6b6b55}
+                      .p-neutral{background:#ffd70022;color:#ffd700;border:1px solid #ffd70055}
+                        .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+                          label{font-size:0.8em;color:#888;margin-bottom:4px;display:block}
+                            input,textarea,select{width:100%;background:#16213e;border:1px solid #0f3460;color:#e0e0e0;padding:8px;border-radius:6px;font-size:0.9em;box-sizing:border-box}
+                              textarea{height:80px;resize:vertical}
+                                .send-btn{width:100%;padding:14px;background:linear-gradient(135deg,#00d4aa,#0099cc);border:none;border-radius:8px;color:#fff;font-size:1.1em;font-weight:700;cursor:pointer;margin-top:8px}
+                                  .send-btn:hover{opacity:0.9}
+                                    .status-bar{text-align:center;margin:10px 0;font-size:0.9em;min-height:20px}
+                                      .log{background:#0a0a1a;border-radius:6px;padding:10px;height:160px;overflow-y:auto;font-size:0.78em;font-family:monospace}
+                                        .log-entry{margin:2px 0}.log-time{color:#555;margin-right:8px}.log-ok{color:#00d4aa}.log-err{color:#ff6b6b}
+                                          .section-title{font-size:0.75em;color:#555;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+                                          </style>
+                                          </head>
+                                          <body>
+                                          <div class="container">
+                                            <h1>⚡ Trading Signal Tester</h1>
+                                              <div class="section-title">⚡ Presets rapides</div>
+                                                <div class="presets">
+                                                    <button class="preset-btn p-entry" onclick="preset('Will','entry','AAPL 150.00 entree longue @Momentum')">📈 AAPL Entry</button>
+                                                        <button class="preset-btn p-neutral" onclick="preset('Will','neutral','TSLA 250.00 @Swing surveillance')">📊 TSLA Swing</button>
+                                                            <button class="preset-btn p-entry" onclick="preset('Will','entry','@scalp AMZN 185.00 scalp rapide')">🔥 AMZN Scalp</button>
+                                                                <button class="preset-btn p-exit" onclick="preset('Will','exit','NVDA 875.00 sortie position objectif atteint')">🔴 NVDA Exit</button>
+                                                                    <button class="preset-btn p-neutral" onclick="preset('Will','neutral','SPY 500.00 niveau cle surveiller')">🔵 SPY Neutral</button>
+                                                                      </div>
+                                                                        <div class="form-row">
+                                                                            <div><label>Auteur</label><input id="author" value="Will"></div>
+                                                                                <div><label>Type</label>
+                                                                                      <select id="signal_type">
+                                                                                              <option value="entry">Entry</option>
+                                                                                                      <option value="exit">Exit</option>
+                                                                                                              <option value="neutral">Neutral</option>
+                                                                                                                    </select>
                                                                                                                         </div>
-                                                                                                                          <div style="margin-bottom:12px"><label>💬 Message</label><textarea id="content">AAPL 150.00 entree longue @Momentum</textarea></div>
-                                                                                                                            <div class="form-row">
-                                                                                                                                <div><label>📢 Channel</label><input id="channel" value="trading-floor"></div>
-                                                                                                                                    <div><label>🔗 Destination</label>
-                                                                                                                                          <select id="target">
-                                                                                                                                                  <option value="make">Make.com Webhook</option>
-                                                                                                                                                          <option value="railway">Railway /generate</option>
-                                                                                                                                                                </select>
-                                                                                                                                                                    </div>
-                                                                                                                                                                      </div>
-                                                                                                                                                                        <button class="send-btn" id="sendBtn" onclick="sendSignal()">⚡ ENVOYER LE SIGNAL</button>
-                                                                                                                                                                          <div class="status-bar" id="status"></div>
-                                                                                                                                                                            <div class="log" id="log"></div>
-                                                                                                                                                                              <div style="text-align:center;font-size:0.7em;color:#333;margin-top:8px">💡 Ctrl+Enter pour envoyer rapidement</div>
-                                                                                                                                                                              </div>
-                                                                                                                                                                              <script>
-                                                                                                                                                                              const MAKE_URL = '${makeUrl}';
-                                                                                                                                                                              const RAILWAY_URL = '/generate';
-                                                                                                                                                                              
-                                                                                                                                                                              function preset(author, type, msg) {
-                                                                                                                                                                                document.getElementById('author').value = author;
-                                                                                                                                                                                  document.getElementById('signal_type').value = type;
-                                                                                                                                                                                    document.getElementById('content').value = msg;
-                                                                                                                                                                                    }
-                                                                                                                                                                                    
-                                                                                                                                                                                    function log(msg, ok) {
-                                                                                                                                                                                      const d = document.getElementById('log');
-                                                                                                                                                                                        const t = new Date().toTimeString().slice(0,8);
-                                                                                                                                                                                          d.innerHTML = '<div class="log-entry"><span class="log-time">' + t + '</span><span class="' + (ok ? 'log-ok' : 'log-err') + '">' + msg + '</span></div>' + d.innerHTML;
-                                                                                                                                                                                          }
-                                                                                                                                                                                          
-                                                                                                                                                                                          async function sendSignal() {
-                                                                                                                                                                                            const author = document.getElementById('author').value.trim();
-                                                                                                                                                                                              const signal_type = document.getElementById('signal_type').value;
-                                                                                                                                                                                                const content = document.getElementById('content').value.trim();
-                                                                                                                                                                                                  const channel = document.getElementById('channel').value.trim();
-                                                                                                                                                                                                    const target = document.getElementById('target').value;
-                                                                                                                                                                                                    
-                                                                                                                                                                                                      if (!content) return;
-                                                                                                                                                                                                      
-                                                                                                                                                                                                        const btn = document.getElementById('sendBtn');
-                                                                                                                                                                                                          btn.disabled = true;
-                                                                                                                                                                                                            document.getElementById('status').innerHTML = '<span style="color:#888">⏳ Envoi...</span>';
-                                                                                                                                                                                                            
-                                                                                                                                                                                                              try {
-                                                                                                                                                                                                                  let url, body, opts;
-                                                                                                                                                                                                                  
-                                                                                                                                                                                                                      if (target === 'make') {
-                                                                                                                                                                                                                            url = MAKE_URL;
-                                                                                                                                                                                                                                  body = JSON.stringify({
-                                                                                                                                                                                                                                          content, author, channel, signal_type,
-                                                                                                                                                                                                                                                  timestamp: new Date().toISOString(),
-                                                                                                                                                                                                                                                          image_base64: null
-                                                                                                                                                                                                                                                                });
-                                                                                                                                                                                                                                                                      opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body };
-                                                                                                                                                                                                                                                                          } else {
-                                                                                                                                                                                                                                                                                url = RAILWAY_URL;
-                                                                                                                                                                                                                                                                                      body = JSON.stringify({ username: author, content, timestamp: new Date().toISOString() });
-                                                                                                                                                                                                                                                                                            opts = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body };
-                                                                                                                                                                                                                                                                                                }
-                                                                                                                                                                                                                                                                                                
-                                                                                                                                                                                                                                                                                                    const r = await fetch(url, opts);
-                                                                                                                                                                                                                                                                                                        const txt = await r.text();
-                                                                                                                                                                                                                                                                                                            const preview = txt.startsWith('{') ? txt.substring(0,60) : ('PNG image (' + txt.length + ' bytes)');
-                                                                                                                                                                                                                                                                                                                document.getElementById('status').innerHTML = '<span style="color:#00d4aa">✅ ' + r.status + ' — ' + preview + '</span>';
-                                                                                                                                                                                                                                                                                                                    log((target === 'make' ? '→ Make.com' : '→ Railway') + ' | ' + author + ' | ' + content.substring(0,60), true);
-                                                                                                                                                                                                                                                                                                                      } catch(e) {
-                                                                                                                                                                                                                                                                                                                          document.getElementById('status').innerHTML = '<span style="color:#ff6b6b">❌ ' + e.message + '</span>';
-                                                                                                                                                                                                                                                                                                                              log('ERROR: ' + e.message, false);
-                                                                                                                                                                                                                                                                                                                                } finally {
-                                                                                                                                                                                                                                                                                                                                    btn.disabled = false;
-                                                                                                                                                                                                                                                                                                                                      }
-                                                                                                                                                                                                                                                                                                                                      }
-                                                                                                                                                                                                                                                                                                                                      
-                                                                                                                                                                                                                                                                                                                                      document.addEventListener('keydown', e => {
-                                                                                                                                                                                                                                                                                                                                        if (e.ctrlKey && e.key === 'Enter') sendSignal();
-                                                                                                                                                                                                                                                                                                                                        });
-                                                                                                                                                                                                                                                                                                                                        </script>
-                                                                                                                                                                                                                                                                                                                                        </body>
-                                                                                                                                                                                                                                                                                                                                        </html>`);
+                                                                                                                          </div>
+                                                                                                                            <div><label>Message</label><textarea id="content" placeholder="AAPL 150.00 entree longue @Momentum"></textarea></div>
+                                                                                                                              <button class="send-btn" onclick="sendSignal()">⚡ ENVOYER LE SIGNAL</button>
+                                                                                                                                <div class="status-bar" id="status"></div>
+                                                                                                                                  <div class="section-title">Log</div>
+                                                                                                                                    <div class="log" id="log"></div>
+                                                                                                                                    </div>
+                                                                                                                                    <script>
+                                                                                                                                    const MAKE_URL = '${makeUrl}';
+                                                                                                                                    function preset(author,type,content){
+                                                                                                                                      document.getElementById('author').value=author;
+                                                                                                                                        document.getElementById('signal_type').value=type;
+                                                                                                                                          document.getElementById('content').value=content;
+                                                                                                                                          }
+                                                                                                                                          function log(msg,ok=true){
+                                                                                                                                            const d=document.getElementById('log');
+                                                                                                                                              const t=new Date().toLocaleTimeString();
+                                                                                                                                                d.innerHTML+=\`<div class="log-entry"><span class="log-time">\${t}</span><span class="\${ok?'log-ok':'log-err'}">\${msg}</span></div>\`;
+                                                                                                                                                  d.scrollTop=d.scrollHeight;
+                                                                                                                                                  }
+                                                                                                                                                  async function sendSignal(){
+                                                                                                                                                    const author=document.getElementById('author').value.trim();
+                                                                                                                                                      const content=document.getElementById('content').value.trim();
+                                                                                                                                                        const signal_type=document.getElementById('signal_type').value;
+                                                                                                                                                          if(!content){log('❌ Message vide',false);return;}
+                                                                                                                                                            document.getElementById('status').textContent='Envoi en cours...';
+                                                                                                                                                              log(\`→ Make.com | \${author} | \${content.substring(0,40)}\`);
+                                                                                                                                                                try{
+                                                                                                                                                                    const r=await fetch(MAKE_URL,{
+                                                                                                                                                                          method:'POST',
+                                                                                                                                                                                headers:{'Content-Type':'application/json'},
+                                                                                                                                                                                      body:JSON.stringify({author,content,channel:'trading-floor',signal_type,timestamp:new Date().toISOString()})
+                                                                                                                                                                                          });
+                                                                                                                                                                                              const txt=await r.text();
+                                                                                                                                                                                                  const ct=r.headers.get('content-type')||'';
+                                                                                                                                                                                                      document.getElementById('status').textContent=\`✅ \${r.status} OK\`;
+                                                                                                                                                                                                          log(\`✅ \${r.status} — \${ct.includes('image')?'PNG image':'text'} (\${txt.length} bytes)\`);
+                                                                                                                                                                                                            }catch(e){
+                                                                                                                                                                                                                document.getElementById('status').textContent='❌ Erreur';
+                                                                                                                                                                                                                    log(\`❌ \${e.message}\`,false);
+                                                                                                                                                                                                                      }
+                                                                                                                                                                                                                      }
+                                                                                                                                                                                                                      </script>
+                                                                                                                                                                                                                      </body>
+                                                                                                                                                                                                                      </html>`);
 });
 
-app.post('/generate', (req, res) => {
-    const { username = 'Unknown', content = '', timestamp = new Date().toISOString() } = req.body;
-    try {
-          const imgBuf = generateImage(username, content, timestamp);
-          res.set('Content-Type', 'image/png');
-          res.send(imgBuf);
-    } catch (err) {
-          res.status(500).json({ error: err.message });
-    }
-});
+// Image generation function
+function generateImage(author, content, timestamp) {
+      const width = 800;
+      const height = 450;
+      const canvas = createCanvas(width, height);
+      const ctx = canvas.getContext('2d');
 
-app.listen(PORT, () => console.log('Image server running on port ' + PORT));
+  // Background gradient
+  const bg = ctx.createLinearGradient(0, 0, width, height);
+      bg.addColorStop(0, '#0a0a1a');
+      bg.addColorStop(1, '#16213e');
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, width, height);
 
-// GET /image endpoint for Make.com Buffer integration
-app.get('/image', (req, res) => {
-    const { username = 'Signal', content = '', timestamp = new Date().toISOString() } = req.query;
-    try {
-          const imgBuf = generateImage(username, decodeURIComponent(content), decodeURIComponent(timestamp));
-          res.set('Content-Type', 'image/png');
-          res.set('Cache-Control', 'no-cache');
-          res.send(imgBuf);
-    } catch (err) {
-          res.status(500).json({ error: err.message });
-    }
-});
+  // Border glow
+  ctx.strokeStyle = '#00d4aa';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(4, 4, width - 8, height - 8);
 
-// Image generator
-function generateImage(username, content, timestamp) {
-    const W = 600, PADDING = 20, AVATAR = 40;
-    const lineH = 22, maxW = W - PADDING * 2 - AVATAR - 12;
+  // Header bar
+  const headerGrad = ctx.createLinearGradient(0, 0, width, 0);
+      headerGrad.addColorStop(0, '#00d4aa33');
+      headerGrad.addColorStop(1, '#0099cc33');
+      ctx.fillStyle = headerGrad;
+      ctx.fillRect(4, 4, width - 8, 60);
 
-  const tmpC = createCanvas(1, 1);
-    const tmpCtx = tmpC.getContext('2d');
-    tmpCtx.font = '15px Arial';
-    const words = content.split(' ');
-    const lines = [];
-    let cur = '';
-    for (const w of words) {
-          const test = cur ? cur + ' ' + w : w;
-          if (tmpCtx.measureText(test).width > maxW && cur) {
-                  lines.push(cur);
-                  cur = w;
-          } else {
-                  cur = test;
-          }
-    }
-    if (cur) lines.push(cur);
-    if (!lines.length) lines.push('');
+  // Title
+  ctx.fillStyle = '#00d4aa';
+      ctx.font = 'bold 22px Arial';
+      ctx.fillText('⚡ TRADING SIGNAL', 30, 42);
 
-  const H = PADDING * 2 + Math.max(AVATAR, lines.length * lineH + 20) + 10;
-    const canvas = createCanvas(W, H);
-    const ctx = canvas.getContext('2d');
+  // Author & timestamp
+  ctx.fillStyle = '#888888';
+      ctx.font = '14px Arial';
+      const ts = timestamp ? new Date(timestamp).toLocaleString('fr-CA') : new Date().toLocaleString('fr-CA');
+      ctx.fillText(`@${author} • ${ts}`, 30, 90);
 
-  ctx.fillStyle = '#36393f';
-    ctx.fillRect(0, 0, W, H);
+  // Detect signal type
+  const lower = content.toLowerCase();
+      let signalColor = '#ffd700';
+      let signalLabel = '● NEUTRE';
+      if (lower.includes('entree') || lower.includes('entry') || lower.includes('long') || lower.includes('scalp')) {
+              signalColor = '#00d4aa';
+              signalLabel = '▲ ENTRÉE';
+      } else if (lower.includes('sortie') || lower.includes('exit') || lower.includes('stop')) {
+              signalColor = '#ff6b6b';
+              signalLabel = '▼ SORTIE';
+      }
 
-  const ax = PADDING, ay = PADDING;
-    ctx.fillStyle = '#7289da';
-    ctx.beginPath();
-    ctx.arc(ax + AVATAR / 2, ay + AVATAR / 2, AVATAR / 2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 18px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(username.charAt(0).toUpperCase(), ax + AVATAR / 2, ay + AVATAR / 2);
+  // Signal badge
+  ctx.fillStyle = signalColor + '33';
+      ctx.beginPath();
+      ctx.roundRect(30, 110, 150, 40, 8);
+      ctx.fill();
+      ctx.fillStyle = signalColor;
+      ctx.font = 'bold 18px Arial';
+      ctx.fillText(signalLabel, 45, 136);
 
-  const tx = ax + AVATAR + 12;
+  // Content text (word wrap)
+  ctx.fillStyle = '#e0e0e0';
+      ctx.font = '20px Arial';
+      const words = content.split(' ');
+      let line = '';
+      let y = 190;
+      for (const word of words) {
+              const test = line + word + ' ';
+              if (ctx.measureText(test).width > width - 60 && line) {
+                        ctx.fillText(line.trim(), 30, y);
+                        line = word + ' ';
+                        y += 32;
+              } else {
+                        line = test;
+              }
+      }
+      if (line) ctx.fillText(line.trim(), 30, y);
 
-  ctx.font = 'bold 14px Arial';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(username, tx, ay);
-    const nameW = ctx.measureText(username).width;
-    ctx.fillStyle = '#5865f2';
-    ctx.font = 'bold 10px Arial';
-    const badgeTxt = 'APP';
-    const bW = ctx.measureText(badgeTxt).width + 8;
-    ctx.fillRect(tx + nameW + 6, ay + 1, bW, 14);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(badgeTxt, tx + nameW + 10, ay + 2);
+  // Bottom bar
+  ctx.fillStyle = '#ffffff11';
+      ctx.fillRect(4, height - 50, width - 8, 46);
+      ctx.fillStyle = '#00d4aa';
+      ctx.font = 'bold 14px Arial';
+      ctx.fillText('MrWill_l Trading Signals', 30, height - 20);
 
-  ctx.font = '11px Arial';
-    ctx.fillStyle = '#72767d';
-    const ts = new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    ctx.fillText('Today at ' + ts, tx + nameW + 6 + bW + 6, ay + 2);
-
-  ctx.font = '15px Arial';
-    ctx.fillStyle = '#dcddde';
-    lines.forEach((line, i) => {
-          ctx.fillText(line, tx, ay + 20 + i * lineH);
-    });
+  ctx.fillStyle = '#555555';
+      ctx.font = '12px Arial';
+      ctx.fillText('Not financial advice', width - 160, height - 20);
 
   return canvas.toBuffer('image/png');
 }
 
-// Signal classifier
-const BLOCK_KEYWORDS = ['NEWS', 'SEC', 'IPO', 'OFFERING', 'HALTED', 'FORM 8-K', 'REVERSE STOCK SPLIT'];
-const TICKER_RE = /\b[A-Z]{2,5}\b/;
-const PRICE_RE = /\b\d+\.\d{1,4}\b/;
-const STRATEGY_RE = /@(Swing|Momentum|Scalp)/i;
-
+// Classify signal
 function classifySignal(content) {
-    const upper = content.toUpperCase();
-    if (BLOCK_KEYWORDS.some(k => upper.includes(k))) return null;
-    if (!TICKER_RE.test(content)) return null;
-    if (!PRICE_RE.test(content) && !STRATEGY_RE.test(content)) return null;
-
-  if (/@exit|sell|stop|close/i.test(content)) return 'exit';
-    if (/@entry|buy|long|@swing|@momentum|@scalp/i.test(content)) return 'entry';
-    return 'neutral';
+      const lower = content.toLowerCase();
+      const blocked = ['news', 'sec', 'ipo', 'offering', 'halted', 'form 8-k', 'reverse stock split'];
+      for (const b of blocked) {
+              if (lower.includes(b)) return null;
+      }
+      if (lower.includes('entree') || lower.includes('entry') || lower.includes('long') || lower.includes('scalp') || lower.includes('@scalp')) return 'entry';
+      if (lower.includes('sortie') || lower.includes('exit') || lower.includes('stop')) return 'exit';
+      return 'neutral';
 }
 
 // Discord bot
 const client = new Client({
-    intents: [
-          GatewayIntentBits.Guilds,
-          GatewayIntentBits.GuildMessages,
-          GatewayIntentBits.MessageContent,
-        ],
+      intents: [
+              GatewayIntentBits.Guilds,
+              GatewayIntentBits.GuildMessages,
+              GatewayIntentBits.MessageContent,
+            ],
 });
 
 client.once('ready', () => {
-    console.log('Bot connected as ' + client.user.tag);
-    console.log('Listening for channels containing: ' + TRADING_CHANNEL);
+      console.log('Bot connected as ' + client.user.tag);
+      console.log('Listening for channels containing: ' + TRADING_CHANNEL);
 });
 
 client.on('messageCreate', async (message) => {
-    if (message.author.bot) return;
+      if (message.author.bot) return;
 
             const channelName = message.channel.name || '';
-    console.log('Message received - channel: "' + channelName + '", author: ' + message.author.username);
+      console.log('Message received - channel: "' + channelName + '", author: ' + message.author.username);
 
             if (!channelName.includes(TRADING_CHANNEL)) return;
 
             const content = message.content;
-    const signalType = classifySignal(content);
+      const signalType = classifySignal(content);
 
             if (!signalType) {
-                  console.log('Filtered out: ' + content.substring(0, 80));
-                  return;
+                    console.log('Filtered out: ' + content.substring(0, 80));
+                    return;
             }
 
             console.log('[' + signalType.toUpperCase() + '] ' + content);
 
-            let imageBase64 = null;
-    try {
-          const imgBuf = generateImage(message.author.username, content, message.createdAt.toISOString());
-          imageBase64 = imgBuf.toString('base64');
-    } catch (err) {
-          console.error('Image generation error:', err.message);
-    }
+            // Generate image and store in cache
+            let imageUrl = null;
+      try {
+              const imgBuf = generateImage(message.author.username, content, message.createdAt.toISOString());
+              lastImageBuffer = imgBuf;
+              lastImageId = Date.now();
+              imageUrl = RAILWAY_URL + '/image/latest?t=' + lastImageId;
+              console.log('Image generated, URL: ' + imageUrl);
+      } catch (err) {
+              console.error('Image generation error:', err.message);
+      }
 
             try {
-                  const result = await fetch(MAKE_WEBHOOK_URL, {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                                    content,
-                                    author: message.author.username,
-                                    channel: channelName,
-                                    signal_type: signalType,
-                                    timestamp: message.createdAt.toISOString(),
-                                    image_base64: imageBase64,
-                          }),
-                  });
-                  console.log('Sent to Make, status: ' + result.status);
+                    const result = await fetch(MAKE_WEBHOOK_URL, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                          content,
+                                          author: message.author.username,
+                                          channel: channelName,
+                                          signal_type: signalType,
+                                          timestamp: message.createdAt.toISOString(),
+                                          image_url: imageUrl,
+                              }),
+                    });
+                    console.log('Sent to Make, status: ' + result.status);
             } catch (err) {
-                  console.error('Error sending to Make:', err.message);
+                    console.error('Error sending to Make:', err.message);
             }
+});
+
+app.listen(PORT, () => {
+      console.log('Server running on port ' + PORT);
 });
 
 client.login(DISCORD_TOKEN);

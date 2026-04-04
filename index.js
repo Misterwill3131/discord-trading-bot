@@ -210,8 +210,46 @@ function generateImage(author, content, timestamp) {
   // Nom en blanc/légèrement gris (membre sans rôle coloré = #f2f3f5)
   ctx.fillStyle = '#D649CC';
   ctx.font = 'bold 16px sans-serif';
-  ctx.fillText(author || 'Z', CONTENT_X, nameY);
-  const nameW = ctx.measureText(author || 'Z').width;
+// --- USERNAME ---
+ctx.fillStyle = '#D649CC';
+ctx.font = 'bold 16px sans-serif';
+ctx.fillText(author || 'Z', CONTENT_X, nameY);
+
+const nameW = ctx.measureText(author || 'Z').width;
+
+// --- BADGE BOOM ---
+const badgeText = '💥 BOOM';
+ctx.font = 'bold 11px sans-serif';
+
+const badgePaddingX = 8;
+const badgeHeight = 18;
+
+const badgeTextWidth = ctx.measureText(badgeText).width;
+
+// Position badge (juste après le nom)
+const badgeX = CONTENT_X + nameW + 8;
+const badgeY = nameY - 13;
+
+// fond badge
+ctx.fillStyle = '#2b2d31';
+roundRect(ctx, badgeX, badgeY, badgeTextWidth + badgePaddingX * 2, badgeHeight, 6);
+ctx.fill();
+
+// texte badge
+ctx.fillStyle = '#ffffff';
+ctx.fillText(badgeText, badgeX + badgePaddingX, badgeY + 13);
+
+// --- HEURE (placée APRÈS le badge) ---
+const timeX = badgeX + badgeTextWidth + badgePaddingX * 2 + 8;
+
+const d = timestamp ? new Date(timestamp) : new Date();
+const hh = d.getHours().toString().padStart(2, '0');
+const mm = d.getMinutes().toString().padStart(2, '0');
+const timeStr = hh + ':' + mm;
+
+ctx.fillStyle = '#80848e';
+ctx.font = '12px sans-serif';
+ctx.fillText(timeStr, timeX, nameY - 1);
 
   // --- BADGE BOOM ---
 const badgeText = '💥 BOOM';

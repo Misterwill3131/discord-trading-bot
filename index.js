@@ -24,7 +24,53 @@ const CUSTOM_AVATARS = {
 };
 // ─────────────────────────────────────────────────────────────────────
 
-const FONT = 'Noto Sans, sans-serif';
+// ═══════════════════════════════════════════════════════════════════════════
+//  🎨 CUSTOMISATION — Modifie ici l'apparence des images facilement
+// ═══════════════════════════════════════════════════════════════════════════
+const CONFIG = {
+  // ── Dimensions ──────────────────────────────────────────────────────────
+  IMAGE_W:              740,           // Largeur image (px)
+  IMAGE_H:              80,            // Hauteur image (px)
+
+  // ── Couleurs fond ────────────────────────────────────────────────────────
+  BG_COLOR:             '#1e1f22',     // Fond principal de la carte
+
+  // ── Avatar ───────────────────────────────────────────────────────────────
+  AVATAR_SIZE:          44,            // Diamètre du cercle avatar (px)
+  AVATAR_COLOR:         '#5865f2',     // Couleur cercle sans photo (blurple)
+  AVATAR_TEXT_COLOR:    '#ffffff',     // Couleur initiales
+
+  // ── Badge BOOM ───────────────────────────────────────────────────────────
+  BADGE_BG:             '#36393f',     // Fond du badge
+  BADGE_BORDER:         '#4f5660',     // Bordure du badge
+  BADGE_TEXT:           'BOOM',        // Texte affiché dans le badge
+  BADGE_TEXT_COLOR:     '#ffffff',     // Couleur texte badge
+  BADGE_FONT_SIZE:      10,            // Taille police badge (px)
+  BADGE_HEIGHT:         16,            // Hauteur du badge (px)
+  BADGE_RADIUS:         3,             // Arrondi coins badge (px)
+
+  // ── Flamme (badge) ───────────────────────────────────────────────────────
+  FLAME_BOTTOM:         '#e65c00',     // Couleur bas flamme (orange foncé)
+  FLAME_MID:            '#ff8c00',     // Couleur milieu flamme (orange)
+  FLAME_TOP:            '#ffd000',     // Couleur sommet flamme (jaune-or)
+
+  // ── Nom utilisateur ──────────────────────────────────────────────────────
+  USERNAME_COLOR:       '#D649CC',     // Couleur du nom (violet/rose)
+  USERNAME_FONT_SIZE:   16,            // Taille police nom (px)
+
+  // ── Horodatage ───────────────────────────────────────────────────────────
+  TIME_COLOR:           '#80848e',     // Couleur de l'heure
+  TIME_FONT_SIZE:       12,            // Taille police heure (px)
+
+  // ── Texte du message ─────────────────────────────────────────────────────
+  MESSAGE_COLOR:        '#dcddde',     // Couleur du message
+  MESSAGE_FONT_SIZE:    14,            // Taille police message (px)
+
+  // ── Police globale ───────────────────────────────────────────────────────
+  FONT:                 'Noto Sans, sans-serif',
+};
+// ═══════════════════════════════════════════════════════════════════════════
+const FONT = CONFIG.FONT; // alias de compatibilité
 
 const app = express();
 app.use(express.json());
@@ -184,7 +230,7 @@ async function generateImage(author, content, timestamp) {
   const ctx = canvas.getContext('2d');
 
   // Background
-  ctx.fillStyle = '#1e1f22';
+  ctx.fillStyle = CONFIG.BG_COLOR;
   ctx.fillRect(0, 0, W, H);
 
   // ── Avatar ──
@@ -219,7 +265,7 @@ async function generateImage(author, content, timestamp) {
       ctx.drawImage(img, drawX, drawY, drawW, drawH);
     } catch (e) {
       // Fallback: cercle blurple avec initiales
-      ctx.fillStyle = '#5865f2';
+      ctx.fillStyle = CONFIG.AVATAR_COLOR;
       ctx.fillRect(avatarCX - avatarR, avatarCY - avatarR, AVATAR_D, AVATAR_D);
     }
   } else {
@@ -232,7 +278,7 @@ async function generateImage(author, content, timestamp) {
   // Initiales (uniquement si pas d'avatar personnalisé)
   if (!customAvatarUrl) {
     const initials = (author || 'W').slice(0, 2).toUpperCase();
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = CONFIG.AVATAR_TEXT_COLOR;
     ctx.font = 'bold 14px ' + FONT;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -246,7 +292,7 @@ async function generateImage(author, content, timestamp) {
   // Username
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
-  ctx.fillStyle = '#D649CC';
+  ctx.fillStyle = CONFIG.USERNAME_COLOR;
   ctx.font = 'bold 16px ' + FONT;
   ctx.fillText(author || 'Z', CONTENT_X, nameY);
   const nameW = ctx.measureText(author || 'Z').width;
@@ -266,37 +312,59 @@ async function generateImage(author, content, timestamp) {
   const badgeX = CONTENT_X + nameW + 6;
   const badgeY = nameY - BADGE_H + 2;
 
-  ctx.fillStyle = '#36393f';
+  ctx.fillStyle = CONFIG.BADGE_BG;
   roundRect(ctx, badgeX, badgeY, BADGE_W, BADGE_H, BADGE_RADIUS);
   ctx.fill();
 
-  ctx.strokeStyle = '#4f5660';
+  ctx.strokeStyle = CONFIG.BADGE_BORDER;
   ctx.lineWidth = 0.5;
   roundRect(ctx, badgeX, badgeY, BADGE_W, BADGE_H, BADGE_RADIUS);
   ctx.stroke();
 
-  // Flamme dessinée en Canvas path
+  // Flamme Canvas — fidele au logo de reference (base large, pointe fine)
   const flameX = badgeX + BADGE_PAD_X;
-  const flameY = badgeY + 1;
+  const flameY = badgeY + 0.5;
   const fw = FLAME_W;
-  const fh = BADGE_H - 2;
+  const fh = BADGE_H - 1;
   ctx.save();
-  const flameGrad = ctx.createLinearGradient(flameX, flameY + fh, flameX, flameY);
-  flameGrad.addColorStop(0, '#e8400c');
-  flameGrad.addColorStop(0.5, '#ff7800');
-  flameGrad.addColorStop(1, '#ffcc00');
+  const flameGrad = ctx.createLinearGradient(flameX + fw/2, flameY + fh, flameX + fw/2, flameY);
+  flameGrad.addColorStop(0,    CONFIG.FLAME_BOTTOM);
+  flameGrad.addColorStop(0.45, CONFIG.FLAME_MID);
+  flameGrad.addColorStop(1,    CONFIG.FLAME_TOP);
   ctx.fillStyle = flameGrad;
   ctx.beginPath();
-  ctx.moveTo(flameX + fw * 0.5, flameY);
-  ctx.bezierCurveTo(flameX + fw * 0.9, flameY + fh * 0.2, flameX + fw, flameY + fh * 0.5, flameX + fw * 0.75, flameY + fh * 0.75);
-  ctx.bezierCurveTo(flameX + fw * 0.65, flameY + fh * 0.55, flameX + fw * 0.55, flameY + fh * 0.5, flameX + fw * 0.5, flameY + fh * 0.65);
-  ctx.bezierCurveTo(flameX + fw * 0.45, flameY + fh * 0.5, flameX + fw * 0.35, flameY + fh * 0.55, flameX + fw * 0.25, flameY + fh * 0.75);
-  ctx.bezierCurveTo(flameX, flameY + fh * 0.5, flameX + fw * 0.1, flameY + fh * 0.2, flameX + fw * 0.5, flameY);
+  ctx.moveTo(flameX + fw * 0.50, flameY);
+  ctx.bezierCurveTo(
+    flameX + fw * 0.75, flameY + fh * 0.18,
+    flameX + fw * 1.00, flameY + fh * 0.42,
+    flameX + fw * 0.92, flameY + fh * 0.70
+  );
+  ctx.bezierCurveTo(
+    flameX + fw * 0.88, flameY + fh * 0.85,
+    flameX + fw * 0.80, flameY + fh * 0.95,
+    flameX + fw * 0.50, flameY + fh * 1.00
+  );
+  ctx.bezierCurveTo(
+    flameX + fw * 0.20, flameY + fh * 0.95,
+    flameX + fw * 0.12, flameY + fh * 0.85,
+    flameX + fw * 0.08, flameY + fh * 0.70
+  );
+  ctx.bezierCurveTo(
+    flameX + fw * 0.00, flameY + fh * 0.42,
+    flameX + fw * 0.25, flameY + fh * 0.18,
+    flameX + fw * 0.50, flameY
+  );
   ctx.closePath();
   ctx.fill();
-  ctx.fillStyle = '#c0320a';
+  const innerGrad = ctx.createLinearGradient(flameX + fw/2, flameY + fh * 0.9, flameX + fw/2, flameY + fh * 0.35);
+  innerGrad.addColorStop(0, 'rgba(255,255,180,0.55)');
+  innerGrad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = innerGrad;
   ctx.beginPath();
-  ctx.ellipse(flameX + fw * 0.5, flameY + fh * 0.88, fw * 0.32, fh * 0.14, 0, 0, Math.PI * 2);
+  ctx.moveTo(flameX + fw * 0.50, flameY + fh * 0.38);
+  ctx.bezierCurveTo(flameX + fw * 0.65, flameY + fh * 0.52, flameX + fw * 0.70, flameY + fh * 0.72, flameX + fw * 0.50, flameY + fh * 0.90);
+  ctx.bezierCurveTo(flameX + fw * 0.30, flameY + fh * 0.72, flameX + fw * 0.35, flameY + fh * 0.52, flameX + fw * 0.50, flameY + fh * 0.38);
+  ctx.closePath();
   ctx.fill();
   ctx.restore();
 
@@ -312,12 +380,12 @@ async function generateImage(author, content, timestamp) {
   const mm = d.getMinutes().toString().padStart(2, '0');
   const timeStr = 'Today at ' + hh + ':' + mm;
   const timeX = badgeX + BADGE_W + 6;
-  ctx.fillStyle = '#80848e';
+  ctx.fillStyle = CONFIG.TIME_COLOR;
   ctx.font = '12px ' + FONT;
   ctx.fillText(timeStr, timeX, nameY - 1);
 
   // Message text
-  ctx.fillStyle = '#dcddde';
+  ctx.fillStyle = CONFIG.MESSAGE_COLOR;
   ctx.font = '16px ' + FONT;
   let ty = nameY + LINE_H;
   for (const line of lines) {

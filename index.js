@@ -213,6 +213,30 @@ function generateImage(author, content, timestamp) {
   ctx.fillText(author || 'Z', CONTENT_X, nameY);
   const nameW = ctx.measureText(author || 'Z').width;
 
+  // --- BADGE BOOM ---
+const badgeText = '💥 BOOM';
+
+// style du badge
+ctx.font = 'bold 11px sans-serif';
+
+// largeur du badge
+const badgePaddingX = 8;
+const badgePaddingY = 4;
+const badgeTextWidth = ctx.measureText(badgeText).width;
+
+// position (à droite du pseudo)
+const badgeX = CONTENT_X + nameW + 10;
+const badgeY = nameY - 12;
+
+// fond arrondi
+ctx.fillStyle = '#2b2d31';
+roundRect(ctx, badgeX, badgeY, badgeTextWidth + badgePaddingX * 2, 18, 6);
+ctx.fill();
+
+// texte badge
+ctx.fillStyle = '#ffffff';
+ctx.fillText(badgeText, badgeX + badgePaddingX, badgeY + 13);
+
   // Heure — format Discord "Aujourd'hui à HH:MM"
   const d = timestamp ? new Date(timestamp) : new Date();
   const hh = d.getHours().toString().padStart(2, '0');
@@ -300,5 +324,18 @@ client.on('messageCreate', async (message) => {
     console.log('Sent to Make, status: ' + result.status);
   } catch (err) { console.error('Error sending to Make:', err.message); }
 });
+function roundRect(ctx, x, y, width, height, radius) {
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+}
 
 client.login(DISCORD_TOKEN);

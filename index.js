@@ -1,7 +1,8 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const fetch = require('node-fetch');
-const { createCanvas } = require('@napi-rs/canvas');
+const { createCanvas, GlobalFonts } = require('@napi-rs/canvas');
 const express = require('express');
+const path = require('path');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL;
@@ -189,49 +190,55 @@ app.get('/health', (_req, res) => {
 
 app.listen(PORT, () => console.log('Server running on port ' + PORT));
 
-// Image generation function - high contrast design
+// Image generation function - high contrast, Linux-compatible fonts
 function generateImage(author, content, timestamp) {
   const width = 800;
   const height = 450;
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
 
-  // Background: white/light gray
+  // Use system font stack compatible with Linux
+  const fontBold = 'bold 28px DejaVu Sans,Liberation Sans,FreeSans,sans-serif';
+  const fontNormal = '18px DejaVu Sans,Liberation Sans,FreeSans,sans-serif';
+  const fontSmall = '15px DejaVu Sans,Liberation Sans,FreeSans,sans-serif';
+  const fontTitle = 'bold 30px DejaVu Sans,Liberation Sans,FreeSans,sans-serif';
+
+  // Background: light gray-white
   ctx.fillStyle = '#f5f7fa';
   ctx.fillRect(0, 0, width, height);
 
   // Top header bar: solid dark teal
   ctx.fillStyle = '#0d7a5f';
-  ctx.fillRect(0, 0, width, 70);
+  ctx.fillRect(0, 0, width, 72);
 
-  // Header text: white bold
+  // Header title: white bold large
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 26px Arial';
-  ctx.fillText('TRADING SIGNAL', 30, 46);
+  ctx.font = fontTitle;
+  ctx.fillText('TRADING SIGNAL', 30, 48);
 
-  // Subtitle in header
-  ctx.fillStyle = '#a8f0d8';
-  ctx.font = '14px Arial';
-  ctx.fillText('MrWill_l Trading Signals', width - 230, 46);
+  // Header subtitle: light green
+  ctx.fillStyle = '#b2f0da';
+  ctx.font = fontSmall;
+  ctx.fillText('MrWill_l Trading Signals', width - 220, 48);
 
   // Author + timestamp below header
-  ctx.fillStyle = '#444444';
-  ctx.font = 'bold 15px Arial';
+  ctx.fillStyle = '#333333';
+  ctx.font = fontNormal;
   const ts = timestamp ? new Date(timestamp).toLocaleString('fr-CA') : new Date().toLocaleString('fr-CA');
-  ctx.fillText('@' + author + '  ·  ' + ts, 30, 100);
+  ctx.fillText('@' + author + '  -  ' + ts, 30, 108);
 
   // Separator line
   ctx.strokeStyle = '#cccccc';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(30, 112);
-  ctx.lineTo(width - 30, 112);
+  ctx.moveTo(30, 120);
+  ctx.lineTo(width - 30, 120);
   ctx.stroke();
 
   // Signal type badge
   const lower = content.toLowerCase();
-  let signalColor = '#d4a017';
-  let signalBg = '#fff8e1';
+  let signalColor = '#c49b00';
+  let signalBg = '#fffbe6';
   let signalLabel = 'NEUTRE';
   if (lower.includes('entree') || lower.includes('entry') || lower.includes('long') || lower.includes('scalp')) {
     signalColor = '#0d7a5f';
@@ -245,32 +252,28 @@ function generateImage(author, content, timestamp) {
 
   // Badge background
   ctx.fillStyle = signalBg;
-  ctx.beginPath();
-  ctx.roundRect(30, 122, 120, 36, 6);
-  ctx.fill();
+  ctx.fillRect(30, 130, 130, 38);
   ctx.strokeStyle = signalColor;
   ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.roundRect(30, 122, 120, 36, 6);
-  ctx.stroke();
+  ctx.strokeRect(30, 130, 130, 38);
 
   // Badge text
   ctx.fillStyle = signalColor;
-  ctx.font = 'bold 20px Arial';
-  ctx.fillText(signalLabel, 46, 146);
+  ctx.font = fontBold;
+  ctx.fillText(signalLabel, 44, 157);
 
-  // Main message text - dark on light background
-  ctx.fillStyle = '#1a1a1a';
-  ctx.font = 'bold 24px Arial';
+  // Main message text
+  ctx.fillStyle = '#111111';
+  ctx.font = fontBold;
   const words = content.split(' ');
   let line = '';
-  let y = 205;
+  let y = 220;
   for (const word of words) {
     const test = line + word + ' ';
     if (ctx.measureText(test).width > width - 60 && line) {
       ctx.fillText(line.trim(), 30, y);
       line = word + ' ';
-      y += 36;
+      y += 40;
     } else {
       line = test;
     }
@@ -278,7 +281,7 @@ function generateImage(author, content, timestamp) {
   if (line) ctx.fillText(line.trim(), 30, y);
 
   // Footer bar
-  ctx.fillStyle = '#e8ecf0';
+  ctx.fillStyle = '#e4e8ed';
   ctx.fillRect(0, height - 44, width, 44);
 
   // Footer separator
@@ -291,7 +294,7 @@ function generateImage(author, content, timestamp) {
 
   // Footer text
   ctx.fillStyle = '#555555';
-  ctx.font = '13px Arial';
+  ctx.font = fontSmall;
   ctx.fillText('Not financial advice - For educational purposes only', 30, height - 16);
 
   return canvas.toBuffer('image/png');

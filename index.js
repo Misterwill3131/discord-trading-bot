@@ -32,6 +32,18 @@ app.use(express.json());
 let lastImageBuffer = null;
 let lastImageId = null;
 
+app.get('/preview', async (req, res) => {
+  try {
+    const author = req.query.author || 'Z';
+    const message = req.query.message || '$TSLA 150.00-155.00';
+    const buf = await generateImage(author, message, new Date().toISOString());
+    res.set('Content-Type', 'image/png');
+    res.send(buf);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/image/latest', (req, res) => {
   if (!lastImageBuffer) return res.status(404).json({ error: 'No image available' });
   res.set('Content-Type', 'image/png');

@@ -2,7 +2,6 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const fetch = require('node-fetch');
 const { createCanvas, GlobalFonts } = require('@napi-rs/canvas');
 const express = require('express');
-const path = require('path');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL;
@@ -12,17 +11,17 @@ const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
   : 'https://discord-trading-bot-production-f159.up.railway.app';
 
-// Register GG Sans fonts
+// Register Inter fonts (open source, visually closest to Discord GG Sans)
 try {
-  GlobalFonts.registerFromPath('/app/fonts/gg-sans-normal.ttf', 'GGSans');
-  GlobalFonts.registerFromPath('/app/fonts/gg-sans-bold.ttf', 'GGSans');
-  console.log('GG Sans fonts registered');
+  GlobalFonts.registerFromPath('/app/fonts/inter-regular.ttf', 'Inter');
+  GlobalFonts.registerFromPath('/app/fonts/inter-semibold.ttf', 'Inter');
+  GlobalFonts.registerFromPath('/app/fonts/inter-bold.ttf', 'Inter');
+  console.log('Inter fonts registered successfully');
 } catch (e) {
-  console.warn('GG Sans not found, falling back to sans-serif:', e.message);
+  console.warn('Inter fonts not found, using system fallback:', e.message);
 }
 
-const FONT_NORMAL = 'GGSans, sans-serif';
-const FONT_BOLD = 'GGSans, sans-serif';
+const FONT = 'Inter, sans-serif';
 
 const app = express();
 app.use(express.json());
@@ -165,7 +164,7 @@ function generateImage(author, content, timestamp) {
 
   const tmpC = createCanvas(W, 400);
   const tmpCtx = tmpC.getContext('2d');
-  tmpCtx.font = '16px ' + FONT_NORMAL;
+  tmpCtx.font = '16px ' + FONT;
   const lines = wrapText(tmpCtx, content, MAX_TW);
 
   const LINE_H = 22;
@@ -191,7 +190,7 @@ function generateImage(author, content, timestamp) {
 
   const initials = (author || 'W').slice(0, 2).toUpperCase();
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 15px ' + FONT_BOLD;
+  ctx.font = 'bold 14px ' + FONT;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(initials, avatarCX, avatarCY);
@@ -200,44 +199,54 @@ function generateImage(author, content, timestamp) {
 
   const nameY = PADDING_V + NAME_H - 3;
 
-  // Username
+  // Username in role color
   ctx.fillStyle = '#D649CC';
-  ctx.font = 'bold 16px ' + FONT_BOLD;
+  ctx.font = 'bold 16px ' + FONT;
   ctx.fillText(author || 'Z', CONTENT_X, nameY);
   const nameW = ctx.measureText(author || 'Z').width;
 
-  // BOOM badge — identique au badge Discord role
-  // Icone feu + BOOM, fond #4f5660 arrondi, avec bordure subtile
-  const badgePaddingX = 6;
-  const badgePaddingY = 3;
-  const badgeIconSize = 14;
-  const badgeGap = 4;
+  // ── BOOM badge — identique image de référence ──
+  // Badge Discord role style: fond sombre arrondi, icone feu à gauche, texte BOOM blanc
+  const BADGE_H = 16;
+  const BADGE_PAD_X = 5;
+  const BADGE_PAD_Y = 2;
+  const BADGE_ICON = '\uD83D\uDD25'; // 🔥
+  const BADGE_LABEL = 'BOOM';
+  const BADGE_RADIUS = 3;
 
-  ctx.font = 'bold 11px ' + FONT_BOLD;
-  const boomText = 'BOOM';
-  const boomTextW = ctx.measureText(boomText).width;
+  // Measure badge contents
+  ctx.font = '10px ' + FONT;
+  const iconW = ctx.measureText(BADGE_ICON).width;
+  ctx.font = 'bold 10px ' + FONT;
+  const labelW = ctx.measureText(BADGE_LABEL).width;
 
-  // Total badge width: paddingX + icon + gap + text + paddingX
-  const badgeTotalW = badgePaddingX + badgeIconSize + badgeGap + boomTextW + badgePaddingX;
-  const badgeH = 18;
-  const badgeX = CONTENT_X + nameW + 8;
-  const badgeY = nameY - 14;
+  const BADGE_GAP = 3;
+  const BADGE_W = BADGE_PAD_X + iconW + BADGE_GAP + labelW + BADGE_PAD_X;
 
-  // Badge background — couleur sombre Discord role badge
-  ctx.fillStyle = '#4f5660';
-  roundRect(ctx, badgeX, badgeY, badgeTotalW, badgeH, 4);
+  const badgeX = CONTENT_X + nameW + 6;
+  const badgeY = nameY - BADGE_H + 2;
+
+  // Badge background — couleur exacte Discord role badge dark
+  ctx.fillStyle = '#36393f';
+  roundRect(ctx, badgeX, badgeY, BADGE_W, BADGE_H, BADGE_RADIUS);
   ctx.fill();
 
-  // Fire icon (🔥) inside badge
-  ctx.font = '11px ' + FONT_NORMAL;
+  // Badge border subtile
+  ctx.strokeStyle = '#4f5660';
+  ctx.lineWidth = 0.5;
+  roundRect(ctx, badgeX, badgeY, BADGE_W, BADGE_H, BADGE_RADIUS);
+  ctx.stroke();
+
+  // Fire icon
+  ctx.font = '10px ' + FONT;
+  ctx.fillStyle = '#ffffff';
   ctx.textBaseline = 'middle';
-  ctx.fillText('\uD83D\uDD25', badgeX + badgePaddingX, badgeY + badgeH / 2);
+  ctx.fillText(BADGE_ICON, badgeX + BADGE_PAD_X, badgeY + BADGE_H / 2);
 
   // BOOM text
+  ctx.font = 'bold 10px ' + FONT;
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 11px ' + FONT_BOLD;
-  ctx.textBaseline = 'middle';
-  ctx.fillText(boomText, badgeX + badgePaddingX + badgeIconSize + badgeGap, badgeY + badgeH / 2);
+  ctx.fillText(BADGE_LABEL, badgeX + BADGE_PAD_X + iconW + BADGE_GAP, badgeY + BADGE_H / 2);
   ctx.textBaseline = 'alphabetic';
 
   // Time — "Today at HH:MM"
@@ -245,14 +254,14 @@ function generateImage(author, content, timestamp) {
   const hh = d.getHours().toString().padStart(2, '0');
   const mm = d.getMinutes().toString().padStart(2, '0');
   const timeStr = 'Today at ' + hh + ':' + mm;
-  const timeX = badgeX + badgeTotalW + 8;
+  const timeX = badgeX + BADGE_W + 6;
   ctx.fillStyle = '#80848e';
-  ctx.font = '12px ' + FONT_NORMAL;
+  ctx.font = '12px ' + FONT;
   ctx.fillText(timeStr, timeX, nameY - 1);
 
   // Message text
   ctx.fillStyle = '#dcddde';
-  ctx.font = '16px ' + FONT_NORMAL;
+  ctx.font = '16px ' + FONT;
   let ty = nameY + LINE_H;
   for (const line of lines) {
     ctx.fillText(line, CONTENT_X, ty);

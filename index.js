@@ -92,7 +92,7 @@ app.get('/health', (_req, res) => {
  .log{background:#0a0a1a;border-radius:6px;padding:10px;height:160px;overflow-y:auto;font-size:0.78em;font-family:monospace}
  .log-entry{margin:2px 0}.log-time{color:#555;margin-right:8px}.log-ok{color:#00d4aa}.log-err{color:#ff6b6b}.log-info{color:#aaa}
  .section-title{font-size:0.75em;color:#555;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
- .img-preview img{max-width:100%;border-radius:8px;border:1px solid #00d4aa44;margin-top:10px;display:none}
+ .img-preview img{max-width:100%;border-radius:8px;margin-top:10px;display:none}
  </style>
  </head>
  <body>
@@ -189,105 +189,102 @@ app.get('/health', (_req, res) => {
 
 app.listen(PORT, () => console.log('Server running on port ' + PORT));
 
-// Draw text with manual pixel rendering for maximum compatibility
-function drawPixelText(ctx, text, x, y, size, color) {
-  ctx.fillStyle = color;
-  ctx.font = size + 'px sans-serif';
-  ctx.fillText(text, x, y);
-}
-
-// Image generation - using only shapes + default canvas font
+// =========================================================
+// generateImage - style screenshot Discord authentique
+// =========================================================
 function generateImage(author, content, timestamp) {
+  // Dimensions: ratio proche d'un message Discord visible
   const width = 800;
-  const height = 450;
+  const height = 220;
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
 
-  // Background
-  ctx.fillStyle = '#f5f7fa';
+  // --- Couleurs Discord exactes ---
+  const BG          = '#313338'; // fond principal Discord dark
+  const BG_HOVER    = '#2e3035'; // fond hover (un tout petit peu plus sombre)
+  const AVATAR_BG   = '#5865f2'; // bleu Discord (Blurple) pour l'avatar
+  const NAME_COLOR  = '#ffffff'; // nom blanc (membre sans rôle particulier)
+  const TIME_COLOR  = '#949ba4'; // gris clair pour l'heure
+  const TEXT_COLOR  = '#dcddde'; // couleur du texte de message Discord
+  const CHANNEL_COLOR = '#8a8e94'; // gris canal
+
+  // --- Fond complet ---
+  ctx.fillStyle = BG;
   ctx.fillRect(0, 0, width, height);
 
-  // Header
-  ctx.fillStyle = '#0d7a5f';
-  ctx.fillRect(0, 0, width, 72);
+  // --- Padding Discord: 16px haut, 72px gauche (avatar 40px + marges) ---
+  const padTop   = 16;
+  const padLeft  = 16;
+  const avatarSize = 40;
+  const avatarX  = padLeft;
+  const avatarY  = padTop;
+  const contentX = padLeft + avatarSize + 16; // 72px
 
-  // Header text
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 30px sans-serif';
-  ctx.fillText('TRADING SIGNAL', 30, 48);
-
-  ctx.fillStyle = '#b2f0da';
-  ctx.font = '15px sans-serif';
-  ctx.fillText('MrWill_l Trading Signals', width - 220, 48);
-
-  // Author + date
-  ctx.fillStyle = '#333333';
-  ctx.font = '18px sans-serif';
-  const ts = timestamp ? new Date(timestamp).toLocaleString('fr-CA') : new Date().toLocaleString('fr-CA');
-  ctx.fillText('@' + author + '  -  ' + ts, 30, 108);
-
-  // Separator
-  ctx.strokeStyle = '#cccccc';
-  ctx.lineWidth = 1;
+  // --- Avatar: cercle avec initiales ---
+  const initials = author ? author.slice(0, 2).toUpperCase() : 'WL';
+  ctx.save();
   ctx.beginPath();
-  ctx.moveTo(30, 120);
-  ctx.lineTo(width - 30, 120);
-  ctx.stroke();
+  ctx.arc(avatarX + avatarSize / 2, avatarY + avatarSize / 2, avatarSize / 2, 0, Math.PI * 2);
+  ctx.fillStyle = AVATAR_BG;
+  ctx.fill();
+  ctx.restore();
 
-  // Signal badge
-  const lower = content.toLowerCase();
-  let signalColor = '#c49b00';
-  let signalBg = '#fffbe6';
-  let signalLabel = 'NEUTRE';
-  if (lower.includes('entree') || lower.includes('entry') || lower.includes('long') || lower.includes('scalp')) {
-    signalColor = '#0d7a5f';
-    signalBg = '#e0f7f1';
-    signalLabel = 'ENTREE';
-  } else if (lower.includes('sortie') || lower.includes('exit') || lower.includes('stop')) {
-    signalColor = '#c0392b';
-    signalBg = '#fdecea';
-    signalLabel = 'SORTIE';
-  }
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(initials, avatarX + avatarSize / 2, avatarY + avatarSize / 2);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
 
-  ctx.fillStyle = signalBg;
-  ctx.fillRect(30, 130, 130, 38);
-  ctx.strokeStyle = signalColor;
-  ctx.lineWidth = 2;
-  ctx.strokeRect(30, 130, 130, 38);
-  ctx.fillStyle = signalColor;
-  ctx.font = 'bold 22px sans-serif';
-  ctx.fillText(signalLabel, 44, 157);
+  // --- Ligne 1: Nom + heure ---
+  const nameY = padTop + 16;
+  ctx.fillStyle = NAME_COLOR;
+  ctx.font = 'bold 16px sans-serif';
+  ctx.fillText(author || 'Will', contentX, nameY);
 
-  // Message text
-  ctx.fillStyle = '#111111';
-  ctx.font = 'bold 26px sans-serif';
+  // Mesure du nom pour placer l'heure juste après
+  const nameWidth = ctx.measureText(author || 'Will').width;
+
+  // Heure formatée à la Discord: "Aujourd'hui à 14:32"
+  const d = timestamp ? new Date(timestamp) : new Date();
+  const hours   = d.getHours().toString().padStart(2, '0');
+  const minutes = d.getMinutes().toString().padStart(2, '0');
+  const timeStr = "Aujourd'hui à " + hours + ':' + minutes;
+
+  ctx.fillStyle = TIME_COLOR;
+  ctx.font = '12px sans-serif';
+  ctx.fillText(timeStr, contentX + nameWidth + 8, nameY - 1);
+
+  // --- Ligne 2+: texte du message avec wrapping ---
+  ctx.fillStyle = TEXT_COLOR;
+  ctx.font = '16px sans-serif';
+
+  const maxWidth = width - contentX - 16;
+  const lineHeight = 22;
+  const textStartY = nameY + lineHeight;
+
   const words = content.split(' ');
   let line = '';
-  let y = 218;
+  let y = textStartY;
+
   for (const word of words) {
     const test = line + word + ' ';
-    if (ctx.measureText(test).width > width - 60 && line) {
-      ctx.fillText(line.trim(), 30, y);
+    if (ctx.measureText(test).width > maxWidth && line) {
+      ctx.fillText(line.trim(), contentX, y);
       line = word + ' ';
-      y += 38;
+      y += lineHeight;
     } else {
       line = test;
     }
   }
-  if (line) ctx.fillText(line.trim(), 30, y);
+  if (line.trim()) ctx.fillText(line.trim(), contentX, y);
 
-  // Footer
-  ctx.fillStyle = '#e4e8ed';
-  ctx.fillRect(0, height - 44, width, 44);
-  ctx.strokeStyle = '#cccccc';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, height - 44);
-  ctx.lineTo(width, height - 44);
-  ctx.stroke();
-  ctx.fillStyle = '#555555';
-  ctx.font = '14px sans-serif';
-  ctx.fillText('Not financial advice - For educational purposes only', 30, height - 16);
+  // --- Barre de channel en haut (optionnel, donne l'impression d'un vrai screenshot) ---
+  // On ajoute une fine barre sombre tout en haut style header de canal Discord
+  const headerH = 0; // pas de header, juste le message pur
+
+  // --- Ligne de séparation subtile en bas (Discord n'en a pas, on laisse propre) ---
 
   return canvas.toBuffer('image/png');
 }

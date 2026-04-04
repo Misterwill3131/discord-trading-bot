@@ -243,16 +243,14 @@ async function generateImage(author, content, timestamp) {
   const BADGE_H = 16;
   const BADGE_PAD_X = 5;
   const BADGE_RADIUS = 3;
-  const BADGE_ICON = '\uD83D\uDD25';
   const BADGE_LABEL = 'BOOM';
+  const FLAME_W = 9;
   const BADGE_GAP = 3;
 
-  ctx.font = '10px ' + FONT;
-  const iconW = ctx.measureText(BADGE_ICON).width;
   ctx.font = 'bold 10px ' + FONT;
   const labelW = ctx.measureText(BADGE_LABEL).width;
 
-  const BADGE_W = BADGE_PAD_X + iconW + BADGE_GAP + labelW + BADGE_PAD_X;
+  const BADGE_W = BADGE_PAD_X + FLAME_W + BADGE_GAP + labelW + BADGE_PAD_X;
   const badgeX = CONTENT_X + nameW + 6;
   const badgeY = nameY - BADGE_H + 2;
 
@@ -265,14 +263,35 @@ async function generateImage(author, content, timestamp) {
   roundRect(ctx, badgeX, badgeY, BADGE_W, BADGE_H, BADGE_RADIUS);
   ctx.stroke();
 
-  ctx.font = '10px ' + FONT;
-  ctx.fillStyle = '#ffffff';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(BADGE_ICON, badgeX + BADGE_PAD_X, badgeY + BADGE_H / 2);
+  // Flamme dessinée en Canvas path
+  const flameX = badgeX + BADGE_PAD_X;
+  const flameY = badgeY + 1;
+  const fw = FLAME_W;
+  const fh = BADGE_H - 2;
+  ctx.save();
+  const flameGrad = ctx.createLinearGradient(flameX, flameY + fh, flameX, flameY);
+  flameGrad.addColorStop(0, '#e8400c');
+  flameGrad.addColorStop(0.5, '#ff7800');
+  flameGrad.addColorStop(1, '#ffcc00');
+  ctx.fillStyle = flameGrad;
+  ctx.beginPath();
+  ctx.moveTo(flameX + fw * 0.5, flameY);
+  ctx.bezierCurveTo(flameX + fw * 0.9, flameY + fh * 0.2, flameX + fw, flameY + fh * 0.5, flameX + fw * 0.75, flameY + fh * 0.75);
+  ctx.bezierCurveTo(flameX + fw * 0.65, flameY + fh * 0.55, flameX + fw * 0.55, flameY + fh * 0.5, flameX + fw * 0.5, flameY + fh * 0.65);
+  ctx.bezierCurveTo(flameX + fw * 0.45, flameY + fh * 0.5, flameX + fw * 0.35, flameY + fh * 0.55, flameX + fw * 0.25, flameY + fh * 0.75);
+  ctx.bezierCurveTo(flameX, flameY + fh * 0.5, flameX + fw * 0.1, flameY + fh * 0.2, flameX + fw * 0.5, flameY);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = '#c0320a';
+  ctx.beginPath();
+  ctx.ellipse(flameX + fw * 0.5, flameY + fh * 0.88, fw * 0.32, fh * 0.14, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 
   ctx.font = 'bold 10px ' + FONT;
   ctx.fillStyle = '#ffffff';
-  ctx.fillText(BADGE_LABEL, badgeX + BADGE_PAD_X + iconW + BADGE_GAP, badgeY + BADGE_H / 2);
+  ctx.textBaseline = 'middle';
+  ctx.fillText(BADGE_LABEL, badgeX + BADGE_PAD_X + FLAME_W + BADGE_GAP, badgeY + BADGE_H / 2);
   ctx.textBaseline = 'alphabetic';
 
   // Time

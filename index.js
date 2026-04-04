@@ -1,8 +1,7 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const fetch = require('node-fetch');
-const { createCanvas, GlobalFonts } = require('@napi-rs/canvas');
+const { createCanvas } = require('@napi-rs/canvas');
 const express = require('express');
-const path = require('path');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL;
@@ -190,44 +189,44 @@ app.get('/health', (_req, res) => {
 
 app.listen(PORT, () => console.log('Server running on port ' + PORT));
 
-// Image generation function - high contrast, Linux-compatible fonts
+// Draw text with manual pixel rendering for maximum compatibility
+function drawPixelText(ctx, text, x, y, size, color) {
+  ctx.fillStyle = color;
+  ctx.font = size + 'px sans-serif';
+  ctx.fillText(text, x, y);
+}
+
+// Image generation - using only shapes + default canvas font
 function generateImage(author, content, timestamp) {
   const width = 800;
   const height = 450;
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
 
-  // Use system font stack compatible with Linux
-  const fontBold = 'bold 28px DejaVu Sans,Liberation Sans,FreeSans,sans-serif';
-  const fontNormal = '18px DejaVu Sans,Liberation Sans,FreeSans,sans-serif';
-  const fontSmall = '15px DejaVu Sans,Liberation Sans,FreeSans,sans-serif';
-  const fontTitle = 'bold 30px DejaVu Sans,Liberation Sans,FreeSans,sans-serif';
-
-  // Background: light gray-white
+  // Background
   ctx.fillStyle = '#f5f7fa';
   ctx.fillRect(0, 0, width, height);
 
-  // Top header bar: solid dark teal
+  // Header
   ctx.fillStyle = '#0d7a5f';
   ctx.fillRect(0, 0, width, 72);
 
-  // Header title: white bold large
+  // Header text
   ctx.fillStyle = '#ffffff';
-  ctx.font = fontTitle;
+  ctx.font = 'bold 30px sans-serif';
   ctx.fillText('TRADING SIGNAL', 30, 48);
 
-  // Header subtitle: light green
   ctx.fillStyle = '#b2f0da';
-  ctx.font = fontSmall;
+  ctx.font = '15px sans-serif';
   ctx.fillText('MrWill_l Trading Signals', width - 220, 48);
 
-  // Author + timestamp below header
+  // Author + date
   ctx.fillStyle = '#333333';
-  ctx.font = fontNormal;
+  ctx.font = '18px sans-serif';
   const ts = timestamp ? new Date(timestamp).toLocaleString('fr-CA') : new Date().toLocaleString('fr-CA');
   ctx.fillText('@' + author + '  -  ' + ts, 30, 108);
 
-  // Separator line
+  // Separator
   ctx.strokeStyle = '#cccccc';
   ctx.lineWidth = 1;
   ctx.beginPath();
@@ -235,7 +234,7 @@ function generateImage(author, content, timestamp) {
   ctx.lineTo(width - 30, 120);
   ctx.stroke();
 
-  // Signal type badge
+  // Signal badge
   const lower = content.toLowerCase();
   let signalColor = '#c49b00';
   let signalBg = '#fffbe6';
@@ -250,51 +249,44 @@ function generateImage(author, content, timestamp) {
     signalLabel = 'SORTIE';
   }
 
-  // Badge background
   ctx.fillStyle = signalBg;
   ctx.fillRect(30, 130, 130, 38);
   ctx.strokeStyle = signalColor;
   ctx.lineWidth = 2;
   ctx.strokeRect(30, 130, 130, 38);
-
-  // Badge text
   ctx.fillStyle = signalColor;
-  ctx.font = fontBold;
+  ctx.font = 'bold 22px sans-serif';
   ctx.fillText(signalLabel, 44, 157);
 
-  // Main message text
+  // Message text
   ctx.fillStyle = '#111111';
-  ctx.font = fontBold;
+  ctx.font = 'bold 26px sans-serif';
   const words = content.split(' ');
   let line = '';
-  let y = 220;
+  let y = 218;
   for (const word of words) {
     const test = line + word + ' ';
     if (ctx.measureText(test).width > width - 60 && line) {
       ctx.fillText(line.trim(), 30, y);
       line = word + ' ';
-      y += 40;
+      y += 38;
     } else {
       line = test;
     }
   }
   if (line) ctx.fillText(line.trim(), 30, y);
 
-  // Footer bar
+  // Footer
   ctx.fillStyle = '#e4e8ed';
   ctx.fillRect(0, height - 44, width, 44);
-
-  // Footer separator
   ctx.strokeStyle = '#cccccc';
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(0, height - 44);
   ctx.lineTo(width, height - 44);
   ctx.stroke();
-
-  // Footer text
   ctx.fillStyle = '#555555';
-  ctx.font = fontSmall;
+  ctx.font = '14px sans-serif';
   ctx.fillText('Not financial advice - For educational purposes only', 30, height - 16);
 
   return canvas.toBuffer('image/png');

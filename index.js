@@ -205,54 +205,54 @@ function generateImage(author, content, timestamp) {
   ctx.textBaseline = 'alphabetic';
 
   // ── Nom + heure ──
-  const nameY = PADDING_V + NAME_H - 3;
+ 
 
-  // Nom en blanc/légèrement gris (membre sans rôle coloré = #f2f3f5)
-  ctx.fillStyle = '#D649CC';
-  ctx.font = 'bold 16px sans-serif';
-// --- USERNAME ---
-ctx.fillStyle = '#D649CC';
+const nameY = PADDING_V + NAME_H - 3;
+
+// USERNAME
 ctx.font = 'bold 16px sans-serif';
+ctx.fillStyle = '#f2f3f5';
 ctx.fillText(author || 'Z', CONTENT_X, nameY);
 
 const nameW = ctx.measureText(author || 'Z').width;
 
-// --- BADGE BOOM ---
-const badgeText = '💥 BOOM';
-ctx.font = 'bold 11px sans-serif';
+// BADGE
+const badgeText = 'BOOM';
+ctx.font = 'bold 10px sans-serif';
 
-const badgePaddingX = 8;
-const badgeHeight = 18;
-
+const badgePaddingX = 6;
+const badgeHeight = 14;
 const badgeTextWidth = ctx.measureText(badgeText).width;
 
-// Position badge (juste après le nom)
-const badgeX = CONTENT_X + nameW + 8;
-const badgeY = nameY - 13;
+const badgeX = CONTENT_X + nameW + 6;
+const badgeY = nameY - 11;
 
-// fond badge
 ctx.fillStyle = '#2b2d31';
-roundRect(ctx, badgeX, badgeY, badgeTextWidth + badgePaddingX * 2, badgeHeight, 6);
+roundRect(ctx, badgeX, badgeY, badgeTextWidth + badgePaddingX * 2 + 14, badgeHeight, 4);
+ctx.fill();
+
+// icône
+ctx.beginPath();
+ctx.arc(badgeX + 8, badgeY + badgeHeight / 2, 4, 0, Math.PI * 2);
+ctx.fillStyle = '#f1c40f';
 ctx.fill();
 
 // texte badge
 ctx.fillStyle = '#ffffff';
-ctx.fillText(badgeText, badgeX + badgePaddingX, badgeY + 13);
+ctx.fillText(badgeText, badgeX + 14, badgeY + 10);
 
-// --- HEURE (placée APRÈS le badge) ---
-const timeX = badgeX + badgeTextWidth + badgePaddingX * 2 + 8;
+// HEURE
+const badgeTotalWidth = badgeTextWidth + badgePaddingX * 2 + 14;
+const timeX = badgeX + badgeTotalWidth + 6;
 
 const d = timestamp ? new Date(timestamp) : new Date();
 const hh = d.getHours().toString().padStart(2, '0');
 const mm = d.getMinutes().toString().padStart(2, '0');
 const timeStr = hh + ':' + mm;
 
-ctx.fillStyle = '#80848e';
 ctx.font = '12px sans-serif';
+ctx.fillStyle = '#80848e';
 ctx.fillText(timeStr, timeX, nameY - 1);
-
-  // --- BADGE BOOM ---
-const badgeText = '💥 BOOM';
 
 // style du badge
 ctx.font = 'bold 11px sans-serif';

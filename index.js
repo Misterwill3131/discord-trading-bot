@@ -87,20 +87,20 @@ textarea{height:80px;resize:vertical}
 <h1>Trading Signal Tester</h1>
 <div class="section-title">Presets rapides</div>
 <div class="presets">
-<button class="preset-btn p-entry" onclick="preset('Will','entry','\$AAPL 150.00-155.00')">AAPL Entry</button>
-<button class="preset-btn p-neutral" onclick="preset('Will','neutral','\$TSLA 250.00-260.00 swing')">TSLA Swing</button>
-<button class="preset-btn p-entry" onclick="preset('Will','entry','\$AMZN 185.00 scalp rapide')">AMZN Scalp</button>
-<button class="preset-btn p-exit" onclick="preset('Will','exit','\$NVDA 875.00 sortie position')">NVDA Exit</button>
-<button class="preset-btn p-neutral" onclick="preset('Will','neutral','\$SPY 500.00 niveau cle')">SPY Neutral</button>
+  <button class="preset-btn p-entry" onclick="preset('Will','entry','\$AAPL 150.00-155.00')">AAPL Entry</button>
+  <button class="preset-btn p-neutral" onclick="preset('Will','neutral','\$TSLA 250.00-260.00 swing')">TSLA Swing</button>
+  <button class="preset-btn p-entry" onclick="preset('Will','entry','\$AMZN 185.00 scalp rapide')">AMZN Scalp</button>
+  <button class="preset-btn p-exit" onclick="preset('Will','exit','\$NVDA 875.00 sortie position')">NVDA Exit</button>
+  <button class="preset-btn p-neutral" onclick="preset('Will','neutral','\$SPY 500.00 niveau cle')">SPY Neutral</button>
 </div>
 <div class="form-row">
-<div><label>Auteur</label><input id="author" value="Will"></div>
-<div><label>Signal Type</label>
-<select id="signal_type">
-<option value="entry">entry</option>
-<option value="exit">exit</option>
-<option value="neutral">neutral</option>
-</select></div></div>
+  <div><label>Auteur</label><input id="author" value="Will"></div>
+  <div><label>Signal Type</label>
+  <select id="signal_type">
+    <option value="entry">entry</option>
+    <option value="exit">exit</option>
+    <option value="neutral">neutral</option>
+  </select></div></div>
 <div style="margin-bottom:12px"><label>Message</label><textarea id="content">\$TSLA 150.00-155.00</textarea></div>
 <button class="send-btn" id="sendBtn" onclick="sendSignal()">ENVOYER LE SIGNAL</button>
 <div class="status-bar" id="status"></div>
@@ -114,26 +114,26 @@ var RAILWAY='${railwayUrl}';
 function preset(a,t,m){document.getElementById('author').value=a;document.getElementById('signal_type').value=t;document.getElementById('content').value=m;}
 function log(msg,cls){cls=cls||'log-info';var d=document.getElementById('log');var t=new Date().toTimeString().slice(0,8);d.innerHTML='<div class="log-entry"><span class="log-time">'+t+'</span><span class="'+cls+'">'+msg+'</span></div>'+d.innerHTML;}
 async function sendSignal(){
-var author=document.getElementById('author').value.trim();
-var signal_type=document.getElementById('signal_type').value;
-var content=document.getElementById('content').value.trim();
-if(!content)return;
-var btn=document.getElementById('sendBtn');
-btn.disabled=true;
-document.getElementById('status').innerHTML='<span style="color:#888">Generation image...</span>';
-var imageUrl=null;
-try{
-var imgRes=await fetch(RAILWAY+'/generate-and-store',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({author:author,content:content,timestamp:new Date().toISOString()})});
-if(imgRes.ok){var imgData=await imgRes.json();imageUrl=imgData.image_url;var p=document.getElementById('previewImg');p.src=imageUrl;p.style.display='block';log('Image: '+imageUrl,'log-ok');}
-else{log('Image echouee: '+imgRes.status,'log-err');}
-}catch(e){log('Erreur image: '+e.message,'log-err');}
-document.getElementById('status').innerHTML='<span style="color:#888">Envoi Make.com...</span>';
-try{
-var r=await fetch(MAKE_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:content,author:author,channel:'trading-floor',signal_type:signal_type,timestamp:new Date().toISOString(),image_url:imageUrl})});
-document.getElementById('status').innerHTML='<span style="color:#00d4aa">OK '+r.status+' | image: '+(imageUrl?'oui':'null')+'</span>';
-log('Make.com '+r.status+' | '+author+' | '+content.substring(0,50),'log-ok');
-}catch(e){document.getElementById('status').innerHTML='<span style="color:#ff6b6b">Erreur: '+e.message+'</span>';log('Erreur: '+e.message,'log-err');}
-finally{btn.disabled=false;}
+  var author=document.getElementById('author').value.trim();
+  var signal_type=document.getElementById('signal_type').value;
+  var content=document.getElementById('content').value.trim();
+  if(!content)return;
+  var btn=document.getElementById('sendBtn');
+  btn.disabled=true;
+  document.getElementById('status').innerHTML='<span style="color:#888">Generation image...</span>';
+  var imageUrl=null;
+  try{
+    var imgRes=await fetch(RAILWAY+'/generate-and-store',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({author:author,content:content,timestamp:new Date().toISOString()})});
+    if(imgRes.ok){var imgData=await imgRes.json();imageUrl=imgData.image_url;var p=document.getElementById('previewImg');p.src=imageUrl;p.style.display='block';log('Image: '+imageUrl,'log-ok');}
+    else{log('Image echouee: '+imgRes.status,'log-err');}
+  }catch(e){log('Erreur image: '+e.message,'log-err');}
+  document.getElementById('status').innerHTML='<span style="color:#888">Envoi Make.com...</span>';
+  try{
+    var r=await fetch(MAKE_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:content,author:author,channel:'trading-floor',signal_type:signal_type,timestamp:new Date().toISOString(),image_url:imageUrl})});
+    document.getElementById('status').innerHTML='<span style="color:#00d4aa">OK '+r.status+' | image: '+(imageUrl?'oui':'null')+'</span>';
+    log('Make.com '+r.status+' | '+author+' | '+content.substring(0,50),'log-ok');
+  }catch(e){document.getElementById('status').innerHTML='<span style="color:#ff6b6b">Erreur: '+e.message+'</span>';log('Erreur: '+e.message,'log-err');}
+  finally{btn.disabled=false;}
 }
 document.addEventListener('keydown',function(e){if(e.ctrlKey&&e.key==='Enter')sendSignal();});
 </script></body></html>`);
@@ -141,52 +141,32 @@ document.addEventListener('keydown',function(e){if(e.ctrlKey&&e.key==='Enter')se
 
 app.listen(PORT, () => console.log('Server running on port ' + PORT));
 
-// ─────────────────────────────────────────────────────────────
-// generateImage  –  screenshot Discord pixel-perfect
-//
-// Couleurs mesurées sur le vrai Discord dark mode :
-//   Fond canal        #1e1f22
-//   Fond message      #1e1f22  (pas de hover ici)
-//   Nom blanc         #f2f3f5
-//   Heure             #80848e
-//   Texte message     #dcddde
-//   Blurple avatar    #5865f2
-//   Séparateur date   #3f4147
-// ─────────────────────────────────────────────────────────────
 function generateImage(author, content, timestamp) {
-  // Dimensions proches d'un screenshot Discord typique
-  // Largeur fixe 740px (environ celle d'un canal Discord sur 1080p)
   const W = 740;
-  const PADDING_V = 18;   // espace vertical haut/bas autour du message
-  const PADDING_L = 16;   // marge gauche du fond
-  const AVATAR_D  = 40;   // diamètre avatar
-  const AVATAR_X  = PADDING_L;
-  const CONTENT_X = PADDING_L + AVATAR_D + 16; // 72px — marge gauche du texte
-  const MAX_TW    = W - CONTENT_X - PADDING_L; // largeur max texte
+  const PADDING_V = 18;
+  const PADDING_L = 16;
+  const AVATAR_D = 40;
+  const AVATAR_X = PADDING_L;
+  const CONTENT_X = PADDING_L + AVATAR_D + 16;
+  const MAX_TW = W - CONTENT_X - PADDING_L;
 
-  // ── Calculer la hauteur nécessaire pour le texte ──
-  // On crée un canvas temporaire pour mesurer
   const tmpC = createCanvas(W, 400);
   const tmpCtx = tmpC.getContext('2d');
   tmpCtx.font = '16px sans-serif';
   const lines = wrapText(tmpCtx, content, MAX_TW);
+
   const LINE_H = 22;
-  const NAME_H  = 20; // hauteur ligne nom
-  // Hauteur totale: padding haut + ligne nom + lignes texte + padding bas
+  const NAME_H = 20;
   const H = PADDING_V + NAME_H + (lines.length * LINE_H) + PADDING_V + 2;
 
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
 
-  // ── Fond ──
   ctx.fillStyle = '#1e1f22';
   ctx.fillRect(0, 0, W, H);
 
-  // ── Avatar: cercle avec initiales ──
   const avatarCX = AVATAR_X + AVATAR_D / 2;
-  const avatarCY = PADDING_V + NAME_H / 2 + 2; // centré sur la ligne du nom
-
-  // Couleur avatar: blurple Discord par défaut
+  const avatarCY = PADDING_V + NAME_H / 2 + 2;
   ctx.save();
   ctx.beginPath();
   ctx.arc(avatarCX, avatarCY, AVATAR_D / 2, 0, Math.PI * 2);
@@ -194,7 +174,6 @@ function generateImage(author, content, timestamp) {
   ctx.fill();
   ctx.restore();
 
-  // Initiales dans l'avatar
   const initials = (author || 'W').slice(0, 2).toUpperCase();
   ctx.fillStyle = '#ffffff';
   ctx.font = 'bold 15px sans-serif';
@@ -204,91 +183,38 @@ function generateImage(author, content, timestamp) {
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
 
-  // ── Nom + heure ──
   const nameY = PADDING_V + NAME_H - 3;
 
-  // Nom en blanc/légèrement gris (membre sans rôle coloré = #f2f3f5)
   ctx.fillStyle = '#D649CC';
   ctx.font = 'bold 16px sans-serif';
-// --- USERNAME ---
-ctx.fillStyle = '#D649CC';
-ctx.font = 'bold 16px sans-serif';
-ctx.fillText(author || 'Z', CONTENT_X, nameY);
+  ctx.fillText(author || 'Z', CONTENT_X, nameY);
+  const nameW = ctx.measureText(author || 'Z').width;
 
-const nameW = ctx.measureText(author || 'Z').width;
+  const badgeText = '💥 BOOM';
+  ctx.font = 'bold 11px sans-serif';
+  const badgePaddingX = 8;
+  const badgeHeight = 18;
+  const badgeTextWidth = ctx.measureText(badgeText).width;
+  const badgeX = CONTENT_X + nameW + 8;
+  const badgeY = nameY - 13;
 
-// --- BADGE BOOM ---
-const badgeText = '💥 BOOM';
-ctx.font = 'bold 11px sans-serif';
+  ctx.fillStyle = '#2b2d31';
+  roundRect(ctx, badgeX, badgeY, badgeTextWidth + badgePaddingX * 2, badgeHeight, 6);
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(badgeText, badgeX + badgePaddingX, badgeY + 13);
 
-const badgePaddingX = 8;
-const badgeHeight = 18;
-
-const badgeTextWidth = ctx.measureText(badgeText).width;
-
-// Position badge (juste après le nom)
-const badgeX = CONTENT_X + nameW + 8;
-const badgeY = nameY - 13;
-
-// fond badge
-ctx.fillStyle = '#2b2d31';
-roundRect(ctx, badgeX, badgeY, badgeTextWidth + badgePaddingX * 2, badgeHeight, 6);
-ctx.fill();
-
-// texte badge
-ctx.fillStyle = '#ffffff';
-ctx.fillText(badgeText, badgeX + badgePaddingX, badgeY + 13);
-
-// --- HEURE (placée APRÈS le badge) ---
-const timeX = badgeX + badgeTextWidth + badgePaddingX * 2 + 8;
-
-const d = timestamp ? new Date(timestamp) : new Date();
-const hh = d.getHours().toString().padStart(2, '0');
-const mm = d.getMinutes().toString().padStart(2, '0');
-const timeStr = hh + ':' + mm;
-
-ctx.fillStyle = '#80848e';
-ctx.font = '12px sans-serif';
-ctx.fillText(timeStr, timeX, nameY - 1);
-
-  // --- BADGE BOOM ---
-const badgeText = '💥 BOOM';
-
-// style du badge
-ctx.font = 'bold 11px sans-serif';
-
-// largeur du badge
-const badgePaddingX = 8;
-const badgePaddingY = 4;
-const badgeTextWidth = ctx.measureText(badgeText).width;
-
-// position (à droite du pseudo)
-const badgeX = CONTENT_X + nameW + 10;
-const badgeY = nameY - 12;
-
-// fond arrondi
-ctx.fillStyle = '#2b2d31';
-roundRect(ctx, badgeX, badgeY, badgeTextWidth + badgePaddingX * 2, 18, 6);
-ctx.fill();
-
-// texte badge
-ctx.fillStyle = '#ffffff';
-ctx.fillText(badgeText, badgeX + badgePaddingX, badgeY + 13);
-
-  // Heure — format Discord "Aujourd'hui à HH:MM"
   const d = timestamp ? new Date(timestamp) : new Date();
   const hh = d.getHours().toString().padStart(2, '0');
   const mm = d.getMinutes().toString().padStart(2, '0');
-  const timeStr = hh + ':' + mm;
-
+  const timeStr = 'Today at ' + hh + ':' + mm;
+  const timeX = badgeX + badgeTextWidth + badgePaddingX * 2 + 8;
   ctx.fillStyle = '#80848e';
   ctx.font = '12px sans-serif';
-  ctx.fillText(timeStr, CONTENT_X + nameW + 8, nameY - 1);
+  ctx.fillText(timeStr, timeX, nameY - 1);
 
-  // ── Texte du message ──
   ctx.fillStyle = '#dcddde';
   ctx.font = '16px sans-serif';
-
   let ty = nameY + LINE_H;
   for (const line of lines) {
     ctx.fillText(line, CONTENT_X, ty);
@@ -298,7 +224,6 @@ ctx.fillText(badgeText, badgeX + badgePaddingX, badgeY + 13);
   return canvas.toBuffer('image/png');
 }
 
-// Wrap text helper
 function wrapText(ctx, text, maxWidth) {
   const words = text.split(' ');
   const lines = [];
@@ -316,17 +241,17 @@ function wrapText(ctx, text, maxWidth) {
   return lines.length ? lines : [''];
 }
 
-// Signal classifier
 function classifySignal(content) {
   const lower = content.toLowerCase();
   const blocked = ['news', 'sec', 'ipo', 'offering', 'halted', 'form 8-k', 'reverse stock split'];
-  for (const b of blocked) { if (lower.includes(b)) return null; }
+  for (const b of blocked) {
+    if (lower.includes(b)) return null;
+  }
   if (lower.includes('entree') || lower.includes('entry') || lower.includes('long') || lower.includes('scalp')) return 'entry';
   if (lower.includes('sortie') || lower.includes('exit') || lower.includes('stop')) return 'exit';
   return 'neutral';
 }
 
-// Discord bot
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
 });
@@ -341,10 +266,15 @@ client.on('messageCreate', async (message) => {
   const channelName = message.channel.name || '';
   console.log('Message received - channel: "' + channelName + '", author: ' + message.author.username);
   if (!channelName.includes(TRADING_CHANNEL)) return;
+
   const content = message.content;
   const signalType = classifySignal(content);
-  if (!signalType) { console.log('Filtered out: ' + content.substring(0, 80)); return; }
+  if (!signalType) {
+    console.log('Filtered out: ' + content.substring(0, 80));
+    return;
+  }
   console.log('[' + signalType.toUpperCase() + '] ' + content);
+
   let imageUrl = null;
   try {
     const imgBuf = generateImage(message.author.username, content, message.createdAt.toISOString());
@@ -352,16 +282,29 @@ client.on('messageCreate', async (message) => {
     lastImageId = Date.now();
     imageUrl = RAILWAY_URL + '/image/latest?t=' + lastImageId;
     console.log('Image generated, URL: ' + imageUrl);
-  } catch (err) { console.error('Image generation error:', err.message); }
+  } catch (err) {
+    console.error('Image generation error:', err.message);
+  }
+
   try {
     const result = await fetch(MAKE_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content, author: message.author.username, channel: channelName, signal_type: signalType, timestamp: message.createdAt.toISOString(), image_url: imageUrl }),
+      body: JSON.stringify({
+        content,
+        author: message.author.username,
+        channel: channelName,
+        signal_type: signalType,
+        timestamp: message.createdAt.toISOString(),
+        image_url: imageUrl
+      }),
     });
     console.log('Sent to Make, status: ' + result.status);
-  } catch (err) { console.error('Error sending to Make:', err.message); }
+  } catch (err) {
+    console.error('Error sending to Make:', err.message);
+  }
 });
+
 function roundRect(ctx, x, y, width, height, radius) {
   ctx.beginPath();
   ctx.moveTo(x + radius, y);

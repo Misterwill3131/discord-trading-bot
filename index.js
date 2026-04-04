@@ -241,7 +241,7 @@ ctx.fillText(badgeText, badgeX + badgePaddingX, badgeY + 13);
   const d = timestamp ? new Date(timestamp) : new Date();
   const hh = d.getHours().toString().padStart(2, '0');
   const mm = d.getMinutes().toString().padStart(2, '0');
-  const timeStr =  + hh + ':' + mm;
+  const timeStr = hh + ':' + mm;
 
   ctx.fillStyle = '#80848e';
   ctx.font = '12px sans-serif';

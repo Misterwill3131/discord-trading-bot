@@ -1,7 +1,8 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const fetch = require('node-fetch');
-const { createCanvas } = require('@napi-rs/canvas');
+const { createCanvas, GlobalFonts } = require('@napi-rs/canvas');
 const express = require('express');
+const path = require('path');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL;
@@ -10,6 +11,18 @@ const PORT = process.env.PORT || 3000;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
   : 'https://discord-trading-bot-production-f159.up.railway.app';
+
+// Register GG Sans fonts
+try {
+  GlobalFonts.registerFromPath('/app/fonts/gg-sans-normal.ttf', 'GGSans');
+  GlobalFonts.registerFromPath('/app/fonts/gg-sans-bold.ttf', 'GGSans');
+  console.log('GG Sans fonts registered');
+} catch (e) {
+  console.warn('GG Sans not found, falling back to sans-serif:', e.message);
+}
+
+const FONT_NORMAL = 'GGSans, sans-serif';
+const FONT_BOLD = 'GGSans, sans-serif';
 
 const app = express();
 app.use(express.json());
@@ -152,7 +165,7 @@ function generateImage(author, content, timestamp) {
 
   const tmpC = createCanvas(W, 400);
   const tmpCtx = tmpC.getContext('2d');
-  tmpCtx.font = '16px sans-serif';
+  tmpCtx.font = '16px ' + FONT_NORMAL;
   const lines = wrapText(tmpCtx, content, MAX_TW);
 
   const LINE_H = 22;
@@ -162,9 +175,11 @@ function generateImage(author, content, timestamp) {
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
 
+  // Background
   ctx.fillStyle = '#1e1f22';
   ctx.fillRect(0, 0, W, H);
 
+  // Avatar circle with initials
   const avatarCX = AVATAR_X + AVATAR_D / 2;
   const avatarCY = PADDING_V + NAME_H / 2 + 2;
   ctx.save();
@@ -176,7 +191,7 @@ function generateImage(author, content, timestamp) {
 
   const initials = (author || 'W').slice(0, 2).toUpperCase();
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 15px sans-serif';
+  ctx.font = 'bold 15px ' + FONT_BOLD;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(initials, avatarCX, avatarCY);
@@ -185,36 +200,59 @@ function generateImage(author, content, timestamp) {
 
   const nameY = PADDING_V + NAME_H - 3;
 
+  // Username
   ctx.fillStyle = '#D649CC';
-  ctx.font = 'bold 16px sans-serif';
+  ctx.font = 'bold 16px ' + FONT_BOLD;
   ctx.fillText(author || 'Z', CONTENT_X, nameY);
   const nameW = ctx.measureText(author || 'Z').width;
 
-  const badgeText = '💥 BOOM';
-  ctx.font = 'bold 11px sans-serif';
-  const badgePaddingX = 8;
-  const badgeHeight = 18;
-  const badgeTextWidth = ctx.measureText(badgeText).width;
+  // BOOM badge — identique au badge Discord role
+  // Icone feu + BOOM, fond #4f5660 arrondi, avec bordure subtile
+  const badgePaddingX = 6;
+  const badgePaddingY = 3;
+  const badgeIconSize = 14;
+  const badgeGap = 4;
+
+  ctx.font = 'bold 11px ' + FONT_BOLD;
+  const boomText = 'BOOM';
+  const boomTextW = ctx.measureText(boomText).width;
+
+  // Total badge width: paddingX + icon + gap + text + paddingX
+  const badgeTotalW = badgePaddingX + badgeIconSize + badgeGap + boomTextW + badgePaddingX;
+  const badgeH = 18;
   const badgeX = CONTENT_X + nameW + 8;
-  const badgeY = nameY - 13;
+  const badgeY = nameY - 14;
 
-  ctx.fillStyle = '#2b2d31';
-  roundRect(ctx, badgeX, badgeY, badgeTextWidth + badgePaddingX * 2, badgeHeight, 6);
+  // Badge background — couleur sombre Discord role badge
+  ctx.fillStyle = '#4f5660';
+  roundRect(ctx, badgeX, badgeY, badgeTotalW, badgeH, 4);
   ctx.fill();
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(badgeText, badgeX + badgePaddingX, badgeY + 13);
 
+  // Fire icon (🔥) inside badge
+  ctx.font = '11px ' + FONT_NORMAL;
+  ctx.textBaseline = 'middle';
+  ctx.fillText('\uD83D\uDD25', badgeX + badgePaddingX, badgeY + badgeH / 2);
+
+  // BOOM text
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 11px ' + FONT_BOLD;
+  ctx.textBaseline = 'middle';
+  ctx.fillText(boomText, badgeX + badgePaddingX + badgeIconSize + badgeGap, badgeY + badgeH / 2);
+  ctx.textBaseline = 'alphabetic';
+
+  // Time — "Today at HH:MM"
   const d = timestamp ? new Date(timestamp) : new Date();
   const hh = d.getHours().toString().padStart(2, '0');
   const mm = d.getMinutes().toString().padStart(2, '0');
   const timeStr = 'Today at ' + hh + ':' + mm;
-  const timeX = badgeX + badgeTextWidth + badgePaddingX * 2 + 8;
+  const timeX = badgeX + badgeTotalW + 8;
   ctx.fillStyle = '#80848e';
-  ctx.font = '12px sans-serif';
+  ctx.font = '12px ' + FONT_NORMAL;
   ctx.fillText(timeStr, timeX, nameY - 1);
 
+  // Message text
   ctx.fillStyle = '#dcddde';
-  ctx.font = '16px sans-serif';
+  ctx.font = '16px ' + FONT_NORMAL;
   let ty = nameY + LINE_H;
   for (const line of lines) {
     ctx.fillText(line, CONTENT_X, ty);

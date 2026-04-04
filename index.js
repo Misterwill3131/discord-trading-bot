@@ -208,16 +208,16 @@ function generateImage(author, content, timestamp) {
   const nameY = PADDING_V + NAME_H - 3;
 
   // Nom en blanc/légèrement gris (membre sans rôle coloré = #f2f3f5)
-  ctx.fillStyle = '#f2f3f5';
+  ctx.fillStyle = '#D649CC';
   ctx.font = 'bold 16px sans-serif';
-  ctx.fillText(author || 'Will', CONTENT_X, nameY);
-  const nameW = ctx.measureText(author || 'Will').width;
+  ctx.fillText(author || 'Z', CONTENT_X, nameY);
+  const nameW = ctx.measureText(author || 'Z').width;
 
   // Heure — format Discord "Aujourd'hui à HH:MM"
   const d = timestamp ? new Date(timestamp) : new Date();
   const hh = d.getHours().toString().padStart(2, '0');
   const mm = d.getMinutes().toString().padStart(2, '0');
-  const timeStr = "Aujourd'hui à " + hh + ':' + mm;
+  const timeStr =  + hh + ':' + mm;
 
   ctx.fillStyle = '#80848e';
   ctx.font = '12px sans-serif';

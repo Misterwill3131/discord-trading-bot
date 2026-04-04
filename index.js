@@ -1,6 +1,6 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const fetch = require('node-fetch');
-const { createCanvas } = require('@napi-rs/canvas');
+const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const express = require('express');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
@@ -11,7 +11,19 @@ const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
   : 'https://discord-trading-bot-production-f159.up.railway.app';
 
-// Noto Sans is installed via apt (fonts-noto-core) — closest open-source to Discord GG Sans
+// ─────────────────────────────────────────────────────────────────────
+//  SECTION AVATARS — Ajouter ici les avatars personnalisés par Discord username
+//  Format : 'NomExact': 'URL_de_l_image'
+//  Si un utilisateur n'est pas dans cette liste, ses initiales seront utilisées.
+// ─────────────────────────────────────────────────────────────────────
+const CUSTOM_AVATARS = {
+  'Z': 'https://raw.githubusercontent.com/Misterwill3131/discord-trading-bot/main/z-avatar.jpg',
+  // Ajoutez d'autres utilisateurs ici:
+  // 'Will': 'https://url-de-l-avatar-de-will.jpg',
+  // 'Alex': 'https://url-de-l-avatar-alex.jpg',
+};
+// ─────────────────────────────────────────────────────────────────────
+
 const FONT = 'Noto Sans, sans-serif';
 
 const app = express();
@@ -36,27 +48,21 @@ app.options('/generate-and-store', (req, res) => {
 
 app.post('/generate-and-store', (req, res) => {
   const { author = 'Will', content = '', timestamp = new Date().toISOString() } = req.body;
-  try {
-    const imgBuf = generateImage(author, content, timestamp);
+  generateImage(author, content, timestamp).then(imgBuf => {
     lastImageBuffer = imgBuf;
     lastImageId = Date.now();
     const imageUrl = RAILWAY_URL + '/image/latest?t=' + lastImageId;
     res.set('Access-Control-Allow-Origin', '*');
     res.json({ image_url: imageUrl });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  }).catch(err => res.status(500).json({ error: err.message }));
 });
 
 app.post('/generate', (req, res) => {
   const { username = 'Unknown', content = '', timestamp = new Date().toISOString() } = req.body;
-  try {
-    const imgBuf = generateImage(username, content, timestamp);
+  generateImage(username, content, timestamp).then(imgBuf => {
     res.set('Content-Type', 'image/png');
     res.send(imgBuf);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  }).catch(err => res.status(500).json({ error: err.message }));
 });
 
 app.get('/health', (_req, res) => {
@@ -92,7 +98,7 @@ textarea{height:80px;resize:vertical}
 <div class="presets">
   <button class="preset-btn p-entry" onclick="preset('Will','entry','\$AAPL 150.00-155.00')">AAPL Entry</button>
   <button class="preset-btn p-neutral" onclick="preset('Will','neutral','\$TSLA 250.00-260.00 swing')">TSLA Swing</button>
-  <button class="preset-btn p-entry" onclick="preset('Will','entry','\$AMZN 185.00 scalp rapide')">AMZN Scalp</button>
+  <button class="preset-btn p-entry" onclick="preset('Z','entry','\$AMZN 185.00 scalp rapide')">AMZN (Z)</button>
   <button class="preset-btn p-exit" onclick="preset('Will','exit','\$NVDA 875.00 sortie position')">NVDA Exit</button>
   <button class="preset-btn p-neutral" onclick="preset('Will','neutral','\$SPY 500.00 niveau cle')">SPY Neutral</button>
 </div>
@@ -144,7 +150,7 @@ document.addEventListener('keydown',function(e){if(e.ctrlKey&&e.key==='Enter')se
 
 app.listen(PORT, () => console.log('Server running on port ' + PORT));
 
-function generateImage(author, content, timestamp) {
+async function generateImage(author, content, timestamp) {
   const W = 740;
   const PADDING_V = 18;
   const PADDING_L = 16;
@@ -169,38 +175,75 @@ function generateImage(author, content, timestamp) {
   ctx.fillStyle = '#1e1f22';
   ctx.fillRect(0, 0, W, H);
 
-  // Avatar circle with initials
+  // ── Avatar ──
   const avatarCX = AVATAR_X + AVATAR_D / 2;
   const avatarCY = PADDING_V + NAME_H / 2 + 2;
+  const avatarR = AVATAR_D / 2;
+
+  // Clip circulaire pour l'avatar
   ctx.save();
   ctx.beginPath();
-  ctx.arc(avatarCX, avatarCY, AVATAR_D / 2, 0, Math.PI * 2);
-  ctx.fillStyle = '#5865f2';
-  ctx.fill();
+  ctx.arc(avatarCX, avatarCY, avatarR, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.clip();
+
+  const customAvatarUrl = CUSTOM_AVATARS[author];
+  if (customAvatarUrl) {
+    // Charger et dessiner la photo de profil personnalisée
+    try {
+      const img = await loadImage(customAvatarUrl);
+      // Dessiner l'image dans le cercle en gardant le ratio (cover)
+      const size = AVATAR_D;
+      const imgRatio = img.width / img.height;
+      let drawW = size, drawH = size;
+      let drawX = avatarCX - avatarR, drawY = avatarCY - avatarR;
+      if (imgRatio > 1) {
+        drawW = size * imgRatio;
+        drawX = avatarCX - drawW / 2;
+      } else {
+        drawH = size / imgRatio;
+        drawY = avatarCY - drawH / 2;
+      }
+      ctx.drawImage(img, drawX, drawY, drawW, drawH);
+    } catch (e) {
+      // Fallback: cercle blurple avec initiales
+      ctx.fillStyle = '#5865f2';
+      ctx.fillRect(avatarCX - avatarR, avatarCY - avatarR, AVATAR_D, AVATAR_D);
+    }
+  } else {
+    // Avatar par défaut: cercle blurple avec initiales
+    ctx.fillStyle = '#5865f2';
+    ctx.fillRect(avatarCX - avatarR, avatarCY - avatarR, AVATAR_D, AVATAR_D);
+  }
   ctx.restore();
 
-  const initials = (author || 'W').slice(0, 2).toUpperCase();
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 14px ' + FONT;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(initials, avatarCX, avatarCY);
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
+  // Initiales (uniquement si pas d'avatar personnalisé)
+  if (!customAvatarUrl) {
+    const initials = (author || 'W').slice(0, 2).toUpperCase();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 14px ' + FONT;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(initials, avatarCX, avatarCY);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+  }
 
   const nameY = PADDING_V + NAME_H - 3;
 
-  // Username in role color
+  // Username
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = '#D649CC';
   ctx.font = 'bold 16px ' + FONT;
   ctx.fillText(author || 'Z', CONTENT_X, nameY);
   const nameW = ctx.measureText(author || 'Z').width;
 
-  // ── BOOM badge — Discord role badge style ──
+  // BOOM badge
   const BADGE_H = 16;
   const BADGE_PAD_X = 5;
   const BADGE_RADIUS = 3;
-  const BADGE_ICON = '\uD83D\uDD25'; // 🔥
+  const BADGE_ICON = '\uD83D\uDD25';
   const BADGE_LABEL = 'BOOM';
   const BADGE_GAP = 3;
 
@@ -213,30 +256,26 @@ function generateImage(author, content, timestamp) {
   const badgeX = CONTENT_X + nameW + 6;
   const badgeY = nameY - BADGE_H + 2;
 
-  // Badge background
   ctx.fillStyle = '#36393f';
   roundRect(ctx, badgeX, badgeY, BADGE_W, BADGE_H, BADGE_RADIUS);
   ctx.fill();
 
-  // Badge border
   ctx.strokeStyle = '#4f5660';
   ctx.lineWidth = 0.5;
   roundRect(ctx, badgeX, badgeY, BADGE_W, BADGE_H, BADGE_RADIUS);
   ctx.stroke();
 
-  // Fire icon
   ctx.font = '10px ' + FONT;
   ctx.fillStyle = '#ffffff';
   ctx.textBaseline = 'middle';
   ctx.fillText(BADGE_ICON, badgeX + BADGE_PAD_X, badgeY + BADGE_H / 2);
 
-  // BOOM text
   ctx.font = 'bold 10px ' + FONT;
   ctx.fillStyle = '#ffffff';
   ctx.fillText(BADGE_LABEL, badgeX + BADGE_PAD_X + iconW + BADGE_GAP, badgeY + BADGE_H / 2);
   ctx.textBaseline = 'alphabetic';
 
-  // Time — "Today at HH:MM"
+  // Time
   const d = timestamp ? new Date(timestamp) : new Date();
   const hh = d.getHours().toString().padStart(2, '0');
   const mm = d.getMinutes().toString().padStart(2, '0');
@@ -311,7 +350,7 @@ client.on('messageCreate', async (message) => {
 
   let imageUrl = null;
   try {
-    const imgBuf = generateImage(message.author.username, content, message.createdAt.toISOString());
+    const imgBuf = await generateImage(message.author.username, content, message.createdAt.toISOString());
     lastImageBuffer = imgBuf;
     lastImageId = Date.now();
     imageUrl = RAILWAY_URL + '/image/latest?t=' + lastImageId;

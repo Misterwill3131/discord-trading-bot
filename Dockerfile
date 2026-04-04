@@ -10,12 +10,14 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Download GG Sans font files (Discord's font, hosted on GitHub)
+# Download Inter font (open source, visually closest to Discord GG Sans)
 RUN mkdir -p /app/fonts && \
-  wget -q -O /app/fonts/gg-sans-normal.ttf \
-    "https://github.com/nicholasgasior/discord-gg-sans/raw/main/GGSans-Normal.ttf" && \
-  wget -q -O /app/fonts/gg-sans-bold.ttf \
-    "https://github.com/nicholasgasior/discord-gg-sans/raw/main/GGSans-Bold.ttf" && \
+  wget -q -O /app/fonts/inter-regular.ttf \
+    "https://github.com/rsms/inter/raw/master/docs/font-files/Inter-Regular.ttf" && \
+  wget -q -O /app/fonts/inter-semibold.ttf \
+    "https://github.com/rsms/inter/raw/master/docs/font-files/Inter-SemiBold.ttf" && \
+  wget -q -O /app/fonts/inter-bold.ttf \
+    "https://github.com/rsms/inter/raw/master/docs/font-files/Inter-Bold.ttf" && \
   fc-cache -f -v
 
 COPY package*.json ./

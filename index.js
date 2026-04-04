@@ -1,6 +1,6 @@
 const { Client, GatewayIntentBits } = require('discord.js');
 const fetch = require('node-fetch');
-const { createCanvas, GlobalFonts } = require('@napi-rs/canvas');
+const { createCanvas } = require('@napi-rs/canvas');
 const express = require('express');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
@@ -11,17 +11,8 @@ const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
   : 'https://discord-trading-bot-production-f159.up.railway.app';
 
-// Register Inter fonts (open source, visually closest to Discord GG Sans)
-try {
-  GlobalFonts.registerFromPath('/app/fonts/inter-regular.ttf', 'Inter');
-  GlobalFonts.registerFromPath('/app/fonts/inter-semibold.ttf', 'Inter');
-  GlobalFonts.registerFromPath('/app/fonts/inter-bold.ttf', 'Inter');
-  console.log('Inter fonts registered successfully');
-} catch (e) {
-  console.warn('Inter fonts not found, using system fallback:', e.message);
-}
-
-const FONT = 'Inter, sans-serif';
+// Noto Sans is installed via apt (fonts-noto-core) — closest open-source to Discord GG Sans
+const FONT = 'Noto Sans, sans-serif';
 
 const app = express();
 app.use(express.json());
@@ -205,33 +196,29 @@ function generateImage(author, content, timestamp) {
   ctx.fillText(author || 'Z', CONTENT_X, nameY);
   const nameW = ctx.measureText(author || 'Z').width;
 
-  // ── BOOM badge — identique image de référence ──
-  // Badge Discord role style: fond sombre arrondi, icone feu à gauche, texte BOOM blanc
+  // ── BOOM badge — Discord role badge style ──
   const BADGE_H = 16;
   const BADGE_PAD_X = 5;
-  const BADGE_PAD_Y = 2;
+  const BADGE_RADIUS = 3;
   const BADGE_ICON = '\uD83D\uDD25'; // 🔥
   const BADGE_LABEL = 'BOOM';
-  const BADGE_RADIUS = 3;
+  const BADGE_GAP = 3;
 
-  // Measure badge contents
   ctx.font = '10px ' + FONT;
   const iconW = ctx.measureText(BADGE_ICON).width;
   ctx.font = 'bold 10px ' + FONT;
   const labelW = ctx.measureText(BADGE_LABEL).width;
 
-  const BADGE_GAP = 3;
   const BADGE_W = BADGE_PAD_X + iconW + BADGE_GAP + labelW + BADGE_PAD_X;
-
   const badgeX = CONTENT_X + nameW + 6;
   const badgeY = nameY - BADGE_H + 2;
 
-  // Badge background — couleur exacte Discord role badge dark
+  // Badge background
   ctx.fillStyle = '#36393f';
   roundRect(ctx, badgeX, badgeY, BADGE_W, BADGE_H, BADGE_RADIUS);
   ctx.fill();
 
-  // Badge border subtile
+  // Badge border
   ctx.strokeStyle = '#4f5660';
   ctx.lineWidth = 0.5;
   roundRect(ctx, badgeX, badgeY, BADGE_W, BADGE_H, BADGE_RADIUS);

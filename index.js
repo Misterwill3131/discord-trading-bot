@@ -69,7 +69,7 @@ app.get('/health', (_req, res) => {
   const railwayUrl = RAILWAY_URL;
   res.set('Content-Type', 'text/html');
   res.send(`<!DOCTYPE html>
- <html lang="fr">
+ <html lang="EN">
  <head>
  <meta charset="UTF-8">
  <title>Trading Signal Tester</title>

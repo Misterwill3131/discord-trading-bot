@@ -11,25 +11,19 @@ const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
   : 'https://discord-trading-bot-production-f159.up.railway.app';
 
-// Express server
 const app = express();
 app.use(express.json());
 
-// Image cache
 let lastImageBuffer = null;
 let lastImageId = null;
 
-// Route GET /image/latest
 app.get('/image/latest', (req, res) => {
-  if (!lastImageBuffer) {
-    return res.status(404).json({ error: 'No image available' });
-  }
+  if (!lastImageBuffer) return res.status(404).json({ error: 'No image available' });
   res.set('Content-Type', 'image/png');
   res.set('Cache-Control', 'no-cache');
   res.send(lastImageBuffer);
 });
 
-// Route POST /generate-and-store
 app.options('/generate-and-store', (req, res) => {
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -51,7 +45,6 @@ app.post('/generate-and-store', (req, res) => {
   }
 });
 
-// Route POST /generate
 app.post('/generate', (req, res) => {
   const { username = 'Unknown', content = '', timestamp = new Date().toISOString() } = req.body;
   try {
@@ -63,239 +56,209 @@ app.post('/generate', (req, res) => {
   }
 });
 
-// Trading Signal Tester UI
 app.get('/health', (_req, res) => {
   const makeUrl = MAKE_WEBHOOK_URL || '';
   const railwayUrl = RAILWAY_URL;
   res.set('Content-Type', 'text/html');
   res.send(`<!DOCTYPE html>
- <html lang="EN">
- <head>
- <meta charset="UTF-8">
- <title>Trading Signal Tester</title>
- <style>
- body{background:#1a1a2e;color:#e0e0e0;font-family:'Segoe UI',sans-serif;padding:20px}
- .container{width:100%;max-width:500px;margin:0 auto}
- h1{color:#00d4aa;text-align:center;font-size:1.4em;margin-bottom:20px}
- .presets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
- .preset-btn{padding:6px 12px;border-radius:20px;border:none;cursor:pointer;font-size:0.85em;font-weight:600}
- .p-entry{background:#00d4aa22;color:#00d4aa;border:1px solid #00d4aa55}
- .p-exit{background:#ff6b6b22;color:#ff6b6b;border:1px solid #ff6b6b55}
- .p-neutral{background:#ffd70022;color:#ffd700;border:1px solid #ffd70055}
- .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
- label{font-size:0.8em;color:#888;margin-bottom:4px;display:block}
- input,textarea,select{width:100%;background:#16213e;border:1px solid #0f3460;color:#e0e0e0;padding:8px;border-radius:6px;font-size:0.9em;box-sizing:border-box}
- textarea{height:80px;resize:vertical}
- .send-btn{width:100%;padding:14px;background:linear-gradient(135deg,#00d4aa,#0099cc);border:none;border-radius:8px;color:#fff;font-size:1.1em;font-weight:700;cursor:pointer;margin-top:8px}
- .send-btn:hover{opacity:0.9}
- .status-bar{text-align:center;margin:10px 0;font-size:0.9em;min-height:20px}
- .log{background:#0a0a1a;border-radius:6px;padding:10px;height:160px;overflow-y:auto;font-size:0.78em;font-family:monospace}
- .log-entry{margin:2px 0}.log-time{color:#555;margin-right:8px}.log-ok{color:#00d4aa}.log-err{color:#ff6b6b}.log-info{color:#aaa}
- .section-title{font-size:0.75em;color:#555;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
- .img-preview img{max-width:100%;border-radius:8px;margin-top:10px;display:none}
- </style>
- </head>
- <body>
- <div class="container">
- <h1>Trading Signal Tester</h1>
- <div class="section-title">Presets rapides</div>
- <div class="presets">
- <button class="preset-btn p-entry" onclick="preset('Will','entry','AAPL 150.00 entree longue @Momentum')">AAPL Entry</button>
- <button class="preset-btn p-neutral" onclick="preset('Will','neutral','TSLA 250.00 @Swing surveillance')">TSLA Swing</button>
- <button class="preset-btn p-entry" onclick="preset('Will','entry','@scalp AMZN 185.00 scalp rapide')">AMZN Scalp</button>
- <button class="preset-btn p-exit" onclick="preset('Will','exit','NVDA 875.00 sortie position objectif atteint')">NVDA Exit</button>
- <button class="preset-btn p-neutral" onclick="preset('Will','neutral','SPY 500.00 niveau cle surveiller')">SPY Neutral</button>
- </div>
- <div class="form-row">
- <div><label>Auteur</label><input id="author" value="Will"></div>
- <div><label>Signal Type</label>
- <select id="signal_type">
- <option value="entry">entry</option>
- <option value="exit">exit</option>
- <option value="neutral">neutral</option>
- </select>
- </div>
- </div>
- <div style="margin-bottom:12px"><label>Message</label><textarea id="content">AAPL 150.00 entree longue @Momentum</textarea></div>
- <button class="send-btn" id="sendBtn" onclick="sendSignal()">ENVOYER LE SIGNAL</button>
- <div class="status-bar" id="status"></div>
- <div class="img-preview"><img id="previewImg" alt="Signal image preview"></div>
- <div class="section-title" style="margin-top:10px">Log</div>
- <div class="log" id="log"></div>
- </div>
- <script>
- var MAKE_URL='${makeUrl}';
- var RAILWAY='${railwayUrl}';
- function preset(author,type,msg){
- document.getElementById('author').value=author;
- document.getElementById('signal_type').value=type;
- document.getElementById('content').value=msg;
- }
- function log(msg,cls){
- cls=cls||'log-info';
- var d=document.getElementById('log');
- var t=new Date().toTimeString().slice(0,8);
- d.innerHTML='<div class="log-entry"><span class="log-time">'+t+'</span><span class="'+cls+'">'+msg+'</span></div>'+d.innerHTML;
- }
- async function sendSignal(){
- var author=document.getElementById('author').value.trim();
- var signal_type=document.getElementById('signal_type').value;
- var content=document.getElementById('content').value.trim();
- if(!content)return;
- var btn=document.getElementById('sendBtn');
- btn.disabled=true;
- document.getElementById('status').innerHTML='<span style="color:#888">Generation image...</span>';
- var imageUrl=null;
- try{
- var imgRes=await fetch(RAILWAY+'/generate-and-store',{
- method:'POST',
- headers:{'Content-Type':'application/json'},
- body:JSON.stringify({author:author,content:content,timestamp:new Date().toISOString()})
- });
- if(imgRes.ok){
- var imgData=await imgRes.json();
- imageUrl=imgData.image_url;
- var previewImg=document.getElementById('previewImg');
- previewImg.src=imageUrl;
- previewImg.style.display='block';
- log('Image: '+imageUrl,'log-ok');
- }else{
- log('Image echouee: '+imgRes.status,'log-err');
- }
- }catch(e){
- log('Erreur image: '+e.message,'log-err');
- }
- document.getElementById('status').innerHTML='<span style="color:#888">Envoi Make.com...</span>';
- try{
- var r=await fetch(MAKE_URL,{
- method:'POST',
- headers:{'Content-Type':'application/json'},
- body:JSON.stringify({content:content,author:author,channel:'trading-floor',signal_type:signal_type,timestamp:new Date().toISOString(),image_url:imageUrl})
- });
- document.getElementById('status').innerHTML='<span style="color:#00d4aa">OK '+r.status+' | image: '+(imageUrl?'oui':'null')+'</span>';
- log('Make.com '+r.status+' | '+author+' | '+content.substring(0,50),'log-ok');
- }catch(e){
- document.getElementById('status').innerHTML='<span style="color:#ff6b6b">Erreur: '+e.message+'</span>';
- log('Erreur: '+e.message,'log-err');
- }finally{
- btn.disabled=false;
- }
- }
- document.addEventListener('keydown',function(e){if(e.ctrlKey&&e.key==='Enter')sendSignal();});
- </script>
- </body>
- </html>`);
+<html lang="fr"><head><meta charset="UTF-8"><title>Trading Signal Tester</title>
+<style>
+body{background:#1a1a2e;color:#e0e0e0;font-family:'Segoe UI',sans-serif;padding:20px}
+.container{width:100%;max-width:500px;margin:0 auto}
+h1{color:#00d4aa;text-align:center;font-size:1.4em;margin-bottom:20px}
+.presets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+.preset-btn{padding:6px 12px;border-radius:20px;border:none;cursor:pointer;font-size:0.85em;font-weight:600}
+.p-entry{background:#00d4aa22;color:#00d4aa;border:1px solid #00d4aa55}
+.p-exit{background:#ff6b6b22;color:#ff6b6b;border:1px solid #ff6b6b55}
+.p-neutral{background:#ffd70022;color:#ffd700;border:1px solid #ffd70055}
+.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+label{font-size:0.8em;color:#888;margin-bottom:4px;display:block}
+input,textarea,select{width:100%;background:#16213e;border:1px solid #0f3460;color:#e0e0e0;padding:8px;border-radius:6px;font-size:0.9em;box-sizing:border-box}
+textarea{height:80px;resize:vertical}
+.send-btn{width:100%;padding:14px;background:linear-gradient(135deg,#00d4aa,#0099cc);border:none;border-radius:8px;color:#fff;font-size:1.1em;font-weight:700;cursor:pointer;margin-top:8px}
+.send-btn:hover{opacity:0.9}
+.status-bar{text-align:center;margin:10px 0;font-size:0.9em;min-height:20px}
+.log{background:#0a0a1a;border-radius:6px;padding:10px;height:160px;overflow-y:auto;font-size:0.78em;font-family:monospace}
+.log-entry{margin:2px 0}.log-time{color:#555;margin-right:8px}.log-ok{color:#00d4aa}.log-err{color:#ff6b6b}.log-info{color:#aaa}
+.section-title{font-size:0.75em;color:#555;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+.img-preview img{max-width:100%;border-radius:4px;margin-top:10px;display:none}
+</style></head><body>
+<div class="container">
+<h1>Trading Signal Tester</h1>
+<div class="section-title">Presets rapides</div>
+<div class="presets">
+<button class="preset-btn p-entry" onclick="preset('Will','entry','\$AAPL 150.00-155.00')">AAPL Entry</button>
+<button class="preset-btn p-neutral" onclick="preset('Will','neutral','\$TSLA 250.00-260.00 swing')">TSLA Swing</button>
+<button class="preset-btn p-entry" onclick="preset('Will','entry','\$AMZN 185.00 scalp rapide')">AMZN Scalp</button>
+<button class="preset-btn p-exit" onclick="preset('Will','exit','\$NVDA 875.00 sortie position')">NVDA Exit</button>
+<button class="preset-btn p-neutral" onclick="preset('Will','neutral','\$SPY 500.00 niveau cle')">SPY Neutral</button>
+</div>
+<div class="form-row">
+<div><label>Auteur</label><input id="author" value="Will"></div>
+<div><label>Signal Type</label>
+<select id="signal_type">
+<option value="entry">entry</option>
+<option value="exit">exit</option>
+<option value="neutral">neutral</option>
+</select></div></div>
+<div style="margin-bottom:12px"><label>Message</label><textarea id="content">\$TSLA 150.00-155.00</textarea></div>
+<button class="send-btn" id="sendBtn" onclick="sendSignal()">ENVOYER LE SIGNAL</button>
+<div class="status-bar" id="status"></div>
+<div class="img-preview"><img id="previewImg" alt="preview"></div>
+<div class="section-title" style="margin-top:10px">Log</div>
+<div class="log" id="log"></div>
+</div>
+<script>
+var MAKE_URL='${makeUrl}';
+var RAILWAY='${railwayUrl}';
+function preset(a,t,m){document.getElementById('author').value=a;document.getElementById('signal_type').value=t;document.getElementById('content').value=m;}
+function log(msg,cls){cls=cls||'log-info';var d=document.getElementById('log');var t=new Date().toTimeString().slice(0,8);d.innerHTML='<div class="log-entry"><span class="log-time">'+t+'</span><span class="'+cls+'">'+msg+'</span></div>'+d.innerHTML;}
+async function sendSignal(){
+var author=document.getElementById('author').value.trim();
+var signal_type=document.getElementById('signal_type').value;
+var content=document.getElementById('content').value.trim();
+if(!content)return;
+var btn=document.getElementById('sendBtn');
+btn.disabled=true;
+document.getElementById('status').innerHTML='<span style="color:#888">Generation image...</span>';
+var imageUrl=null;
+try{
+var imgRes=await fetch(RAILWAY+'/generate-and-store',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({author:author,content:content,timestamp:new Date().toISOString()})});
+if(imgRes.ok){var imgData=await imgRes.json();imageUrl=imgData.image_url;var p=document.getElementById('previewImg');p.src=imageUrl;p.style.display='block';log('Image: '+imageUrl,'log-ok');}
+else{log('Image echouee: '+imgRes.status,'log-err');}
+}catch(e){log('Erreur image: '+e.message,'log-err');}
+document.getElementById('status').innerHTML='<span style="color:#888">Envoi Make.com...</span>';
+try{
+var r=await fetch(MAKE_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:content,author:author,channel:'trading-floor',signal_type:signal_type,timestamp:new Date().toISOString(),image_url:imageUrl})});
+document.getElementById('status').innerHTML='<span style="color:#00d4aa">OK '+r.status+' | image: '+(imageUrl?'oui':'null')+'</span>';
+log('Make.com '+r.status+' | '+author+' | '+content.substring(0,50),'log-ok');
+}catch(e){document.getElementById('status').innerHTML='<span style="color:#ff6b6b">Erreur: '+e.message+'</span>';log('Erreur: '+e.message,'log-err');}
+finally{btn.disabled=false;}
+}
+document.addEventListener('keydown',function(e){if(e.ctrlKey&&e.key==='Enter')sendSignal();});
+</script></body></html>`);
 });
 
 app.listen(PORT, () => console.log('Server running on port ' + PORT));
 
-// =========================================================
-// generateImage - style screenshot Discord authentique
-// =========================================================
+// ─────────────────────────────────────────────────────────────
+// generateImage  –  screenshot Discord pixel-perfect
+//
+// Couleurs mesurées sur le vrai Discord dark mode :
+//   Fond canal        #1e1f22
+//   Fond message      #1e1f22  (pas de hover ici)
+//   Nom blanc         #f2f3f5
+//   Heure             #80848e
+//   Texte message     #dcddde
+//   Blurple avatar    #5865f2
+//   Séparateur date   #3f4147
+// ─────────────────────────────────────────────────────────────
 function generateImage(author, content, timestamp) {
-  // Dimensions: ratio proche d'un message Discord visible
-  const width = 800;
-  const height = 220;
-  const canvas = createCanvas(width, height);
+  // Dimensions proches d'un screenshot Discord typique
+  // Largeur fixe 740px (environ celle d'un canal Discord sur 1080p)
+  const W = 740;
+  const PADDING_V = 18;   // espace vertical haut/bas autour du message
+  const PADDING_L = 16;   // marge gauche du fond
+  const AVATAR_D  = 40;   // diamètre avatar
+  const AVATAR_X  = PADDING_L;
+  const CONTENT_X = PADDING_L + AVATAR_D + 16; // 72px — marge gauche du texte
+  const MAX_TW    = W - CONTENT_X - PADDING_L; // largeur max texte
+
+  // ── Calculer la hauteur nécessaire pour le texte ──
+  // On crée un canvas temporaire pour mesurer
+  const tmpC = createCanvas(W, 400);
+  const tmpCtx = tmpC.getContext('2d');
+  tmpCtx.font = '16px sans-serif';
+  const lines = wrapText(tmpCtx, content, MAX_TW);
+  const LINE_H = 22;
+  const NAME_H  = 20; // hauteur ligne nom
+  // Hauteur totale: padding haut + ligne nom + lignes texte + padding bas
+  const H = PADDING_V + NAME_H + (lines.length * LINE_H) + PADDING_V + 2;
+
+  const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
 
-  // --- Couleurs Discord exactes ---
-  const BG          = '#313338'; // fond principal Discord dark
-  const BG_HOVER    = '#2e3035'; // fond hover (un tout petit peu plus sombre)
-  const AVATAR_BG   = '#5865f2'; // bleu Discord (Blurple) pour l'avatar
-  const NAME_COLOR  = '#ffffff'; // nom blanc (membre sans rôle particulier)
-  const TIME_COLOR  = '#949ba4'; // gris clair pour l'heure
-  const TEXT_COLOR  = '#dcddde'; // couleur du texte de message Discord
-  const CHANNEL_COLOR = '#8a8e94'; // gris canal
+  // ── Fond ──
+  ctx.fillStyle = '#1e1f22';
+  ctx.fillRect(0, 0, W, H);
 
-  // --- Fond complet ---
-  ctx.fillStyle = BG;
-  ctx.fillRect(0, 0, width, height);
+  // ── Avatar: cercle avec initiales ──
+  const avatarCX = AVATAR_X + AVATAR_D / 2;
+  const avatarCY = PADDING_V + NAME_H / 2 + 2; // centré sur la ligne du nom
 
-  // --- Padding Discord: 16px haut, 72px gauche (avatar 40px + marges) ---
-  const padTop   = 16;
-  const padLeft  = 16;
-  const avatarSize = 40;
-  const avatarX  = padLeft;
-  const avatarY  = padTop;
-  const contentX = padLeft + avatarSize + 16; // 72px
-
-  // --- Avatar: cercle avec initiales ---
-  const initials = author ? author.slice(0, 2).toUpperCase() : 'WL';
+  // Couleur avatar: blurple Discord par défaut
   ctx.save();
   ctx.beginPath();
-  ctx.arc(avatarX + avatarSize / 2, avatarY + avatarSize / 2, avatarSize / 2, 0, Math.PI * 2);
-  ctx.fillStyle = AVATAR_BG;
+  ctx.arc(avatarCX, avatarCY, AVATAR_D / 2, 0, Math.PI * 2);
+  ctx.fillStyle = '#5865f2';
   ctx.fill();
   ctx.restore();
 
+  // Initiales dans l'avatar
+  const initials = (author || 'W').slice(0, 2).toUpperCase();
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 16px sans-serif';
+  ctx.font = 'bold 15px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(initials, avatarX + avatarSize / 2, avatarY + avatarSize / 2);
+  ctx.fillText(initials, avatarCX, avatarCY);
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
 
-  // --- Ligne 1: Nom + heure ---
-  const nameY = padTop + 16;
-  ctx.fillStyle = NAME_COLOR;
+  // ── Nom + heure ──
+  const nameY = PADDING_V + NAME_H - 3;
+
+  // Nom en blanc/légèrement gris (membre sans rôle coloré = #f2f3f5)
+  ctx.fillStyle = '#f2f3f5';
   ctx.font = 'bold 16px sans-serif';
-  ctx.fillText(author || 'Will', contentX, nameY);
+  ctx.fillText(author || 'Will', CONTENT_X, nameY);
+  const nameW = ctx.measureText(author || 'Will').width;
 
-  // Mesure du nom pour placer l'heure juste après
-  const nameWidth = ctx.measureText(author || 'Will').width;
-
-  // Heure formatée à la Discord: "Aujourd'hui à 14:32"
+  // Heure — format Discord "Aujourd'hui à HH:MM"
   const d = timestamp ? new Date(timestamp) : new Date();
-  const hours   = d.getHours().toString().padStart(2, '0');
-  const minutes = d.getMinutes().toString().padStart(2, '0');
-  const timeStr = "Aujourd'hui à " + hours + ':' + minutes;
+  const hh = d.getHours().toString().padStart(2, '0');
+  const mm = d.getMinutes().toString().padStart(2, '0');
+  const timeStr = "Aujourd'hui à " + hh + ':' + mm;
 
-  ctx.fillStyle = TIME_COLOR;
+  ctx.fillStyle = '#80848e';
   ctx.font = '12px sans-serif';
-  ctx.fillText(timeStr, contentX + nameWidth + 8, nameY - 1);
+  ctx.fillText(timeStr, CONTENT_X + nameW + 8, nameY - 1);
 
-  // --- Ligne 2+: texte du message avec wrapping ---
-  ctx.fillStyle = TEXT_COLOR;
+  // ── Texte du message ──
+  ctx.fillStyle = '#dcddde';
   ctx.font = '16px sans-serif';
 
-  const maxWidth = width - contentX - 16;
-  const lineHeight = 22;
-  const textStartY = nameY + lineHeight;
-
-  const words = content.split(' ');
-  let line = '';
-  let y = textStartY;
-
-  for (const word of words) {
-    const test = line + word + ' ';
-    if (ctx.measureText(test).width > maxWidth && line) {
-      ctx.fillText(line.trim(), contentX, y);
-      line = word + ' ';
-      y += lineHeight;
-    } else {
-      line = test;
-    }
+  let ty = nameY + LINE_H;
+  for (const line of lines) {
+    ctx.fillText(line, CONTENT_X, ty);
+    ty += LINE_H;
   }
-  if (line.trim()) ctx.fillText(line.trim(), contentX, y);
-
-  // --- Barre de channel en haut (optionnel, donne l'impression d'un vrai screenshot) ---
-  // On ajoute une fine barre sombre tout en haut style header de canal Discord
-  const headerH = 0; // pas de header, juste le message pur
-
-  // --- Ligne de séparation subtile en bas (Discord n'en a pas, on laisse propre) ---
 
   return canvas.toBuffer('image/png');
+}
+
+// Wrap text helper
+function wrapText(ctx, text, maxWidth) {
+  const words = text.split(' ');
+  const lines = [];
+  let current = '';
+  for (const word of words) {
+    const test = current ? current + ' ' + word : word;
+    if (ctx.measureText(test).width > maxWidth && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = test;
+    }
+  }
+  if (current) lines.push(current);
+  return lines.length ? lines : [''];
 }
 
 // Signal classifier
 function classifySignal(content) {
   const lower = content.toLowerCase();
   const blocked = ['news', 'sec', 'ipo', 'offering', 'halted', 'form 8-k', 'reverse stock split'];
-  for (const b of blocked) {
-    if (lower.includes(b)) return null;
-  }
+  for (const b of blocked) { if (lower.includes(b)) return null; }
   if (lower.includes('entree') || lower.includes('entry') || lower.includes('long') || lower.includes('scalp')) return 'entry';
   if (lower.includes('sortie') || lower.includes('exit') || lower.includes('stop')) return 'exit';
   return 'neutral';
@@ -303,11 +266,7 @@ function classifySignal(content) {
 
 // Discord bot
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
 });
 
 client.once('ready', () => {
@@ -317,22 +276,13 @@ client.once('ready', () => {
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
-
   const channelName = message.channel.name || '';
   console.log('Message received - channel: "' + channelName + '", author: ' + message.author.username);
-
   if (!channelName.includes(TRADING_CHANNEL)) return;
-
   const content = message.content;
   const signalType = classifySignal(content);
-
-  if (!signalType) {
-    console.log('Filtered out: ' + content.substring(0, 80));
-    return;
-  }
-
+  if (!signalType) { console.log('Filtered out: ' + content.substring(0, 80)); return; }
   console.log('[' + signalType.toUpperCase() + '] ' + content);
-
   let imageUrl = null;
   try {
     const imgBuf = generateImage(message.author.username, content, message.createdAt.toISOString());
@@ -340,27 +290,15 @@ client.on('messageCreate', async (message) => {
     lastImageId = Date.now();
     imageUrl = RAILWAY_URL + '/image/latest?t=' + lastImageId;
     console.log('Image generated, URL: ' + imageUrl);
-  } catch (err) {
-    console.error('Image generation error:', err.message);
-  }
-
+  } catch (err) { console.error('Image generation error:', err.message); }
   try {
     const result = await fetch(MAKE_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        content,
-        author: message.author.username,
-        channel: channelName,
-        signal_type: signalType,
-        timestamp: message.createdAt.toISOString(),
-        image_url: imageUrl,
-      }),
+      body: JSON.stringify({ content, author: message.author.username, channel: channelName, signal_type: signalType, timestamp: message.createdAt.toISOString(), image_url: imageUrl }),
     });
     console.log('Sent to Make, status: ' + result.status);
-  } catch (err) {
-    console.error('Error sending to Make:', err.message);
-  }
+  } catch (err) { console.error('Error sending to Make:', err.message); }
 });
 
 client.login(DISCORD_TOKEN);

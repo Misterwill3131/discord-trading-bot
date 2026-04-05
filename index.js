@@ -352,7 +352,7 @@ async function generateImage(author, content, timestamp) {
   ctx.fillText(timeStr, timeX, nameY - 1);
 
   // Gain % badge (si entree ET sortie detectees)
-  const priceData = extractPrices(message);
+  const priceData = extractPrices(content);
   if (priceData.gain_pct !== null) {
     const gainStr = (priceData.gain_pct >= 0 ? '+' : '') + priceData.gain_pct + '%';
     const gainColor = priceData.gain_pct >= 0 ? '#23d18b' : '#f04747';

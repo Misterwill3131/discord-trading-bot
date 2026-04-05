@@ -360,7 +360,7 @@ async function generateImage(author, content, timestamp) {
     ctx.font = 'bold 11px ' + FONT;
     const gainTW = ctx.measureText(gainStr).width;
     const gainW  = gainTW + 14;
-    const gainX  = W - PADDING_H - gainW;
+    const gainX  = W - PADDING_L - gainW;
     const gainY  = PADDING_V;
     ctx.fillStyle = gainBg;
     roundRect(ctx, gainX, gainY, gainW, 16, 3);

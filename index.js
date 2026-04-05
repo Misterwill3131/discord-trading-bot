@@ -123,87 +123,53 @@ app.post('/generate', (req, res) => {
   }).catch(err => res.status(500).json({ error: err.message }));
 });
 
-app.get('/health', (_req, res) => {
-  const makeUrl = MAKE_WEBHOOK_URL || '';
-  const railwayUrl = RAILWAY_URL;
-  res.set('Content-Type', 'text/html');
-  res.send(`<!DOCTYPE html>
-<html lang="fr"><head><meta charset="UTF-8"><title>Trading Signal Tester</title>
-<style>
-body{background:#1a1a2e;color:#e0e0e0;font-family:'Segoe UI',sans-serif;padding:20px}
-.container{width:100%;max-width:500px;margin:0 auto}
-h1{color:#00d4aa;text-align:center;font-size:1.4em;margin-bottom:20px}
-.presets{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
-.preset-btn{padding:6px 12px;border-radius:20px;border:none;cursor:pointer;font-size:0.85em;font-weight:600}
-.p-entry{background:#00d4aa22;color:#00d4aa;border:1px solid #00d4aa55}
-.p-exit{background:#ff6b6b22;color:#ff6b6b;border:1px solid #ff6b6b55}
-.p-neutral{background:#ffd70022;color:#ffd700;border:1px solid #ffd70055}
-.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
-label{font-size:0.8em;color:#888;margin-bottom:4px;display:block}
-input,textarea,select{width:100%;background:#16213e;border:1px solid #0f3460;color:#e0e0e0;padding:8px;border-radius:6px;font-size:0.9em;box-sizing:border-box}
-textarea{height:80px;resize:vertical}
-.send-btn{width:100%;padding:14px;background:linear-gradient(135deg,#00d4aa,#0099cc);border:none;border-radius:8px;color:#fff;font-size:1.1em;font-weight:700;cursor:pointer;margin-top:8px}
-.send-btn:hover{opacity:0.9}
-.status-bar{text-align:center;margin:10px 0;font-size:0.9em;min-height:20px}
-.log{background:#0a0a1a;border-radius:6px;padding:10px;height:160px;overflow-y:auto;font-size:0.78em;font-family:monospace}
-.log-entry{margin:2px 0}.log-time{color:#555;margin-right:8px}.log-ok{color:#00d4aa}.log-err{color:#ff6b6b}.log-info{color:#aaa}
-.section-title{font-size:0.75em;color:#555;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
-.img-preview img{max-width:100%;border-radius:4px;margin-top:10px;display:none}
-</style></head><body>
-<div class="container">
-<h1>Trading Signal Tester</h1>
-<div class="section-title">Presets rapides</div>
-<div class="presets">
-  <button class="preset-btn p-entry" onclick="preset('Will','entry','\$AAPL 150.00-155.00')">AAPL Entry</button>
-  <button class="preset-btn p-neutral" onclick="preset('Will','neutral','\$TSLA 250.00-260.00 swing')">TSLA Swing</button>
-  <button class="preset-btn p-entry" onclick="preset('Z','entry','\$AMZN 185.00 scalp rapide')">AMZN (Z)</button>
-  <button class="preset-btn p-exit" onclick="preset('Will','exit','\$NVDA 875.00 sortie position')">NVDA Exit</button>
-  <button class="preset-btn p-neutral" onclick="preset('Will','neutral','\$SPY 500.00 niveau cle')">SPY Neutral</button>
-</div>
-<div class="form-row">
-  <div><label>Auteur</label><input id="author" value="Will"></div>
-  <div><label>Signal Type</label>
-  <select id="signal_type">
-    <option value="entry">entry</option>
-    <option value="exit">exit</option>
-    <option value="neutral">neutral</option>
-  </select></div></div>
-<div style="margin-bottom:12px"><label>Message</label><textarea id="content">\$TSLA 150.00-155.00</textarea></div>
-<button class="send-btn" id="sendBtn" onclick="sendSignal()">ENVOYER LE SIGNAL</button>
-<div class="status-bar" id="status"></div>
-<div class="img-preview"><img id="previewImg" alt="preview"></div>
-<div class="section-title" style="margin-top:10px">Log</div>
-<div class="log" id="log"></div>
-</div>
-<script>
-var MAKE_URL='${makeUrl}';
-var RAILWAY='${railwayUrl}';
-function preset(a,t,m){document.getElementById('author').value=a;document.getElementById('signal_type').value=t;document.getElementById('content').value=m;}
-function log(msg,cls){cls=cls||'log-info';var d=document.getElementById('log');var t=new Date().toTimeString().slice(0,8);d.innerHTML='<div class="log-entry"><span class="log-time">'+t+'</span><span class="'+cls+'">'+msg+'</span></div>'+d.innerHTML;}
-async function sendSignal(){
-  var author=document.getElementById('author').value.trim();
-  var signal_type=document.getElementById('signal_type').value;
-  var content=document.getElementById('content').value.trim();
-  if(!content)return;
-  var btn=document.getElementById('sendBtn');
-  btn.disabled=true;
-  document.getElementById('status').innerHTML='<span style="color:#888">Generation image...</span>';
-  var imageUrl=null;
-  try{
-    var imgRes=await fetch(RAILWAY+'/generate-and-store',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({author:author,content:content,timestamp:new Date().toISOString()})});
-    if(imgRes.ok){var imgData=await imgRes.json();imageUrl=imgData.image_url;var p=document.getElementById('previewImg');p.src=imageUrl;p.style.display='block';log('Image: '+imageUrl,'log-ok');}
-    else{log('Image echouee: '+imgRes.status,'log-err');}
-  }catch(e){log('Erreur image: '+e.message,'log-err');}
-  document.getElementById('status').innerHTML='<span style="color:#888">Envoi Make.com...</span>';
-  try{
-    var r=await fetch(MAKE_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:content,author:author,channel:'trading-floor',signal_type:signal_type,timestamp:new Date().toISOString(),image_url:imageUrl})});
-    document.getElementById('status').innerHTML='<span style="color:#00d4aa">OK '+r.status+' | image: '+(imageUrl?'oui':'null')+'</span>';
-    log('Make.com '+r.status+' | '+author+' | '+content.substring(0,50),'log-ok');
-  }catch(e){document.getElementById('status').innerHTML='<span style="color:#ff6b6b">Erreur: '+e.message+'</span>';log('Erreur: '+e.message,'log-err');}
-  finally{btn.disabled=false;}
-}
-document.addEventListener('keydown',function(e){if(e.ctrlKey&&e.key==='Enter')sendSignal();});
-</script></body></html>`);
+app.get('/health', async (req, res) => {
+  // Envoie un signal test à Make automatiquement (sauf si ?send=0)
+  const autoSend = req.query.send !== '0';
+
+  let makeStatus = null;
+  let imageUrl = null;
+  let makeError = null;
+
+  if (autoSend && MAKE_WEBHOOK_URL) {
+    try {
+      const testAuthor  = req.query.author  || 'Will';
+      const testContent = req.query.message || '$TSLA 150.00-155.00';
+      const testSignal  = req.query.signal  || 'entry';
+      const buf = await generateImage(testAuthor, testContent, new Date().toISOString());
+      lastImageBuffer = buf;
+      lastImageId = Date.now();
+      imageUrl = RAILWAY_URL + '/image/latest?id=' + lastImageId;
+
+      const makeRes = await fetch(MAKE_WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content:     testContent,
+          author:      testAuthor,
+          channel:     'trading-floor',
+          signal_type: testSignal,
+          timestamp:   new Date().toISOString(),
+          image_url:   imageUrl
+        }),
+      });
+      makeStatus = makeRes.status;
+      console.log('[/health] Signal envoye a Make, status:', makeStatus);
+    } catch (err) {
+      makeError = err.message;
+      console.error('[/health] Erreur Make:', err.message);
+    }
+  }
+
+  res.json({
+    status:      'online',
+    make_sent:   autoSend && !!MAKE_WEBHOOK_URL,
+    make_status: makeStatus,
+    make_error:  makeError,
+    image_url:   imageUrl,
+    timestamp:   new Date().toISOString(),
+    tip:         'Params optionnels: ?author=Z&message=$AAPL+180&signal=entry | ?send=0 pour desactiver'
+  });
 });
 
 app.listen(PORT, () => console.log('Server running on port ' + PORT));

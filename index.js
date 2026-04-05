@@ -150,7 +150,8 @@ app.get('/health', async (req, res) => {
           channel:     'trading-floor',
           signal_type: testSignal,
           timestamp:   new Date().toISOString(),
-          image_url:   imageUrl
+          image_url:   imageUrl,
+          ...extractPrices(testContent)
         }),
       });
       makeStatus = makeRes.status;
@@ -350,6 +351,32 @@ async function generateImage(author, content, timestamp) {
   ctx.font = '12px ' + FONT;
   ctx.fillText(timeStr, timeX, nameY - 1);
 
+  // Gain % badge (si entree ET sortie detectees)
+  const priceData = extractPrices(message);
+  if (priceData.gain_pct !== null) {
+    const gainStr = (priceData.gain_pct >= 0 ? '+' : '') + priceData.gain_pct + '%';
+    const gainColor = priceData.gain_pct >= 0 ? '#23d18b' : '#f04747';
+    const gainBg    = priceData.gain_pct >= 0 ? 'rgba(35,209,139,0.15)' : 'rgba(240,71,71,0.15)';
+    ctx.font = 'bold 11px ' + FONT;
+    const gainTW = ctx.measureText(gainStr).width;
+    const gainW  = gainTW + 14;
+    const gainX  = W - PADDING_H - gainW;
+    const gainY  = PADDING_V;
+    ctx.fillStyle = gainBg;
+    roundRect(ctx, gainX, gainY, gainW, 16, 3);
+    ctx.fill();
+    ctx.strokeStyle = gainColor;
+    ctx.lineWidth = 0.8;
+    roundRect(ctx, gainX, gainY, gainW, 16, 3);
+    ctx.stroke();
+    ctx.fillStyle = gainColor;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    ctx.fillText(gainStr, gainX + gainW / 2, gainY + 8);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+  }
+
   // Message text
   ctx.fillStyle = CONFIG.MESSAGE_COLOR;
   ctx.font = '16px ' + FONT;
@@ -378,6 +405,54 @@ function wrapText(ctx, text, maxWidth) {
   if (current) lines.push(current);
   return lines.length ? lines : [''];
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// extractPrices — Detecte prix d'entree ET de sortie dans un message
+// ─────────────────────────────────────────────────────────────────────
+function extractPrices(content) {
+  if (!content) return { entry_price: null, exit_price: null, gain_pct: null };
+  const c = content.replace(/,/g, '.');
+  let entry = null;
+  let exit  = null;
+
+  // Priorite 1: TICKER PRIX-PRIX (ex: $TSLA 150.00-155.00 ou NCT 2.60-4.06)
+  const rangeM = c.match(/(?:\$?[A-Z]{1,6}\s+)(\d+(?:\.\d+)?)\s*[-\u2013]\s*(\d+(?:\.\d+)?)/i);
+  if (rangeM) {
+    const a = parseFloat(rangeM[1]), b = parseFloat(rangeM[2]);
+    entry = Math.min(a, b);
+    exit  = Math.max(a, b);
+  }
+
+  // Priorite 2: "in at PRIX" / "entry PRIX" / "long PRIX"
+  if (!entry) {
+    const em = c.match(/(?:in\s+at|entry|bought?|long at|achat|entree)\s+\$?(\d+(?:\.\d+)?)/i);
+    if (em) entry = parseFloat(em[1]);
+  }
+
+  // Priorite 3: "out at PRIX" / "exit PRIX" / "target PRIX" / "tp PRIX"
+  if (!exit) {
+    const xm = c.match(/(?:out\s+at|exit\s+at|sold?\s+at|target|tp|sortie|objectif)\s+\$?(\d+(?:\.\d+)?)/i);
+    if (xm) exit = parseFloat(xm[1]);
+  }
+
+  // Priorite 4: Niveaux separes par ... ou to (ex: 2.50...3.50)
+  if (!entry || !exit) {
+    const lm = c.match(/\$?(\d+(?:\.\d+)?)\s*(?:\.{2,}|\bto\b)\s*\$?(\d+(?:\.\d+)?)/i);
+    if (lm) {
+      const a = parseFloat(lm[1]), b = parseFloat(lm[2]);
+      if (!entry) entry = Math.min(a, b);
+      if (!exit)  exit  = Math.max(a, b);
+    }
+  }
+
+  let gain_pct = null;
+  if (entry !== null && exit !== null && entry > 0) {
+    gain_pct = parseFloat((((exit - entry) / entry) * 100).toFixed(2));
+  }
+
+  return { entry_price: entry, exit_price: exit, gain_pct };
+}
+// ─────────────────────────────────────────────────────────────────────
 
 function classifySignal(content) {
   const lower = content.toLowerCase();
@@ -434,7 +509,8 @@ client.on('messageCreate', async (message) => {
         channel: channelName,
         signal_type: signalType,
         timestamp: message.createdAt.toISOString(),
-        image_url: imageUrl
+        image_url: imageUrl,
+        ...extractPrices(content)
       }),
     });
     console.log('Sent to Make, status: ' + result.status);

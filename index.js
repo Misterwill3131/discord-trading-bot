@@ -145,7 +145,7 @@ app.get('/health', async (req, res) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          content:     testContent,
+          content:     enrichContent(testContent),
           author:      testAuthor,
           channel:     'trading-floor',
           signal_type: testSignal,
@@ -351,31 +351,7 @@ async function generateImage(author, content, timestamp) {
   ctx.font = '12px ' + FONT;
   ctx.fillText(timeStr, timeX, nameY - 1);
 
-  // Gain % badge (si entree ET sortie detectees)
-  const priceData = extractPrices(content);
-  if (priceData.gain_pct !== null) {
-    const gainStr = (priceData.gain_pct >= 0 ? '+' : '') + priceData.gain_pct + '%';
-    const gainColor = priceData.gain_pct >= 0 ? '#23d18b' : '#f04747';
-    const gainBg    = priceData.gain_pct >= 0 ? 'rgba(35,209,139,0.15)' : 'rgba(240,71,71,0.15)';
-    ctx.font = 'bold 11px ' + FONT;
-    const gainTW = ctx.measureText(gainStr).width;
-    const gainW  = gainTW + 14;
-    const gainX  = W - PADDING_L - gainW;
-    const gainY  = PADDING_V;
-    ctx.fillStyle = gainBg;
-    roundRect(ctx, gainX, gainY, gainW, 16, 3);
-    ctx.fill();
-    ctx.strokeStyle = gainColor;
-    ctx.lineWidth = 0.8;
-    roundRect(ctx, gainX, gainY, gainW, 16, 3);
-    ctx.stroke();
-    ctx.fillStyle = gainColor;
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'center';
-    ctx.fillText(gainStr, gainX + gainW / 2, gainY + 8);
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
-  }
+  // (gain% in X post text, not in image)
 
   // Message text
   ctx.fillStyle = CONFIG.MESSAGE_COLOR;
@@ -454,11 +430,24 @@ function extractPrices(content) {
 }
 // ─────────────────────────────────────────────────────────────────────
 
+function enrichContent(content) {
+  const { gain_pct } = extractPrices(content);
+  if (gain_pct === null) return content;
+  const sign = gain_pct >= 0 ? '+' : '';
+  return content + ' | Gain: ' + sign + gain_pct + '%';
+}
 function classifySignal(content) {
+  if (!content) return null;
   const lower = content.toLowerCase();
   const blocked = ['news', 'sec', 'ipo', 'offering', 'halted', 'form 8-k', 'reverse stock split'];
   for (const b of blocked) {
     if (lower.includes(b)) return null;
+  }
+  // REQUIS: ticker ($TSLA, AAPL, NCT...)
+  const hasTicker = /\$[A-Z]{1,6}/i.test(content) || /\b[A-Z]{2,5}\b/.test(content);
+  if (!hasTicker) {
+    console.log('[FILTER] No ticker, ignored: ' + content.substring(0, 60));
+    return null;
   }
   if (lower.includes('entree') || lower.includes('entry') || lower.includes('long') || lower.includes('scalp')) return 'entry';
   if (lower.includes('sortie') || lower.includes('exit') || lower.includes('stop')) return 'exit';

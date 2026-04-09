@@ -451,6 +451,14 @@ function classifySignal(content) {
   }
   if (lower.includes('entree') || lower.includes('entry') || lower.includes('long') || lower.includes('scalp')) return 'entry';
   if (lower.includes('sortie') || lower.includes('exit') || lower.includes('stop')) return 'exit';
+  // FILTRE: messages conversationnels (questions/chat sans prix)
+    const hasPrice = /\d+(?:\.\d+)?/.test(content);
+    const isQuestion = content.trim().endsWith('?');
+    const startsConvo = /^(and\s+)?(how|who|what|when|why|did|do|are|is|can|any|anyone|has|have|congrats|gg|nice|good|great|lol|haha|check|look|wow|reminder|just|btw|fyi|ok|okay)\b/i.test(content.trim());
+    if ((isQuestion || startsConvo) && !hasPrice) {
+          console.log('[FILTER] Conversational ignored: ' + content.substring(0, 60));
+          return null;
+    }
   return 'neutral';
 }
 

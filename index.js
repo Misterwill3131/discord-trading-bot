@@ -151,6 +151,7 @@ app.get('/health', async (req, res) => {
           signal_type: testSignal,
           timestamp:   new Date().toISOString(),
           image_url:   imageUrl,
+                        ticker: extractTicker(testContent),
           ...extractPrices(testContent)
         }),
       });
@@ -430,6 +431,11 @@ function extractPrices(content) {
 }
 // ─────────────────────────────────────────────────────────────────────
 
+function extractTicker(content) {
+    if (!content) return '';
+    const m = content.match(/\$([A-Z]{1,6})/i) || content.match(/\b([A-Z]{2,6})\b/);
+    return m ? m[1].toUpperCase() : '';
+}
 function enrichContent(content) {
   const { gain_pct } = extractPrices(content);
   if (gain_pct === null) return content;
@@ -507,6 +513,7 @@ client.on('messageCreate', async (message) => {
         signal_type: signalType,
         timestamp: message.createdAt.toISOString(),
         image_url: imageUrl,
+                  ticker: extractTicker(content),
         ...extractPrices(content)
       }),
     });

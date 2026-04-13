@@ -2,6 +2,8 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const fetch = require('node-fetch');
 const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL;
@@ -10,6 +12,33 @@ const PORT = process.env.PORT || 3000;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
   : 'https://discord-trading-bot-production-f159.up.railway.app';
+
+// ─────────────────────────────────────────────────────────────────────
+//  Filtre adaptatif — chargement / sauvegarde des règles apprises
+// ─────────────────────────────────────────────────────────────────────
+const FILTERS_PATH = path.join(__dirname, 'custom-filters.json');
+
+function loadCustomFilters() {
+  try {
+    if (fs.existsSync(FILTERS_PATH)) {
+      return JSON.parse(fs.readFileSync(FILTERS_PATH, 'utf8'));
+    }
+  } catch (e) {
+    console.error('[filters] Failed to load custom-filters.json:', e.message);
+  }
+  return { blocked: [], allowed: [] };
+}
+
+function saveCustomFilters() {
+  try {
+    fs.writeFileSync(FILTERS_PATH, JSON.stringify(customFilters, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[filters] Failed to save custom-filters.json:', e.message);
+  }
+}
+
+let customFilters = loadCustomFilters();
+// ─────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────
 //  SECTION AVATARS — Ajouter ici les avatars personnalisés par Discord username
@@ -109,6 +138,22 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   #empty { padding: 60px 24px; text-align: center; color: #80848e; }
   @keyframes flash { from { background: #2a3040; } to { background: transparent; } }
   tr.new { animation: flash .8s ease-out; }
+  tr.learned { opacity: 0.45; }
+  tr.unblocked { opacity: 0.45; }
+  .btn-fp { background:none; border:1px solid #ed424588; color:#ed4245; border-radius:4px; font-size:11px; padding:1px 6px; cursor:pointer; margin-left:6px; line-height:1.6; }
+  .btn-fp:hover { background:#ed424522; }
+  .btn-fn { background:none; border:1px solid #3ba55d88; color:#3ba55d; border-radius:4px; font-size:11px; padding:1px 6px; cursor:pointer; margin-left:6px; line-height:1.6; }
+  .btn-fn:hover { background:#3ba55d22; }
+  #filters-panel { margin-top:24px; border:1px solid #3f4147; border-radius:6px; overflow:hidden; }
+  #filters-toggle { width:100%; background:#2b2d31; border:none; color:#dcddde; padding:10px 16px; text-align:left; cursor:pointer; font-size:13px; display:flex; justify-content:space-between; align-items:center; }
+  #filters-toggle:hover { background:#32353b; }
+  #filters-body { display:none; padding:12px 16px; background:#1e1f22; }
+  #filters-body.open { display:block; }
+  .filter-section { margin-bottom:12px; }
+  .filter-section h3 { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:#80848e; margin-bottom:8px; }
+  .filter-tag { display:inline-flex; align-items:center; gap:6px; background:#2b2d31; border:1px solid #3f4147; border-radius:4px; padding:3px 8px; font-size:12px; margin:3px; max-width:420px; word-break:break-all; }
+  .filter-tag button { background:none; border:none; color:#80848e; cursor:pointer; font-size:14px; line-height:1; padding:0; }
+  .filter-tag button:hover { color:#ed4245; }
 </style>
 </head>
 <body>
@@ -125,6 +170,23 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   </table>
   <div id="empty">No messages yet — waiting for activity on #trading-floor…</div>
 </div>
+
+<div id="filters-panel" style="margin:0 24px 24px">
+  <button id="filters-toggle">
+    <span>Règles apprises : <span id="rule-count">0</span></span>
+    <span id="filters-arrow">▶</span>
+  </button>
+  <div id="filters-body">
+    <div class="filter-section">
+      <h3>Phrases bloquées (faux-positifs corrigés) ❌</h3>
+      <div id="blocked-tags"><span style="color:#80848e;font-size:12px;font-style:italic">Aucune règle pour l'instant</span></div>
+    </div>
+    <div class="filter-section">
+      <h3>Phrases autorisées (faux-négatifs corrigés) ✅</h3>
+      <div id="allowed-tags"><span style="color:#80848e;font-size:12px;font-style:italic">Aucune règle pour l'instant</span></div>
+    </div>
+  </div>
+</div>
 <script>
 (function(){
   var tb=document.getElementById('tb'),cnt=document.getElementById('cnt'),
@@ -135,14 +197,17 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   function fmt(iso){ var d=new Date(iso); return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
 
   function badge(e){
+    var btn='';
     if(e.passed){
       var cls=e.type==='entry'?'b-entry':e.type==='exit'?'b-exit':'b-neutral';
       var dc =e.type==='entry'?'dg':e.type==='exit'?'dr':'dg';
-      return '<span class="badge '+cls+'"><span class="dot '+dc+'"></span>'+e.type.toUpperCase()+'</span>';
+      btn='<button class="btn-fp" data-id="'+esc(e.id)+'" data-content="'+esc(e.content||e.preview)+'" title="Marquer comme faux-positif (bloquer à l\'avenir)">❌</button>';
+      return '<span class="badge '+cls+'"><span class="dot '+dc+'"></span>'+e.type.toUpperCase()+'</span>'+btn;
     }
     var bc=(e.reason==='Conversational'||e.reason==='No content')?'b-convo':'b-filter';
     var dd=(e.reason==='Conversational'||e.reason==='No content')?'dz':'do';
-    return '<span class="badge '+bc+'"><span class="dot '+dd+'"></span>FILTERED — '+esc(e.reason)+'</span>';
+    btn='<button class="btn-fn" data-id="'+esc(e.id)+'" data-content="'+esc(e.content||e.preview)+'" title="Marquer comme faux-négatif (autoriser à l\'avenir)">✅</button>';
+    return '<span class="badge '+bc+'"><span class="dot '+dd+'"></span>FILTERED — '+esc(e.reason)+'</span>'+btn;
   }
 
   function makeRow(e,isNew){
@@ -156,10 +221,78 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   function upd(){ cnt.textContent=total+' message'+(total===1?'':'s'); }
 
+  // Délégation d'événements sur le tableau pour les boutons feedback
+  tb.addEventListener('click', function(ev){
+    var btn=ev.target.closest('.btn-fp,.btn-fn');
+    if(!btn) return;
+    var id=btn.getAttribute('data-id');
+    var content=btn.getAttribute('data-content');
+    var action=btn.classList.contains('btn-fp')?'block':'allow';
+    btn.disabled=true; btn.textContent='…';
+    fetch('/api/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,content:content,action:action})})
+      .then(function(r){return r.json();})
+      .then(function(data){
+        if(data.ok){
+          var tr=btn.closest('tr');
+          var badgeEl=tr.querySelector('.badge');
+          if(action==='block'){
+            tr.classList.add('learned');
+            if(badgeEl) badgeEl.outerHTML='<span class="badge b-filter"><span class="dot do"></span>APPRIS: Bloqué</span>';
+          } else {
+            tr.classList.add('unblocked');
+            if(badgeEl) badgeEl.outerHTML='<span class="badge b-entry"><span class="dot dg"></span>DÉBLOQUÉ</span>';
+          }
+          btn.remove();
+          renderFilters(data.customFilters);
+        } else { btn.disabled=false; btn.textContent=action==='block'?'❌':'✅'; }
+      })
+      .catch(function(){ btn.disabled=false; btn.textContent=action==='block'?'❌':'✅'; });
+  });
+
+  // Panneau des règles apprises
+  function renderFilters(cf){
+    var blocked=cf.blocked||[], allowed=cf.allowed||[];
+    document.getElementById('rule-count').textContent=blocked.length+allowed.length;
+    var bt=document.getElementById('blocked-tags');
+    var at=document.getElementById('allowed-tags');
+    bt.innerHTML=blocked.length?'':'<span style="color:#80848e;font-size:12px;font-style:italic">Aucune règle pour l\'instant</span>';
+    at.innerHTML=allowed.length?'':'<span style="color:#80848e;font-size:12px;font-style:italic">Aucune règle pour l\'instant</span>';
+    blocked.forEach(function(phrase){
+      var tag=document.createElement('span'); tag.className='filter-tag';
+      tag.innerHTML=esc(phrase)+'<button data-phrase="'+esc(phrase)+'" data-list="blocked" title="Supprimer">✕</button>';
+      bt.appendChild(tag);
+    });
+    allowed.forEach(function(phrase){
+      var tag=document.createElement('span'); tag.className='filter-tag';
+      tag.innerHTML=esc(phrase)+'<button data-phrase="'+esc(phrase)+'" data-list="allowed" title="Supprimer">✕</button>';
+      at.appendChild(tag);
+    });
+  }
+
+  // Suppression d'une règle apprise
+  document.getElementById('filters-body').addEventListener('click', function(ev){
+    var btn=ev.target.closest('button[data-phrase]');
+    if(!btn) return;
+    var phrase=btn.getAttribute('data-phrase');
+    var list=btn.getAttribute('data-list');
+    fetch('/api/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:phrase,action:'unblock-'+list})})
+      .then(function(r){return r.json();}).then(function(data){ if(data.ok) renderFilters(data.customFilters); });
+  });
+
+  // Accordéon du panneau
+  document.getElementById('filters-toggle').addEventListener('click', function(){
+    var body=document.getElementById('filters-body');
+    var arrow=document.getElementById('filters-arrow');
+    body.classList.toggle('open');
+    arrow.textContent=body.classList.contains('open')?'▼':'▶';
+  });
+
   fetch('/api/messages').then(function(r){return r.json();}).then(function(ms){
     ms.forEach(function(e){ tb.appendChild(makeRow(e,false)); total++; });
     upd(); if(total>0) empty.style.display='none';
   }).catch(function(){});
+
+  fetch('/api/custom-filters').then(function(r){return r.json();}).then(renderFilters).catch(function(){});
 
   (function connect(){
     var es=new EventSource('/api/events');
@@ -192,6 +325,7 @@ function logEvent(author, channel, content, signalType, reason) {
     ts:      new Date().toISOString(),
     author,
     channel,
+    content: content || '',
     preview: content && content.length > 120 ? content.slice(0, 120) + '…' : (content || ''),
     passed:  signalType !== null,
     type:    signalType,
@@ -321,6 +455,31 @@ app.get('/api/events', (req, res) => {
     const i = sseClients.indexOf(client);
     if (i !== -1) sseClients.splice(i, 1);
   });
+});
+
+app.get('/api/custom-filters', (req, res) => {
+  res.json(customFilters);
+});
+
+app.post('/api/feedback', (req, res) => {
+  const { id, content, action } = req.body || {};
+  const validActions = ['block', 'allow', 'unblock-blocked', 'unblock-allowed'];
+  if (!content || !validActions.includes(action)) {
+    return res.status(400).json({ error: 'Missing or invalid fields' });
+  }
+  const phrase = content.trim();
+  if (action === 'block') {
+    if (!customFilters.blocked.includes(phrase)) customFilters.blocked.push(phrase);
+  } else if (action === 'allow') {
+    if (!customFilters.allowed.includes(phrase)) customFilters.allowed.push(phrase);
+  } else if (action === 'unblock-blocked') {
+    customFilters.blocked = customFilters.blocked.filter(p => p !== phrase);
+  } else if (action === 'unblock-allowed') {
+    customFilters.allowed = customFilters.allowed.filter(p => p !== phrase);
+  }
+  saveCustomFilters();
+  console.log('[feedback] action=' + action + ' phrase=' + phrase.substring(0, 60));
+  res.json({ ok: true, customFilters });
 });
 
 app.get('/dashboard', (req, res) => {
@@ -599,6 +758,22 @@ function enrichContent(content) {
 function classifySignal(content) {
   if (!content) return { type: null, reason: 'No content' };
   const lower = content.toLowerCase();
+
+  // 1. Liste blanche custom — bypass tous les filtres (corrections faux-négatifs)
+  for (const phrase of customFilters.allowed) {
+    if (lower.includes(phrase.toLowerCase())) {
+      return { type: 'neutral', reason: 'Accepted' };
+    }
+  }
+
+  // 2. Liste noire custom — règles apprises (faux-positifs corrigés)
+  for (const phrase of customFilters.blocked) {
+    if (lower.includes(phrase.toLowerCase())) {
+      return { type: null, reason: 'Learned filter' };
+    }
+  }
+
+  // 3. Mots-clés bloqués (hardcodés)
   const blocked = ['news', 'sec', 'ipo', 'offering', 'halted', 'form 8-k', 'reverse stock split'];
   for (const b of blocked) {
     if (lower.includes(b)) return { type: null, reason: 'Blocked keyword' };

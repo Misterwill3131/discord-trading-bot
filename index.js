@@ -198,7 +198,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     <span id="authors-arrow">▶</span>
   </button>
   <div id="authors-body">
-    <div id="authors-list"><span style="color:#80848e;font-size:12px;font-style:italic">Aucun auteur vu pour l'instant</span></div>
+    <div id="authors-list"><span style="color:#80848e;font-size:12px;font-style:italic">Aucun auteur vu pour l&#39;instant</span></div>
   </div>
 </div>
 
@@ -210,11 +210,11 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <div id="filters-body">
     <div class="filter-section">
       <h3>Phrases bloquées (faux-positifs corrigés) ❌</h3>
-      <div id="blocked-tags"><span style="color:#80848e;font-size:12px;font-style:italic">Aucune règle pour l'instant</span></div>
+      <div id="blocked-tags"><span style="color:#80848e;font-size:12px;font-style:italic">Aucune règle pour l&#39;instant</span></div>
     </div>
     <div class="filter-section">
       <h3>Phrases autorisées (faux-négatifs corrigés) ✅</h3>
-      <div id="allowed-tags"><span style="color:#80848e;font-size:12px;font-style:italic">Aucune règle pour l'instant</span></div>
+      <div id="allowed-tags"><span style="color:#80848e;font-size:12px;font-style:italic">Aucune règle pour l&#39;instant</span></div>
     </div>
   </div>
 </div>
@@ -232,7 +232,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     if(e.passed){
       var cls=e.type==='entry'?'b-entry':e.type==='exit'?'b-exit':'b-neutral';
       var dc =e.type==='entry'?'dg':e.type==='exit'?'dr':'dg';
-      btn='<button class="btn-fp" data-id="'+esc(e.id)+'" data-content="'+esc(e.content||e.preview)+'" title="Marquer comme faux-positif (bloquer à l\'avenir)">❌</button>';
+      btn='<button class="btn-fp" data-id="'+esc(e.id)+'" data-content="'+esc(e.content||e.preview)+'" title="Faux-positif: bloquer ce message">❌</button>';
       return '<span class="badge '+cls+'"><span class="dot '+dc+'"></span>'+e.type.toUpperCase()+'</span>'+btn;
     }
     var bc=(e.reason==='Conversational'||e.reason==='No content')?'b-convo':'b-filter';

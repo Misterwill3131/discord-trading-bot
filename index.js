@@ -26,7 +26,7 @@ function loadCustomFilters() {
   } catch (e) {
     console.error('[filters] Failed to load custom-filters.json:', e.message);
   }
-  return { blocked: [], allowed: [] };
+  return { blocked: [], allowed: [], blockedAuthors: [], allowedAuthors: [] };
 }
 
 function saveCustomFilters() {
@@ -157,6 +157,24 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .reply-badge { display:inline-block; font-size:10px; background:#2b2d31; border:1px solid #3f4147; color:#80848e; border-radius:3px; padding:1px 5px; margin-right:5px; vertical-align:middle; white-space:nowrap; }
   .reply-badge span { color:#D649CC; font-weight:600; }
   .reply-parent { display:block; font-size:11px; color:#80848e; margin-top:2px; font-style:italic; border-left:2px solid #3f4147; padding-left:6px; }
+  #authors-panel { margin:0 24px 16px; border:1px solid #3f4147; border-radius:6px; overflow:hidden; }
+  #authors-toggle { width:100%; background:#2b2d31; border:none; color:#dcddde; padding:10px 16px; text-align:left; cursor:pointer; font-size:13px; display:flex; justify-content:space-between; align-items:center; }
+  #authors-toggle:hover { background:#32353b; }
+  #authors-body { display:none; padding:12px 16px; background:#1e1f22; }
+  #authors-body.open { display:block; }
+  .author-row { display:flex; align-items:center; justify-content:space-between; padding:6px 8px; border-radius:4px; margin-bottom:4px; background:#2b2d31; }
+  .author-row:hover { background:#32353b; }
+  .author-name { font-weight:600; color:#D649CC; font-size:13px; flex:1; }
+  .author-status { font-size:11px; color:#80848e; margin:0 10px; white-space:nowrap; }
+  .author-status.blocked  { color:#ed4245; }
+  .author-status.allowed  { color:#3ba55d; }
+  .author-actions { display:flex; gap:5px; }
+  .btn-allow-author { background:none; border:1px solid #3ba55d88; color:#3ba55d; border-radius:4px; font-size:11px; padding:2px 8px; cursor:pointer; }
+  .btn-allow-author:hover { background:#3ba55d22; }
+  .btn-block-author { background:none; border:1px solid #ed424588; color:#ed4245; border-radius:4px; font-size:11px; padding:2px 8px; cursor:pointer; }
+  .btn-block-author:hover { background:#ed424522; }
+  .btn-reset-author { background:none; border:1px solid #80848e55; color:#80848e; border-radius:4px; font-size:11px; padding:2px 8px; cursor:pointer; }
+  .btn-reset-author:hover { background:#80848e22; }
 </style>
 </head>
 <body>
@@ -172,6 +190,16 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     <tbody id="tb"></tbody>
   </table>
   <div id="empty">No messages yet — waiting for activity on #trading-floor…</div>
+</div>
+
+<div id="authors-panel">
+  <button id="authors-toggle">
+    <span>Gestion des auteurs</span>
+    <span id="authors-arrow">▶</span>
+  </button>
+  <div id="authors-body">
+    <div id="authors-list"><span style="color:#80848e;font-size:12px;font-style:italic">Aucun auteur vu pour l'instant</span></div>
+  </div>
 </div>
 
 <div id="filters-panel" style="margin:0 24px 24px">
@@ -304,7 +332,65 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     upd(); if(total>0) empty.style.display='none';
   }).catch(function(){});
 
-  fetch('/api/custom-filters').then(function(r){return r.json();}).then(renderFilters).catch(function(){});
+  fetch('/api/custom-filters').then(function(r){return r.json();}).then(function(cf){
+    renderFilters(cf);
+    renderAuthors(cf);
+  }).catch(function(){});
+
+  // ── Gestion des auteurs ───────────────────────────────────────────────────
+  function getAuthorsFromLog(){
+    var seen={};
+    var rows=tb.querySelectorAll('tr');
+    rows.forEach(function(tr){
+      var a=tr.querySelector('.auth');
+      if(a) seen[a.textContent.trim()]=true;
+    });
+    return Object.keys(seen);
+  }
+
+  function renderAuthors(cf){
+    var blocked=cf.blockedAuthors||[], allowed=cf.allowedAuthors||[];
+    var authors=getAuthorsFromLog();
+    // Ajouter les auteurs déjà dans les listes même s'ils ne sont pas dans le log visible
+    blocked.forEach(function(a){ if(!authors.includes(a)) authors.push(a); });
+    allowed.forEach(function(a){ if(!authors.includes(a)) authors.push(a); });
+    var list=document.getElementById('authors-list');
+    if(!authors.length){ list.innerHTML='<span style="color:#80848e;font-size:12px;font-style:italic">Aucun auteur vu pour l\'instant</span>'; return; }
+    list.innerHTML='';
+    authors.sort().forEach(function(name){
+      var isBlocked=blocked.includes(name), isAllowed=allowed.includes(name);
+      var statusCls=isBlocked?'blocked':isAllowed?'allowed':'';
+      var statusTxt=isBlocked?'⛔ Bloqué':isAllowed?'✅ Autorisé':'— Neutre';
+      var row=document.createElement('div'); row.className='author-row';
+      row.innerHTML='<span class="author-name">'+esc(name)+'</span>'
+        +'<span class="author-status '+statusCls+'">'+statusTxt+'</span>'
+        +'<span class="author-actions">'
+        +(isAllowed?'':'<button class="btn-allow-author" data-user="'+esc(name)+'">✅ Autoriser</button>')
+        +(isBlocked?'':'<button class="btn-block-author" data-user="'+esc(name)+'">⛔ Bloquer</button>')
+        +((isBlocked||isAllowed)?'<button class="btn-reset-author" data-user="'+esc(name)+'" data-list="'+(isBlocked?'blocked':'allowed')+'">✕ Réinitialiser</button>':'')
+        +'</span>';
+      list.appendChild(row);
+    });
+  }
+
+  document.getElementById('authors-body').addEventListener('click', function(ev){
+    var btn=ev.target.closest('button[data-user]');
+    if(!btn) return;
+    var username=btn.getAttribute('data-user');
+    var action;
+    if(btn.classList.contains('btn-allow-author'))  action='allow';
+    else if(btn.classList.contains('btn-block-author')) action='block';
+    else { var list=btn.getAttribute('data-list'); action='remove-'+list; }
+    fetch('/api/author-filter',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:username,action:action})})
+      .then(function(r){return r.json();}).then(function(data){ if(data.ok) renderAuthors(data.customFilters); });
+  });
+
+  document.getElementById('authors-toggle').addEventListener('click', function(){
+    var body=document.getElementById('authors-body');
+    var arrow=document.getElementById('authors-arrow');
+    body.classList.toggle('open');
+    arrow.textContent=body.classList.contains('open')?'▼':'▶';
+  });
 
   (function connect(){
     var es=new EventSource('/api/events');
@@ -313,6 +399,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       var e; try{ e=JSON.parse(ev.data); }catch(_){ return; }
       tb.insertBefore(makeRow(e,true),tb.firstChild);
       total++; upd(); empty.style.display='none';
+      // Rafraîchir la liste des auteurs si nouveau auteur
+      fetch('/api/custom-filters').then(function(r){return r.json();}).then(renderAuthors).catch(function(){});
     };
     es.onerror=function(){ dot.className='off'; lbl.textContent='Reconnecting…'; };
   })();
@@ -494,6 +582,31 @@ app.post('/api/feedback', (req, res) => {
   }
   saveCustomFilters();
   console.log('[feedback] action=' + action + ' phrase=' + phrase.substring(0, 60));
+  res.json({ ok: true, customFilters });
+});
+
+app.post('/api/author-filter', (req, res) => {
+  const { username, action } = req.body || {};
+  const validActions = ['block', 'allow', 'remove-blocked', 'remove-allowed'];
+  if (!username || !validActions.includes(action)) {
+    return res.status(400).json({ error: 'Missing or invalid fields' });
+  }
+  if (!customFilters.blockedAuthors)  customFilters.blockedAuthors  = [];
+  if (!customFilters.allowedAuthors) customFilters.allowedAuthors = [];
+  const u = username.trim();
+  if (action === 'block') {
+    customFilters.allowedAuthors  = customFilters.allowedAuthors.filter(a => a !== u);
+    if (!customFilters.blockedAuthors.includes(u)) customFilters.blockedAuthors.push(u);
+  } else if (action === 'allow') {
+    customFilters.blockedAuthors = customFilters.blockedAuthors.filter(a => a !== u);
+    if (!customFilters.allowedAuthors.includes(u)) customFilters.allowedAuthors.push(u);
+  } else if (action === 'remove-blocked') {
+    customFilters.blockedAuthors = customFilters.blockedAuthors.filter(a => a !== u);
+  } else if (action === 'remove-allowed') {
+    customFilters.allowedAuthors = customFilters.allowedAuthors.filter(a => a !== u);
+  }
+  saveCustomFilters();
+  console.log('[author-filter] action=' + action + ' user=' + u);
   res.json({ ok: true, customFilters });
 });
 
@@ -828,6 +941,16 @@ client.on('messageCreate', async (message) => {
   if (!channelName.includes(TRADING_CHANNEL)) return;
 
   const content = message.content;
+  const authorName = message.author.username;
+
+  // ── Filtre par auteur ──────────────────────────────────────────────────────
+  if ((customFilters.blockedAuthors || []).includes(authorName)) {
+    console.log('[AUTHOR BLOCKED] ' + authorName);
+    logEvent(authorName, channelName, content, null, 'Auteur bloqué');
+    return;
+  }
+  const authorAllowed = (customFilters.allowedAuthors || []).includes(authorName);
+  // ──────────────────────────────────────────────────────────────────────────
 
   // ── Détection de réponse + enrichissement de contexte ─────────────────────
   let parentContent = null;
@@ -859,13 +982,23 @@ client.on('messageCreate', async (message) => {
   };
   // ──────────────────────────────────────────────────────────────────────────
 
-  const { type: signalType, reason: signalReason } = classifySignal(classifyContent);
+  // Auteur autorisé → bypass du filtre de contenu
+  let signalType, signalReason;
+  if (authorAllowed) {
+    signalType   = 'neutral';
+    signalReason = 'Accepted';
+    console.log('[AUTHOR ALLOWED] bypass filter for ' + authorName);
+  } else {
+    const result = classifySignal(classifyContent);
+    signalType   = result.type;
+    signalReason = result.reason;
+  }
   if (!signalType) {
     console.log('Filtered (' + signalReason + '): ' + content.substring(0, 80));
-    logEvent(message.author.username, channelName, content, null, signalReason, extra);
+    logEvent(authorName, channelName, content, null, signalReason, extra);
     return;
   }
-  logEvent(message.author.username, channelName, content, signalType, 'Accepted', extra);
+  logEvent(authorName, channelName, content, signalType, 'Accepted', extra);
   console.log('[' + signalType.toUpperCase() + ']' + (isReply ? ' [REPLY]' : '') + ' ' + content);
 
   let imageUrl = null;

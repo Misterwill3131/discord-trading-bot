@@ -72,11 +72,138 @@ const CONFIG = {
 // ═══════════════════════════════════════════════════════════════════════════
 const FONT = CONFIG.FONT; // alias de compatibilité
 
+const DASHBOARD_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BOOM Signal Monitor</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
+  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: #aaa; flex-shrink: 0; transition: background .3s; }
+  #dot.on  { background: #3ba55d; box-shadow: 0 0 6px #3ba55d; }
+  #dot.off { background: #ed4245; }
+  #lbl { font-size: 12px; color: #80848e; }
+  #cnt { margin-left: auto; font-size: 12px; color: #80848e; }
+  #wrap { padding: 16px 24px; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th { text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #80848e; padding: 0 10px 10px; border-bottom: 1px solid #3f4147; white-space: nowrap; }
+  tbody tr { border-bottom: 1px solid #2b2d31; transition: background .15s; }
+  tbody tr:hover { background: #2b2d31; }
+  td { padding: 9px 10px; vertical-align: middle; line-height: 1.45; }
+  .ts   { color: #80848e; font-size: 12px; white-space: nowrap; }
+  .auth { font-weight: 600; color: #D649CC; white-space: nowrap; }
+  .chan { color: #80848e; white-space: nowrap; }
+  .prev { max-width: 380px; word-break: break-word; }
+  .badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+  .b-entry   { background: #1e3a2f; color: #3ba55d; border: 1px solid #3ba55d44; }
+  .b-exit    { background: #3a1e1e; color: #ed4245; border: 1px solid #ed424544; }
+  .b-neutral { background: #2a2e3d; color: #5865f2; border: 1px solid #5865f244; }
+  .b-filter  { background: #3a2e1e; color: #faa61a; border: 1px solid #faa61a44; }
+  .b-convo   { background: #2e2e2e; color: #80848e; border: 1px solid #80848e44; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+  .dg { background: #3ba55d; } .dr { background: #ed4245; } .do { background: #faa61a; } .dz { background: #80848e; }
+  #empty { padding: 60px 24px; text-align: center; color: #80848e; }
+  @keyframes flash { from { background: #2a3040; } to { background: transparent; } }
+  tr.new { animation: flash .8s ease-out; }
+</style>
+</head>
+<body>
+<header>
+  <div id="dot"></div>
+  <h1>BOOM Signal Monitor</h1>
+  <span id="lbl">Connecting…</span>
+  <span id="cnt"></span>
+</header>
+<div id="wrap">
+  <table>
+    <thead><tr><th>Time</th><th>Author</th><th>Channel</th><th>Preview</th><th>Result</th></tr></thead>
+    <tbody id="tb"></tbody>
+  </table>
+  <div id="empty">No messages yet — waiting for activity on #trading-floor…</div>
+</div>
+<script>
+(function(){
+  var tb=document.getElementById('tb'),cnt=document.getElementById('cnt'),
+      dot=document.getElementById('dot'),lbl=document.getElementById('lbl'),
+      empty=document.getElementById('empty'),total=0;
+
+  function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function fmt(iso){ var d=new Date(iso); return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
+
+  function badge(e){
+    if(e.passed){
+      var cls=e.type==='entry'?'b-entry':e.type==='exit'?'b-exit':'b-neutral';
+      var dc =e.type==='entry'?'dg':e.type==='exit'?'dr':'dg';
+      return '<span class="badge '+cls+'"><span class="dot '+dc+'"></span>'+e.type.toUpperCase()+'</span>';
+    }
+    var bc=(e.reason==='Conversational'||e.reason==='No content')?'b-convo':'b-filter';
+    var dd=(e.reason==='Conversational'||e.reason==='No content')?'dz':'do';
+    return '<span class="badge '+bc+'"><span class="dot '+dd+'"></span>FILTERED — '+esc(e.reason)+'</span>';
+  }
+
+  function makeRow(e,isNew){
+    var tr=document.createElement('tr');
+    if(isNew) tr.className='new';
+    tr.innerHTML='<td class="ts">'+fmt(e.ts)+'</td><td class="auth">'+esc(e.author)+'</td>'
+      +'<td class="chan">#'+esc(e.channel)+'</td><td class="prev">'+esc(e.preview)+'</td>'
+      +'<td>'+badge(e)+'</td>';
+    return tr;
+  }
+
+  function upd(){ cnt.textContent=total+' message'+(total===1?'':'s'); }
+
+  fetch('/api/messages').then(function(r){return r.json();}).then(function(ms){
+    ms.forEach(function(e){ tb.appendChild(makeRow(e,false)); total++; });
+    upd(); if(total>0) empty.style.display='none';
+  }).catch(function(){});
+
+  (function connect(){
+    var es=new EventSource('/api/events');
+    es.onopen=function(){ dot.className='on'; lbl.textContent='Live'; };
+    es.onmessage=function(ev){
+      var e; try{ e=JSON.parse(ev.data); }catch(_){ return; }
+      tb.insertBefore(makeRow(e,true),tb.firstChild);
+      total++; upd(); empty.style.display='none';
+    };
+    es.onerror=function(){ dot.className='off'; lbl.textContent='Reconnecting…'; };
+  })();
+})();
+</script>
+</body>
+</html>`;
+
 const app = express();
 app.use(express.json());
 
 let lastImageBuffer = null;
 let lastImageId = null;
+
+const MAX_LOG = 200;
+const messageLog = [];
+const sseClients = [];
+
+function logEvent(author, channel, content, signalType, reason) {
+  const entry = {
+    id:      Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+    ts:      new Date().toISOString(),
+    author,
+    channel,
+    preview: content && content.length > 120 ? content.slice(0, 120) + '…' : (content || ''),
+    passed:  signalType !== null,
+    type:    signalType,
+    reason,
+  };
+  messageLog.unshift(entry);
+  if (messageLog.length > MAX_LOG) messageLog.pop();
+  const payload = 'data: ' + JSON.stringify(entry) + '\n\n';
+  for (let i = sseClients.length - 1; i >= 0; i--) {
+    try { sseClients[i].res.write(payload); } catch (_) { sseClients.splice(i, 1); }
+  }
+}
 
 app.get('/preview', async (req, res) => {
   try {
@@ -172,6 +299,33 @@ app.get('/health', async (req, res) => {
     timestamp:   new Date().toISOString(),
     tip:         'Params optionnels: ?author=Z&message=$AAPL+180&signal=entry | ?send=0 pour desactiver'
   });
+});
+
+app.get('/api/messages', (req, res) => {
+  res.json(messageLog);
+});
+
+app.get('/api/events', (req, res) => {
+  res.set({
+    'Content-Type':      'text/event-stream',
+    'Cache-Control':     'no-cache',
+    'Connection':        'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders();
+  const client = { res };
+  sseClients.push(client);
+  const hb = setInterval(() => { try { res.write(': heartbeat\n\n'); } catch (_) {} }, 25000);
+  req.on('close', () => {
+    clearInterval(hb);
+    const i = sseClients.indexOf(client);
+    if (i !== -1) sseClients.splice(i, 1);
+  });
+});
+
+app.get('/dashboard', (req, res) => {
+  res.set('Content-Type', 'text/html');
+  res.send(DASHBOARD_HTML);
 });
 
 app.listen(PORT, () => console.log('Server running on port ' + PORT));
@@ -443,29 +597,29 @@ function enrichContent(content) {
   return content + ' | Gain: ' + sign + gain_pct + '%';
 }
 function classifySignal(content) {
-  if (!content) return null;
+  if (!content) return { type: null, reason: 'No content' };
   const lower = content.toLowerCase();
   const blocked = ['news', 'sec', 'ipo', 'offering', 'halted', 'form 8-k', 'reverse stock split'];
   for (const b of blocked) {
-    if (lower.includes(b)) return null;
+    if (lower.includes(b)) return { type: null, reason: 'Blocked keyword' };
   }
   // REQUIS: ticker ($TSLA, AAPL, NCT...)
   const hasTicker = /\$[A-Z]{1,6}/i.test(content) || /\b[A-Z]{2,5}\b/.test(content);
   if (!hasTicker) {
     console.log('[FILTER] No ticker, ignored: ' + content.substring(0, 60));
-    return null;
+    return { type: null, reason: 'No ticker' };
   }
-  if (lower.includes('entree') || lower.includes('entry') || lower.includes('long') || lower.includes('scalp')) return 'entry';
-  if (lower.includes('sortie') || lower.includes('exit') || lower.includes('stop')) return 'exit';
+  if (lower.includes('entree') || lower.includes('entry') || lower.includes('long') || lower.includes('scalp')) return { type: 'entry', reason: 'Accepted' };
+  if (lower.includes('sortie') || lower.includes('exit') || lower.includes('stop')) return { type: 'exit', reason: 'Accepted' };
   // FILTRE: messages conversationnels (questions/chat sans prix)
-    const hasPrice = /\d+(?:\.\d+)?/.test(content);
-    const isQuestion = content.trim().endsWith('?');
-    const startsConvo = /^(and\s+)?(how|who|what|when|why|did|do|are|is|can|any|anyone|has|have|congrats|gg|nice|good|great|lol|haha|check|look|wow|reminder|just|btw|fyi|ok|okay)\b/i.test(content.trim());
-    if ((isQuestion || startsConvo) && !hasPrice) {
-          console.log('[FILTER] Conversational ignored: ' + content.substring(0, 60));
-          return null;
-    }
-  return 'neutral';
+  const hasPrice = /\d+(?:\.\d+)?/.test(content);
+  const isQuestion = content.trim().endsWith('?');
+  const startsConvo = /^(and\s+)?(how|who|what|when|why|did|do|are|is|can|any|anyone|has|have|congrats|gg|nice|good|great|lol|haha|check|look|wow|reminder|just|btw|fyi|ok|okay)\b/i.test(content.trim());
+  if ((isQuestion || startsConvo) && !hasPrice) {
+    console.log('[FILTER] Conversational ignored: ' + content.substring(0, 60));
+    return { type: null, reason: 'Conversational' };
+  }
+  return { type: 'neutral', reason: 'Accepted' };
 }
 
 const client = new Client({
@@ -484,11 +638,13 @@ client.on('messageCreate', async (message) => {
   if (!channelName.includes(TRADING_CHANNEL)) return;
 
   const content = message.content;
-  const signalType = classifySignal(content);
+  const { type: signalType, reason: signalReason } = classifySignal(content);
   if (!signalType) {
-    console.log('Filtered out: ' + content.substring(0, 80));
+    console.log('Filtered (' + signalReason + '): ' + content.substring(0, 80));
+    logEvent(message.author.username, channelName, content, null, signalReason);
     return;
   }
+  logEvent(message.author.username, channelName, content, signalType, 'Accepted');
   console.log('[' + signalType.toUpperCase() + '] ' + content);
 
   let imageUrl = null;

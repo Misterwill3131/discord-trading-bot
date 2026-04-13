@@ -154,6 +154,9 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .filter-tag { display:inline-flex; align-items:center; gap:6px; background:#2b2d31; border:1px solid #3f4147; border-radius:4px; padding:3px 8px; font-size:12px; margin:3px; max-width:420px; word-break:break-all; }
   .filter-tag button { background:none; border:none; color:#80848e; cursor:pointer; font-size:14px; line-height:1; padding:0; }
   .filter-tag button:hover { color:#ed4245; }
+  .reply-badge { display:inline-block; font-size:10px; background:#2b2d31; border:1px solid #3f4147; color:#80848e; border-radius:3px; padding:1px 5px; margin-right:5px; vertical-align:middle; white-space:nowrap; }
+  .reply-badge span { color:#D649CC; font-weight:600; }
+  .reply-parent { display:block; font-size:11px; color:#80848e; margin-top:2px; font-style:italic; border-left:2px solid #3f4147; padding-left:6px; }
 </style>
 </head>
 <body>
@@ -213,8 +216,17 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   function makeRow(e,isNew){
     var tr=document.createElement('tr');
     if(isNew) tr.className='new';
+    var previewHtml='';
+    if(e.isReply){
+      var who=e.parentAuthor?'<span>'+esc(e.parentAuthor)+'</span>':'';
+      previewHtml+='<span class="reply-badge">↩ réponse à '+who+'</span>';
+    }
+    previewHtml+=esc(e.preview);
+    if(e.isReply && e.parentPreview){
+      previewHtml+='<span class="reply-parent">'+esc(e.parentPreview)+'</span>';
+    }
     tr.innerHTML='<td class="ts">'+fmt(e.ts)+'</td><td class="auth">'+esc(e.author)+'</td>'
-      +'<td class="chan">#'+esc(e.channel)+'</td><td class="prev">'+esc(e.preview)+'</td>'
+      +'<td class="chan">#'+esc(e.channel)+'</td><td class="prev">'+previewHtml+'</td>'
       +'<td>'+badge(e)+'</td>';
     return tr;
   }
@@ -319,7 +331,7 @@ const MAX_LOG = 200;
 const messageLog = [];
 const sseClients = [];
 
-function logEvent(author, channel, content, signalType, reason) {
+function logEvent(author, channel, content, signalType, reason, extra) {
   const entry = {
     id:      Date.now() + '-' + Math.random().toString(36).slice(2, 7),
     ts:      new Date().toISOString(),
@@ -330,6 +342,9 @@ function logEvent(author, channel, content, signalType, reason) {
     passed:  signalType !== null,
     type:    signalType,
     reason,
+    isReply:       extra?.isReply || false,
+    parentPreview: extra?.parentPreview || null,
+    parentAuthor:  extra?.parentAuthor || null,
   };
   messageLog.unshift(entry);
   if (messageLog.length > MAX_LOG) messageLog.pop();
@@ -813,14 +828,45 @@ client.on('messageCreate', async (message) => {
   if (!channelName.includes(TRADING_CHANNEL)) return;
 
   const content = message.content;
-  const { type: signalType, reason: signalReason } = classifySignal(content);
+
+  // ── Détection de réponse + enrichissement de contexte ─────────────────────
+  let parentContent = null;
+  let parentAuthor  = null;
+  let isReply       = false;
+
+  if (message.reference?.messageId) {
+    try {
+      const parentMsg = await message.channel.messages.fetch(message.reference.messageId);
+      parentContent = parentMsg.content || '';
+      parentAuthor  = parentMsg.author?.username || null;
+      isReply       = true;
+      console.log('[REPLY] Parent: ' + parentContent.substring(0, 60));
+    } catch (e) {
+      console.warn('[REPLY] Could not fetch parent message:', e.message);
+    }
+  }
+
+  // Contenu enrichi : si c'est une réponse, on fusionne parent + reply
+  // pour que le ticker/prix du parent bénéficient à la classification de la réponse
+  const classifyContent = isReply && parentContent
+    ? parentContent + ' ' + content
+    : content;
+
+  const extra = {
+    isReply,
+    parentPreview: parentContent ? (parentContent.length > 80 ? parentContent.slice(0, 80) + '…' : parentContent) : null,
+    parentAuthor,
+  };
+  // ──────────────────────────────────────────────────────────────────────────
+
+  const { type: signalType, reason: signalReason } = classifySignal(classifyContent);
   if (!signalType) {
     console.log('Filtered (' + signalReason + '): ' + content.substring(0, 80));
-    logEvent(message.author.username, channelName, content, null, signalReason);
+    logEvent(message.author.username, channelName, content, null, signalReason, extra);
     return;
   }
-  logEvent(message.author.username, channelName, content, signalType, 'Accepted');
-  console.log('[' + signalType.toUpperCase() + '] ' + content);
+  logEvent(message.author.username, channelName, content, signalType, 'Accepted', extra);
+  console.log('[' + signalType.toUpperCase() + ']' + (isReply ? ' [REPLY]' : '') + ' ' + content);
 
   let imageUrl = null;
   try {
@@ -844,8 +890,11 @@ client.on('messageCreate', async (message) => {
         signal_type: signalType,
         timestamp: message.createdAt.toISOString(),
         image_url: imageUrl,
-                  ticker: extractTicker(content),
-        ...extractPrices(content)
+        ticker: extractTicker(classifyContent),
+        is_reply: isReply,
+        parent_content: parentContent,
+        parent_author: parentAuthor,
+        ...extractPrices(classifyContent)
       }),
     });
     console.log('Sent to Make, status: ' + result.status);

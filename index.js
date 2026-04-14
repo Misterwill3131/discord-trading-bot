@@ -2116,6 +2116,16 @@ function classifySignal(content) {
   for (const b of blocked) {
     if (lower.includes(b)) return { type: null, reason: 'Blocked keyword', confidence: 95, ticker };
   }
+
+  // 4. Messages recap/bilan — résumé de trades passés, pas un signal
+  const isRecap = /^recap[:\s]/i.test(content.trim())
+    || /let[''']?s get ready/i.test(content)
+    || /@everyone/.test(content)
+    || (content.match(/\$[A-Z]{1,6}\s+\d+%/g) || []).length >= 3; // 3+ lignes "$TICK XX%"
+  if (isRecap) {
+    console.log('[FILTER] Recap/broadcast ignored: ' + content.substring(0, 60));
+    return { type: null, reason: 'Recap ou broadcast', confidence: 95, ticker };
+  }
   // REQUIS: ticker ($TSLA, AAPL, NCT...)
   const hasTicker = /\$[A-Z]{1,6}/i.test(content) || /\b[A-Z]{2,5}\b/.test(content);
   if (!hasTicker) {

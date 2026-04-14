@@ -17,10 +17,43 @@ const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || 'boom2024';
 const SESSION_TOKEN = crypto.randomBytes(16).toString('hex');
 
 // ─────────────────────────────────────────────────────────────────────
+//  Persistence par fichiers JSON journaliers (messages-YYYY-MM-DD.json)
+// ─────────────────────────────────────────────────────────────────────
+const MAX_LOG = 200;
+const DATA_DIR = __dirname;
+
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function dailyPath(dateKey) {
+  return path.join(DATA_DIR, 'messages-' + dateKey + '.json');
+}
+
+function loadDailyFile(dateKey) {
+  try {
+    var p = dailyPath(dateKey);
+    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch(e) {}
+  return [];
+}
+
+function saveTodayMessages(msgs) {
+  try {
+    fs.writeFileSync(dailyPath(todayKey()), JSON.stringify(msgs, null, 2), 'utf8');
+  } catch(e) {}
+}
+
+function loadInitialMessages() {
+  var today = loadDailyFile(todayKey());
+  return today.slice(0, MAX_LOG);
+}
+// ─────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────
 //  Filtre adaptatif — chargement / sauvegarde des règles apprises
 // ─────────────────────────────────────────────────────────────────────
 const FILTERS_PATH = path.join(__dirname, 'custom-filters.json');
-const MESSAGES_PATH = path.join(__dirname, 'messages.json');
 
 function loadCustomFilters() {
   try {
@@ -30,7 +63,7 @@ function loadCustomFilters() {
   } catch (e) {
     console.error('[filters] Failed to load custom-filters.json:', e.message);
   }
-  return { blocked: [], allowed: [], blockedAuthors: [], allowedAuthors: [] };
+  return { blocked: [], allowed: [], blockedAuthors: [], allowedAuthors: [], falsePositiveCounts: {} };
 }
 
 function saveCustomFilters() {
@@ -499,18 +532,7 @@ app.post('/login', (req, res) => {
 let lastImageBuffer = null;
 let lastImageId = null;
 
-const MAX_LOG = 200;
-const messageLog = (function loadMessages() {
-  try {
-    if (fs.existsSync(MESSAGES_PATH)) {
-      const data = JSON.parse(fs.readFileSync(MESSAGES_PATH, 'utf8'));
-      if (Array.isArray(data)) return data.slice(0, MAX_LOG);
-    }
-  } catch (e) {
-    console.error('[messages] Failed to load messages.json:', e.message);
-  }
-  return [];
-})();
+const messageLog = loadInitialMessages();
 const sseClients = [];
 
 function logEvent(author, channel, content, signalType, reason, extra) {
@@ -532,7 +554,7 @@ function logEvent(author, channel, content, signalType, reason, extra) {
   };
   messageLog.unshift(entry);
   if (messageLog.length > MAX_LOG) messageLog.pop();
-  try { fs.writeFileSync(MESSAGES_PATH, JSON.stringify(messageLog, null, 2), 'utf8'); } catch (_) {}
+  saveTodayMessages(messageLog);
   const payload = 'data: ' + JSON.stringify(entry) + '\n\n';
   for (let i = sseClients.length - 1; i >= 0; i--) {
     try { sseClients[i].res.write(payload); } catch (_) { sseClients.splice(i, 1); }
@@ -625,15 +647,29 @@ app.get('/health', async (req, res) => {
 });
 
 app.get('/api/messages', requireAuth, (req, res) => {
-  let msgs = messageLog;
-  if (req.query.from) {
-    const from = new Date(req.query.from).getTime();
-    if (!isNaN(from)) msgs = msgs.filter(m => new Date(m.ts).getTime() >= from);
+  var from = req.query.from;
+  var to   = req.query.to;
+  var days = req.query.days;
+
+  if (days && parseInt(days) > 1) {
+    var n = Math.min(parseInt(days), 30);
+    var all = [];
+    for (var i = 0; i < n; i++) {
+      var d = new Date();
+      d.setDate(d.getDate() - i);
+      var key = d.toISOString().slice(0, 10);
+      all = all.concat(loadDailyFile(key));
+    }
+    all.sort(function(a, b) { return new Date(b.ts) - new Date(a.ts); });
+    if (from) all = all.filter(function(m) { return m.ts >= from; });
+    if (to)   all = all.filter(function(m) { return m.ts <= to; });
+    return res.json(all);
   }
-  if (req.query.to) {
-    const to = new Date(req.query.to).getTime();
-    if (!isNaN(to)) msgs = msgs.filter(m => new Date(m.ts).getTime() <= to);
-  }
+
+  // Default: today's messages from in-memory log
+  var msgs = [...messageLog];
+  if (from) msgs = msgs.filter(function(m) { return m.ts >= from; });
+  if (to)   msgs = msgs.filter(function(m) { return m.ts <= to; });
   res.json(msgs);
 });
 
@@ -659,15 +695,32 @@ app.get('/api/custom-filters', requireAuth, (req, res) => {
   res.json(customFilters);
 });
 
+const FP_STOPWORDS = new Set(['the','and','for','that','this','with','from','have','will','your','are','was','not','but','can','its','our','you','they','all','been','one','had','her','his','him','she','him','let','get','got','has','how','did','who','why','when','what','than','into','over','just','like','more','also','some','then','them','their','there','would','could','should']);
+
 app.post('/api/feedback', requireAuth, (req, res) => {
   const { id, content, action } = req.body || {};
-  const validActions = ['block', 'allow', 'unblock-blocked', 'unblock-allowed'];
+  const validActions = ['block', 'allow', 'unblock-blocked', 'unblock-allowed', 'false-positive'];
   if (!content || !validActions.includes(action)) {
     return res.status(400).json({ error: 'Missing or invalid fields' });
   }
   const phrase = content.trim();
-  if (action === 'block') {
+  const autoBlocked = [];
+
+  if (action === 'block' || action === 'false-positive') {
     if (!customFilters.blocked.includes(phrase)) customFilters.blocked.push(phrase);
+    // Auto-blacklist: count significant keywords from this false-positive
+    if (!customFilters.falsePositiveCounts) customFilters.falsePositiveCounts = {};
+    const words = phrase.toLowerCase().split(/\W+/).filter(function(w) {
+      return w.length > 3 && !FP_STOPWORDS.has(w);
+    });
+    words.forEach(function(word) {
+      customFilters.falsePositiveCounts[word] = (customFilters.falsePositiveCounts[word] || 0) + 1;
+      if (customFilters.falsePositiveCounts[word] >= 3 && !customFilters.blocked.includes(word)) {
+        customFilters.blocked.push(word);
+        autoBlocked.push(word);
+        console.log('[feedback] Auto-blocked keyword after 3 false positives: ' + word);
+      }
+    });
   } else if (action === 'allow') {
     if (!customFilters.allowed.includes(phrase)) customFilters.allowed.push(phrase);
   } else if (action === 'unblock-blocked') {
@@ -677,7 +730,7 @@ app.post('/api/feedback', requireAuth, (req, res) => {
   }
   saveCustomFilters();
   console.log('[feedback] action=' + action + ' phrase=' + phrase.substring(0, 60));
-  res.json({ ok: true, customFilters });
+  res.json({ ok: true, customFilters, autoBlocked });
 });
 
 app.post('/api/author-filter', requireAuth, (req, res) => {
@@ -1327,6 +1380,20 @@ const STATS_HTML = `<!DOCTYPE html>
   .hour-lbl { font-size: 9px; color: #80848e; margin-top: 3px; }
   .btn-refresh { background: #5865f222; border: 1px solid #5865f244; color: #5865f2; border-radius: 4px; padding: 6px 16px; cursor: pointer; font-size: 13px; font-weight: 600; margin-left: auto; }
   .btn-refresh:hover { background: #5865f244; }
+  .period-btns { display: flex; gap: 6px; margin-left: 16px; }
+  .btn-period { background: #2b2d31; border: 1px solid #3f4147; color: #80848e; border-radius: 4px; padding: 5px 14px; cursor: pointer; font-size: 12px; font-weight: 600; transition: background .15s, color .15s; }
+  .btn-period:hover { background: #3f4147; color: #dcddde; }
+  .btn-period.active { background: #5865f244; border-color: #5865f2; color: #5865f2; }
+  .perf-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  .perf-table th { text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #80848e; padding: 0 8px 8px; border-bottom: 1px solid #3f4147; }
+  .perf-table td { padding: 7px 8px; border-bottom: 1px solid #2b2d31; font-size: 12px; vertical-align: middle; }
+  .perf-table tr:last-child td { border-bottom: none; }
+  .perf-author { font-weight: 700; color: #D649CC; }
+  .perf-acc { color: #3ba55d; }
+  .perf-flt { color: #faa61a; }
+  .perf-bar-wrap { width: 80px; height: 8px; background: #3f4147; border-radius: 4px; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 6px; }
+  .perf-bar-fill { height: 100%; border-radius: 4px; }
+  .perf-ticker { color: #5865f2; font-size: 11px; }
   @media (max-width: 700px) { #wrap { grid-template-columns: 1fr; } .card-full { grid-column: 1; } }
 </style>
 </head>
@@ -1337,6 +1404,11 @@ const STATS_HTML = `<!DOCTYPE html>
   <a href="/raw-messages" class="nav-link">Messages bruts</a>
   <a href="/image-generator" class="nav-link">Image Generator</a>
   <a href="/stats" class="nav-link active">Stats</a>
+  <div class="period-btns">
+    <button class="btn-period active" id="btn-today" data-period="today">Aujourd&#39;hui</button>
+    <button class="btn-period" id="btn-7d" data-period="7d">7 jours</button>
+    <button class="btn-period" id="btn-30d" data-period="30d">30 jours</button>
+  </div>
   <button class="btn-refresh" id="btn-refresh">Actualiser</button>
 </header>
 <div id="wrap">
@@ -1364,13 +1436,25 @@ const STATS_HTML = `<!DOCTYPE html>
     <div id="top-tickers"></div>
   </div>
   <div class="card card-full">
-    <div class="card-title">Volume par heure (24h)</div>
+    <div class="card-title">Performance par auteur</div>
+    <div id="author-perf-wrap"><span style="color:#80848e;font-size:12px;">Chargement...</span></div>
+  </div>
+  <div class="card card-full">
+    <div class="card-title" id="vol-chart-title">Volume par heure (24h)</div>
     <div class="hour-chart" id="hour-chart"></div>
   </div>
 </div>
 <script>
 (function(){
   function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  var currentPeriod = 'today';
+
+  function periodUrl() {
+    if (currentPeriod === '7d')  return '/api/messages?days=7';
+    if (currentPeriod === '30d') return '/api/messages?days=30';
+    return '/api/messages';
+  }
 
   function renderBars(containerId, data, color) {
     var container = document.getElementById(containerId);
@@ -1388,8 +1472,105 @@ const STATS_HTML = `<!DOCTYPE html>
     });
   }
 
+  function renderAuthorPerf(msgs) {
+    var wrap = document.getElementById('author-perf-wrap');
+    var authorStats = {};
+    msgs.forEach(function(m) {
+      if (!m.author) return;
+      if (!authorStats[m.author]) authorStats[m.author] = { total: 0, accepted: 0, filtered: 0, tickers: {} };
+      var s = authorStats[m.author];
+      s.total++;
+      if (m.passed) s.accepted++; else s.filtered++;
+      if (m.ticker) s.tickers[m.ticker] = (s.tickers[m.ticker] || 0) + 1;
+    });
+    var rows = Object.keys(authorStats).map(function(a) { return [a, authorStats[a]]; })
+      .sort(function(x, y) { return y[1].total - x[1].total; }).slice(0, 10);
+    if (!rows.length) { wrap.innerHTML = '<span style="color:#80848e;font-size:12px;">Aucune donnee</span>'; return; }
+    var html = '<table class="perf-table"><thead><tr>'
+      + '<th>Auteur</th><th>Total</th><th>Acceptes</th><th>Filtres</th><th>Taux</th><th>Ticker top</th>'
+      + '</tr></thead><tbody>';
+    rows.forEach(function(row) {
+      var name = row[0], s = row[1];
+      var rate = s.total ? Math.round(s.accepted / s.total * 100) : 0;
+      var barColor = rate >= 50 ? '#3ba55d' : rate >= 25 ? '#faa61a' : '#ed4245';
+      var topTicker = '';
+      var topCount = 0;
+      Object.keys(s.tickers).forEach(function(t) { if (s.tickers[t] > topCount) { topCount = s.tickers[t]; topTicker = t; } });
+      html += '<tr>'
+        + '<td class="perf-author">' + esc(name) + '</td>'
+        + '<td>' + s.total + '</td>'
+        + '<td class="perf-acc">' + s.accepted + '</td>'
+        + '<td class="perf-flt">' + s.filtered + '</td>'
+        + '<td><span class="perf-bar-wrap"><span class="perf-bar-fill" style="width:' + rate + '%;background:' + barColor + ';"></span></span>' + rate + '%</td>'
+        + '<td class="perf-ticker">' + esc(topTicker) + '</td>'
+        + '</tr>';
+    });
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+  }
+
+  function renderVolumeChart(msgs) {
+    var isMultiDay = currentPeriod === '7d' || currentPeriod === '30d';
+    var chart = document.getElementById('hour-chart');
+    var title = document.getElementById('vol-chart-title');
+    chart.innerHTML = '';
+
+    if (isMultiDay) {
+      title.textContent = currentPeriod === '7d' ? 'Volume par jour (7 jours)' : 'Volume par jour (30 jours)';
+      var dayMap = {};
+      msgs.forEach(function(m) {
+        var d = m.ts ? m.ts.slice(0, 10) : '';
+        if (!d) return;
+        if (!dayMap[d]) dayMap[d] = { total: 0, accepted: 0 };
+        dayMap[d].total++;
+        if (m.passed) dayMap[d].accepted++;
+      });
+      var days = Object.keys(dayMap).sort();
+      var maxV = 0;
+      days.forEach(function(d) { if (dayMap[d].total > maxV) maxV = dayMap[d].total; });
+      maxV = maxV || 1;
+      days.forEach(function(d) {
+        var v = dayMap[d].total;
+        var acc = dayMap[d].accepted;
+        var heightPct = Math.round(v / maxV * 100);
+        var accRate = v ? acc / v : 0;
+        var barColor = accRate >= 0.5 ? '#3ba55d' : accRate >= 0.25 ? '#faa61a' : '#ed4245';
+        if (v === 0) barColor = '#3f4147';
+        var lbl = d.slice(5); // MM-DD
+        var col = document.createElement('div');
+        col.className = 'hour-col';
+        col.innerHTML = '<div class="hour-bar" title="' + v + ' msg" style="height:' + heightPct + '%;background:' + barColor + ';"></div>'
+          + '<span class="hour-lbl">' + esc(lbl) + '</span>';
+        chart.appendChild(col);
+      });
+    } else {
+      title.textContent = 'Volume par heure (24h)';
+      var hourBuckets = new Array(24).fill(0);
+      var hourAccepted = new Array(24).fill(0);
+      msgs.forEach(function(m) {
+        var h = new Date(m.ts).getHours();
+        hourBuckets[h]++;
+        if (m.passed) hourAccepted[h]++;
+      });
+      var maxH = Math.max.apply(null, hourBuckets) || 1;
+      for (var i = 0; i < 24; i++) {
+        var v = hourBuckets[i];
+        var heightPct = Math.round(v / maxH * 100);
+        var accRate = v ? hourAccepted[i] / v : 0;
+        var barColor = accRate >= 0.5 ? '#3ba55d' : accRate >= 0.25 ? '#faa61a' : '#ed4245';
+        if (v === 0) barColor = '#3f4147';
+        var col = document.createElement('div');
+        col.className = 'hour-col';
+        col.innerHTML = '<div class="hour-bar" title="' + v + ' msg" style="height:' + heightPct + '%;background:' + barColor + ';"></div>'
+          + '<span class="hour-lbl">' + String(i).padStart(2, '0') + '</span>';
+        chart.appendChild(col);
+      }
+    }
+  }
+
   function loadStats() {
-    fetch('/api/messages')
+    var url = periodUrl();
+    fetch(url)
       .then(function(r){ return r.json(); })
       .then(function(msgs) {
         var total = msgs.length;
@@ -1425,31 +1606,23 @@ const STATS_HTML = `<!DOCTYPE html>
           .sort(function(a,b){ return b[1]-a[1]; }).slice(0,5);
         renderBars('top-tickers', topTickers, '#5865f2');
 
-        var hourBuckets = new Array(24).fill(0);
-        var hourAccepted = new Array(24).fill(0);
-        msgs.forEach(function(m){
-          var h = new Date(m.ts).getHours();
-          hourBuckets[h]++;
-          if(m.passed) hourAccepted[h]++;
-        });
-        var maxH = Math.max.apply(null, hourBuckets) || 1;
-        var chart = document.getElementById('hour-chart');
-        chart.innerHTML = '';
-        for (var i = 0; i < 24; i++) {
-          var v = hourBuckets[i];
-          var heightPct = Math.round(v / maxH * 100);
-          var accRate = v ? hourAccepted[i] / v : 0;
-          var barColor = accRate >= 0.5 ? '#3ba55d' : accRate >= 0.25 ? '#faa61a' : '#ed4245';
-          if (v === 0) barColor = '#3f4147';
-          var col = document.createElement('div');
-          col.className = 'hour-col';
-          col.innerHTML = '<div class="hour-bar" title="' + v + ' msg" style="height:' + heightPct + '%;background:' + barColor + ';"></div>'
-            + '<span class="hour-lbl">' + String(i).padStart(2,'0') + '</span>';
-          chart.appendChild(col);
-        }
+        renderAuthorPerf(msgs);
+        renderVolumeChart(msgs);
       })
       .catch(function(){ document.getElementById('accept-sub').textContent = 'Erreur de chargement'; });
   }
+
+  function setPeriod(p) {
+    currentPeriod = p;
+    document.querySelectorAll('.btn-period').forEach(function(b) {
+      b.classList.toggle('active', b.getAttribute('data-period') === p);
+    });
+    loadStats();
+  }
+
+  document.getElementById('btn-today').addEventListener('click', function() { setPeriod('today'); });
+  document.getElementById('btn-7d').addEventListener('click', function() { setPeriod('7d'); });
+  document.getElementById('btn-30d').addEventListener('click', function() { setPeriod('30d'); });
 
   loadStats();
   document.getElementById('btn-refresh').addEventListener('click', loadStats);
@@ -1635,50 +1808,67 @@ function wrapText(ctx, text, maxWidth) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// extractPrices — Detecte prix d'entree ET de sortie dans un message
+// extractPrices — Detecte prix entree, sortie et stop dans un message
+// Reconnait: 0.64, $0.63, 9.86-11, 9.86-11.50, 150.00-155.00
 // ─────────────────────────────────────────────────────────────────────
 function extractPrices(content) {
-  if (!content) return { entry_price: null, exit_price: null, gain_pct: null };
+  if (!content) return { entry_price: null, target_price: null, stop_price: null, exit_price: null, gain_pct: null };
   const c = content.replace(/,/g, '.');
   let entry = null;
-  let exit  = null;
+  let target = null;
+  let stop = null;
 
   // Priorite 1: TICKER PRIX-PRIX (ex: $TSLA 150.00-155.00 ou NCT 2.60-4.06)
-  const rangeM = c.match(/(?:\$?[A-Z]{1,6}\s+)(\d+(?:\.\d+)?)\s*[-\u2013]\s*(\d+(?:\.\d+)?)/i);
+  const rangeM = c.match(/(?:\$?[A-Z]{1,6}\s+)\$?(\d+(?:\.\d+)?)\s*[-\u2013]\s*\$?(\d+(?:\.\d+)?)/i);
   if (rangeM) {
     const a = parseFloat(rangeM[1]), b = parseFloat(rangeM[2]);
-    entry = Math.min(a, b);
-    exit  = Math.max(a, b);
+    entry  = Math.min(a, b);
+    target = Math.max(a, b);
   }
 
-  // Priorite 2: "in at PRIX" / "entry PRIX" / "long PRIX"
+  // Priorite 1b: prix seul range sans ticker (ex dans une reponse: "3.43-4.32")
   if (!entry) {
-    const em = c.match(/(?:in\s+at|entry|bought?|long at|achat|entree)\s+\$?(\d+(?:\.\d+)?)/i);
+    const standaloneRange = c.match(/^\s*\$?(\d+(?:\.\d+)?)\s*[-\u2013]\s*\$?(\d+(?:\.\d+)?)\s*$/);
+    if (standaloneRange) {
+      const a = parseFloat(standaloneRange[1]), b = parseFloat(standaloneRange[2]);
+      entry  = Math.min(a, b);
+      target = Math.max(a, b);
+    }
+  }
+
+  // Priorite 2: "in at PRIX" / "entry PRIX" / "long PRIX" / "achat PRIX"
+  if (!entry) {
+    const em = c.match(/(?:in\s+at|entry|bought?|long\s+at|achat|entree)\s+\$?(\d+(?:\.\d+)?)/i);
     if (em) entry = parseFloat(em[1]);
   }
 
-  // Priorite 3: "out at PRIX" / "exit PRIX" / "target PRIX" / "tp PRIX"
-  if (!exit) {
-    const xm = c.match(/(?:out\s+at|exit\s+at|sold?\s+at|target|tp|sortie|objectif)\s+\$?(\d+(?:\.\d+)?)/i);
-    if (xm) exit = parseFloat(xm[1]);
+  // Priorite 3: "target PRIX" / "tp PRIX" / "out at PRIX" / "exit PRIX"
+  if (!target) {
+    const xm = c.match(/(?:target|tp|out\s+at|exit\s+at|sold?\s+at|sortie|objectif)\s+\$?(\d+(?:\.\d+)?)/i);
+    if (xm) target = parseFloat(xm[1]);
   }
 
-  // Priorite 4: Niveaux separes par ... ou to (ex: 2.50...3.50)
-  if (!entry || !exit) {
+  // Priorite 4: stop / sl
+  const sm = c.match(/(?:stop|sl|stoploss|stop[-\s]?loss)\s+\$?(\d+(?:\.\d+)?)/i);
+  if (sm) stop = parseFloat(sm[1]);
+
+  // Priorite 5: Niveaux separes par ... ou to (ex: 2.50...3.50)
+  if (!entry || !target) {
     const lm = c.match(/\$?(\d+(?:\.\d+)?)\s*(?:\.{2,}|\bto\b)\s*\$?(\d+(?:\.\d+)?)/i);
     if (lm) {
       const a = parseFloat(lm[1]), b = parseFloat(lm[2]);
-      if (!entry) entry = Math.min(a, b);
-      if (!exit)  exit  = Math.max(a, b);
+      if (!entry)  entry  = Math.min(a, b);
+      if (!target) target = Math.max(a, b);
     }
   }
 
   let gain_pct = null;
-  if (entry !== null && exit !== null && entry > 0) {
-    gain_pct = parseFloat((((exit - entry) / entry) * 100).toFixed(2));
+  if (entry !== null && target !== null && entry > 0) {
+    gain_pct = parseFloat((((target - entry) / entry) * 100).toFixed(2));
   }
 
-  return { entry_price: entry, exit_price: exit, gain_pct };
+  // exit_price kept for backward compat
+  return { entry_price: entry, target_price: target, stop_price: stop, exit_price: target, gain_pct };
 }
 // ─────────────────────────────────────────────────────────────────────
 
@@ -1746,12 +1936,17 @@ function classifySignal(content) {
     return { type: 'exit', reason: 'Accepted', confidence: hasPrice ? 90 : 70, ticker };
   }
   // FILTRE: messages conversationnels (questions/chat sans prix)
-  const hasPrice = /\d+(?:\.\d+)?/.test(content);
+  const hasPrice = /\$?\d+(?:\.\d+)?(?:\s*[-\u2013]\s*\$?\d+(?:\.\d+)?)?/.test(content);
   const isQuestion = content.trim().endsWith('?');
   const startsConvo = /^(and\s+)?(how|who|what|when|why|did|do|are|is|can|any|anyone|has|have|congrats|gg|nice|good|great|lol|haha|check|look|wow|reminder|just|btw|fyi|ok|okay)\b/i.test(content.trim());
   if ((isQuestion || startsConvo) && !hasPrice) {
     console.log('[FILTER] Conversational ignored: ' + content.substring(0, 60));
     return { type: null, reason: 'Conversational', confidence: 75, ticker };
+  }
+  // Neutral requires BOTH ticker AND price
+  if (!hasPrice) {
+    console.log('[FILTER] No price for neutral, ignored: ' + content.substring(0, 60));
+    return { type: null, reason: 'No price', confidence: 70, ticker };
   }
   return { type: 'neutral', reason: 'Accepted', confidence: 60, ticker };
 }
@@ -1880,29 +2075,34 @@ client.on('messageCreate', async (message) => {
   };
   // ──────────────────────────────────────────────────────────────────────────
 
-  // Auteur autorise → bypass du filtre de contenu
-  let signalType, signalReason, signalConfidence, signalTicker;
-  if (authorAllowed) {
-    signalType       = 'neutral';
-    signalReason     = 'Accepted';
-    signalConfidence = 80;
-    signalTicker     = detectTicker(classifyContent);
-    console.log('[AUTHOR ALLOWED] bypass filter for ' + authorName);
-  } else {
-    const result     = classifySignal(classifyContent);
-    signalType       = result.type;
-    signalReason     = result.reason;
-    signalConfidence = result.confidence;
-    signalTicker     = result.ticker;
-  }
+  // Toujours analyser le contenu pour des stats précises
+  const result         = classifySignal(classifyContent);
+  const filterType     = result.type;       // ce que le filtre de contenu a décidé
+  const filterReason   = result.reason;
+  const signalConfidence = result.confidence;
+  const signalTicker   = result.ticker;
+
   const extraWithSignal = Object.assign({}, extra, { confidence: signalConfidence, ticker: signalTicker });
-  if (!signalType) {
-    console.log('Filtered (' + signalReason + '): ' + content.substring(0, 80));
-    logEvent(authorName, channelName, content, null, signalReason, extraWithSignal);
+
+  if (!filterType && !authorAllowed) {
+    // Filtré ET auteur non autorisé → bloqué
+    console.log('Filtered (' + filterReason + '): ' + content.substring(0, 80));
+    logEvent(authorName, channelName, content, null, filterReason, extraWithSignal);
     return;
   }
-  logEvent(authorName, channelName, content, signalType, 'Accepted', extraWithSignal);
-  console.log('[' + signalType.toUpperCase() + ']' + (isReply ? ' [REPLY]' : '') + ' ' + content);
+
+  if (!filterType && authorAllowed) {
+    // Filtré par le contenu MAIS auteur autorisé → on logue passed:false (stats honnêtes)
+    // mais on continue quand même pour envoyer le signal
+    console.log('[AUTHOR ALLOWED bypass] ' + authorName + ': ' + content.substring(0, 60));
+    logEvent(authorName, channelName, content, null, 'Auteur autorise (contenu filtre)', extraWithSignal);
+    // on ne return pas : on envoie quand même l'image/webhook
+  } else {
+    // Filtre passé normalement
+    logEvent(authorName, channelName, content, filterType, filterReason, extraWithSignal);
+  }
+  const sendType = filterType || 'neutral';
+  console.log('[' + sendType.toUpperCase() + ']' + (isReply ? ' [REPLY]' : '') + ' ' + content);
 
   let imageUrl = null;
   try {
@@ -1923,7 +2123,7 @@ client.on('messageCreate', async (message) => {
         content,
         author: message.author.username,
         channel: channelName,
-        signal_type: signalType,
+        signal_type: sendType,
         timestamp: message.createdAt.toISOString(),
         image_url: imageUrl,
         ticker: extractTicker(classifyContent),

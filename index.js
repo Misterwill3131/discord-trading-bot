@@ -2312,11 +2312,29 @@ client.on('messageCreate', async (message) => {
   const promoTicker = extractTicker(classifyContent);
   let promoMessage = null;
   if (promoTicker && prices.entry_price !== null && prices.target_price !== null) {
-    const gainLine = prices.gain_pct !== null
-      ? '$' + promoTicker + ' +' + prices.gain_pct + '% with guidance'
-      : '$' + promoTicker + ' ' + prices.entry_price + ' → ' + prices.target_price + ' with guidance';
-    promoMessage = gainLine + '\n\nhttps://discord.gg/templeofboom';
-    console.log('[PROMO] ' + gainLine);
+    const t   = '$' + promoTicker;
+    const gain = prices.gain_pct !== null ? '+' + prices.gain_pct + '%' : null;
+    const range = prices.entry_price + ' → ' + prices.target_price;
+    const link = 'https://discord.gg/templeofboom';
+    const formats = gain ? [
+      // Format 1 — simple
+      t + ' ' + gain + ' with guidance\n\n' + link,
+      // Format 2 — fire
+      '🔥 ' + t + ' ' + gain + '\nAnother clean signal.\n\nJoin the community 👇\n' + link,
+      // Format 3 — entry/exit detail
+      'We called ' + t + '.\nEntry: ' + prices.entry_price + ' → Exit: ' + prices.target_price + '\n' + gain + ' 💰\n\n' + link,
+      // Format 4 — social proof
+      t + ' ' + gain + ' ✅\nSignals like this every day.\n' + link,
+      // Format 5 — community
+      t + ' just delivered ' + gain + ' 🎯\nTemple of Boom members were ready.\n\n' + link,
+    ] : [
+      // Sans gain %
+      t + ' ' + range + ' with guidance\n\n' + link,
+      '🔥 ' + t + ' setup: ' + range + '\n\nJoin the community 👇\n' + link,
+      'We called ' + t + ' at ' + prices.entry_price + ' 🎯\nTarget: ' + prices.target_price + '\n\n' + link,
+    ];
+    promoMessage = formats[Math.floor(Math.random() * formats.length)];
+    console.log('[PROMO] ' + promoMessage.split('\n')[0]);
   }
   // ──────────────────────────────────────────────────────────────────────────
 

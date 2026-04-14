@@ -1946,13 +1946,16 @@ async function generateImage(author, content, timestamp) {
 
   const nameY = PADDING_V + NAME_H - 3;
 
-  // Username
+  // Username — dégradé gauche → droite
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
-  ctx.fillStyle = CONFIG.USERNAME_COLOR;
   ctx.font = 'bold 16px ' + FONT;
-  ctx.fillText(author || 'Z', CONTENT_X, nameY);
   const nameW = ctx.measureText(author || 'Z').width;
+  const nameGrad = ctx.createLinearGradient(CONTENT_X, 0, CONTENT_X + nameW, 0);
+  nameGrad.addColorStop(0, '#ff79f2');
+  nameGrad.addColorStop(1, '#d649cc');
+  ctx.fillStyle = nameGrad;
+  ctx.fillText(author || 'Z', CONTENT_X, nameY);
 
   // tag_boom.png — remplace le badge dessiné
   const TAG_H = 18;

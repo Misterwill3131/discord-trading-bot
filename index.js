@@ -1901,6 +1901,7 @@ async function generateImage(author, content, timestamp) {
   ctx.clip();
 
   const customAvatarUrl = CUSTOM_AVATARS[author];
+  console.log('[AVATAR] author="' + author + '" path=' + (customAvatarUrl || 'none') + ' exists=' + (customAvatarUrl ? fs.existsSync(customAvatarUrl) : false));
   if (customAvatarUrl) {
     // Charger et dessiner la photo de profil personnalisée
     try {
@@ -1919,6 +1920,7 @@ async function generateImage(author, content, timestamp) {
       }
       ctx.drawImage(img, drawX, drawY, drawW, drawH);
     } catch (e) {
+      console.error('[AVATAR] Failed to load "' + customAvatarUrl + '":', e.message);
       // Fallback: cercle blurple avec initiales
       ctx.fillStyle = CONFIG.AVATAR_COLOR;
       ctx.fillRect(avatarCX - avatarR, avatarCY - avatarR, AVATAR_D, AVATAR_D);

@@ -4,8 +4,13 @@
     {
       "name": "discord-trading-bot",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["index.js"],
-      "port": 3000
+      "runtimeArgs": ["C:/Users/willi/Documents/GitHub/discord-trading-bot/index.js"],
+      "port": 3000,
+      "autoPort": false,
+      "env": {
+        "DISCORD_TOKEN": "REMPLACER_PAR_TON_TOKEN",
+        "MAKE_WEBHOOK_URL": "REMPLACER_PAR_TON_WEBHOOK"
+      }
     }
   ]
 }

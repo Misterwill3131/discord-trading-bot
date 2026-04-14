@@ -4,6 +4,7 @@ const { createCanvas, loadImage } = require('@napi-rs/canvas');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL;
@@ -12,11 +13,14 @@ const PORT = process.env.PORT || 3000;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
   : 'https://discord-trading-bot-production-f159.up.railway.app';
+const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || 'boom2024';
+const SESSION_TOKEN = crypto.randomBytes(16).toString('hex');
 
 // ─────────────────────────────────────────────────────────────────────
 //  Filtre adaptatif — chargement / sauvegarde des règles apprises
 // ─────────────────────────────────────────────────────────────────────
 const FILTERS_PATH = path.join(__dirname, 'custom-filters.json');
+const MESSAGES_PATH = path.join(__dirname, 'messages.json');
 
 function loadCustomFilters() {
   try {
@@ -117,6 +121,9 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   #dot.off { background: #ed4245; }
   #lbl { font-size: 12px; color: #80848e; }
   #cnt { margin-left: auto; font-size: 12px; color: #80848e; }
+  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
+  .nav-link:hover { background: #3f4147; color: #dcddde; }
+  .nav-link.active { background: #5865f222; color: #5865f2; }
   #wrap { padding: 16px 24px; }
   table { width: 100%; border-collapse: collapse; }
   thead th { text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #80848e; padding: 0 10px 10px; border-bottom: 1px solid #3f4147; white-space: nowrap; }
@@ -179,8 +186,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <div id="dot"></div>
-  <h1>BOOM Signal Monitor</h1>
+  <h1>🔥 BOOM</h1>
+  <a href="/dashboard" class="nav-link active">Dashboard</a>
+  <a href="/raw-messages" class="nav-link">Messages bruts</a>
+  <a href="/image-generator" class="nav-link">Image Generator</a>
+  <a href="/stats" class="nav-link">Stats</a>
+  <span id="dot"></span>
   <span id="lbl">Connecting…</span>
   <span id="cnt"></span>
 </header>
@@ -237,7 +248,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     }
     var bc=(e.reason==='Conversational'||e.reason==='No content')?'b-convo':'b-filter';
     var dd=(e.reason==='Conversational'||e.reason==='No content')?'dz':'do';
-    btn='<button class="btn-fn" data-id="'+esc(e.id)+'" data-content="'+esc(e.content||e.preview)+'" title="Marquer comme faux-négatif (autoriser à l\'avenir)">✅</button>';
+    btn='<button class="btn-fn" data-id="'+esc(e.id)+'" data-content="'+esc(e.content||e.preview)+'" title="Faux-negatif: autoriser ce message">✅</button>';
     return '<span class="badge '+bc+'"><span class="dot '+dd+'"></span>FILTERED — '+esc(e.reason)+'</span>'+btn;
   }
 
@@ -295,8 +306,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     document.getElementById('rule-count').textContent=blocked.length+allowed.length;
     var bt=document.getElementById('blocked-tags');
     var at=document.getElementById('allowed-tags');
-    bt.innerHTML=blocked.length?'':'<span style="color:#80848e;font-size:12px;font-style:italic">Aucune règle pour l\'instant</span>';
-    at.innerHTML=allowed.length?'':'<span style="color:#80848e;font-size:12px;font-style:italic">Aucune règle pour l\'instant</span>';
+    bt.innerHTML=blocked.length?'':'<span style="color:#80848e;font-size:12px;font-style:italic">Aucune regle</span>';
+    at.innerHTML=allowed.length?'':'<span style="color:#80848e;font-size:12px;font-style:italic">Aucune regle</span>';
     blocked.forEach(function(phrase){
       var tag=document.createElement('span'); tag.className='filter-tag';
       tag.innerHTML=esc(phrase)+'<button data-phrase="'+esc(phrase)+'" data-list="blocked" title="Supprimer">✕</button>';
@@ -355,7 +366,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     blocked.forEach(function(a){ if(!authors.includes(a)) authors.push(a); });
     allowed.forEach(function(a){ if(!authors.includes(a)) authors.push(a); });
     var list=document.getElementById('authors-list');
-    if(!authors.length){ list.innerHTML='<span style="color:#80848e;font-size:12px;font-style:italic">Aucun auteur vu pour l\'instant</span>'; return; }
+    if(!authors.length){ list.innerHTML='<span style="color:#80848e;font-size:12px;font-style:italic">Aucun auteur vu</span>'; return; }
     list.innerHTML='';
     authors.sort().forEach(function(name){
       var isBlocked=blocked.includes(name), isAllowed=allowed.includes(name);
@@ -411,12 +422,95 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
 const app = express();
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+
+function parseCookies(cookieHeader) {
+  var result = {};
+  if (!cookieHeader) return result;
+  cookieHeader.split(';').forEach(function(pair) {
+    var idx = pair.indexOf('=');
+    if (idx < 0) return;
+    var key = pair.slice(0, idx).trim();
+    var val = pair.slice(idx + 1).trim();
+    result[key] = decodeURIComponent(val);
+  });
+  return result;
+}
+
+function requireAuth(req, res, next) {
+  var cookies = parseCookies(req.headers.cookie);
+  if (cookies['boom_session'] === SESSION_TOKEN) return next();
+  res.redirect('/login');
+}
+
+const LOGIN_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BOOM Login</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .card { background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px; padding: 36px 40px; width: 340px; }
+  h1 { font-size: 22px; font-weight: 700; color: #fff; text-align: center; margin-bottom: 6px; }
+  .sub { font-size: 13px; color: #80848e; text-align: center; margin-bottom: 28px; }
+  label { display: block; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: #b5bac1; margin-bottom: 6px; }
+  input[type=password] { width: 100%; background: #1e1f22; border: 1px solid #3f4147; border-radius: 4px; color: #dcddde; padding: 10px 12px; font-size: 14px; outline: none; margin-bottom: 20px; }
+  input[type=password]:focus { border-color: #5865f2; }
+  button { width: 100%; background: #5865f2; border: none; border-radius: 4px; color: #fff; font-size: 15px; font-weight: 600; padding: 11px; cursor: pointer; }
+  button:hover { background: #4752c4; }
+  .err { background: #3a1e1e; border: 1px solid #ed424544; color: #ed4245; border-radius: 4px; padding: 8px 12px; font-size: 13px; margin-bottom: 16px; display: none; }
+  .err.show { display: block; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>&#x1F525; BOOM</h1>
+  <p class="sub">Signal Monitor Dashboard</p>
+  <form method="POST" action="/login">
+    <div id="err" class="err">Mot de passe incorrect</div>
+    <label for="pw">Mot de passe</label>
+    <input type="password" id="pw" name="password" autofocus placeholder="••••••••">
+    <button type="submit">Se connecter</button>
+  </form>
+</div>
+</body>
+</html>`;
+
+app.get('/login', (req, res) => {
+  var cookies = parseCookies(req.headers.cookie);
+  if (cookies['boom_session'] === SESSION_TOKEN) return res.redirect('/dashboard');
+  res.set('Content-Type', 'text/html');
+  res.send(LOGIN_HTML);
+});
+
+app.post('/login', (req, res) => {
+  var pw = (req.body && req.body.password) || '';
+  if (pw === DASHBOARD_PASSWORD) {
+    res.setHeader('Set-Cookie', 'boom_session=' + SESSION_TOKEN + '; Path=/; HttpOnly');
+    return res.redirect('/dashboard');
+  }
+  res.set('Content-Type', 'text/html');
+  var html = LOGIN_HTML.replace('id="err" class="err"', 'id="err" class="err show"');
+  res.send(html);
+});
 
 let lastImageBuffer = null;
 let lastImageId = null;
 
 const MAX_LOG = 200;
-const messageLog = [];
+const messageLog = (function loadMessages() {
+  try {
+    if (fs.existsSync(MESSAGES_PATH)) {
+      const data = JSON.parse(fs.readFileSync(MESSAGES_PATH, 'utf8'));
+      if (Array.isArray(data)) return data.slice(0, MAX_LOG);
+    }
+  } catch (e) {
+    console.error('[messages] Failed to load messages.json:', e.message);
+  }
+  return [];
+})();
 const sseClients = [];
 
 function logEvent(author, channel, content, signalType, reason, extra) {
@@ -430,29 +524,21 @@ function logEvent(author, channel, content, signalType, reason, extra) {
     passed:  signalType !== null,
     type:    signalType,
     reason,
+    confidence: extra?.confidence != null ? extra.confidence : null,
+    ticker:     extra?.ticker     != null ? extra.ticker     : null,
     isReply:       extra?.isReply || false,
     parentPreview: extra?.parentPreview || null,
     parentAuthor:  extra?.parentAuthor || null,
   };
   messageLog.unshift(entry);
   if (messageLog.length > MAX_LOG) messageLog.pop();
+  try { fs.writeFileSync(MESSAGES_PATH, JSON.stringify(messageLog, null, 2), 'utf8'); } catch (_) {}
   const payload = 'data: ' + JSON.stringify(entry) + '\n\n';
   for (let i = sseClients.length - 1; i >= 0; i--) {
     try { sseClients[i].res.write(payload); } catch (_) { sseClients.splice(i, 1); }
   }
 }
 
-app.get('/preview', async (req, res) => {
-  try {
-    const author = req.query.author || 'Z';
-    const message = req.query.message || '$TSLA 150.00-155.00';
-    const buf = await generateImage(author, message, new Date().toISOString());
-    res.set('Content-Type', 'image/png');
-    res.send(buf);
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
 
 app.get('/image/latest', (req, res) => {
   if (!lastImageBuffer) return res.status(404).json({ error: 'No image available' });
@@ -538,11 +624,20 @@ app.get('/health', async (req, res) => {
   });
 });
 
-app.get('/api/messages', (req, res) => {
-  res.json(messageLog);
+app.get('/api/messages', requireAuth, (req, res) => {
+  let msgs = messageLog;
+  if (req.query.from) {
+    const from = new Date(req.query.from).getTime();
+    if (!isNaN(from)) msgs = msgs.filter(m => new Date(m.ts).getTime() >= from);
+  }
+  if (req.query.to) {
+    const to = new Date(req.query.to).getTime();
+    if (!isNaN(to)) msgs = msgs.filter(m => new Date(m.ts).getTime() <= to);
+  }
+  res.json(msgs);
 });
 
-app.get('/api/events', (req, res) => {
+app.get('/api/events', requireAuth, (req, res) => {
   res.set({
     'Content-Type':      'text/event-stream',
     'Cache-Control':     'no-cache',
@@ -560,11 +655,11 @@ app.get('/api/events', (req, res) => {
   });
 });
 
-app.get('/api/custom-filters', (req, res) => {
+app.get('/api/custom-filters', requireAuth, (req, res) => {
   res.json(customFilters);
 });
 
-app.post('/api/feedback', (req, res) => {
+app.post('/api/feedback', requireAuth, (req, res) => {
   const { id, content, action } = req.body || {};
   const validActions = ['block', 'allow', 'unblock-blocked', 'unblock-allowed'];
   if (!content || !validActions.includes(action)) {
@@ -585,7 +680,7 @@ app.post('/api/feedback', (req, res) => {
   res.json({ ok: true, customFilters });
 });
 
-app.post('/api/author-filter', (req, res) => {
+app.post('/api/author-filter', requireAuth, (req, res) => {
   const { username, action } = req.body || {};
   const validActions = ['block', 'allow', 'remove-blocked', 'remove-allowed'];
   if (!username || !validActions.includes(action)) {
@@ -610,9 +705,762 @@ app.post('/api/author-filter', (req, res) => {
   res.json({ ok: true, customFilters });
 });
 
-app.get('/dashboard', (req, res) => {
+app.get('/api/export-csv', requireAuth, (req, res) => {
+  function csvField(val) {
+    var s = String(val == null ? '' : val);
+    if (s.includes('"') || s.includes(',') || s.includes('\n')) {
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  }
+  var msgs = messageLog;
+  if (req.query.from) {
+    var from = new Date(req.query.from).getTime();
+    if (!isNaN(from)) msgs = msgs.filter(function(m) { return new Date(m.ts).getTime() >= from; });
+  }
+  if (req.query.to) {
+    var to = new Date(req.query.to).getTime();
+    if (!isNaN(to)) msgs = msgs.filter(function(m) { return new Date(m.ts).getTime() <= to; });
+  }
+  var dateStr = new Date().toISOString().slice(0, 10);
+  var rows = ['timestamp,author,channel,ticker,type,reason,confidence,preview'];
+  msgs.forEach(function(m) {
+    rows.push([
+      csvField(m.ts),
+      csvField(m.author),
+      csvField(m.channel),
+      csvField(m.ticker || ''),
+      csvField(m.type || 'filtered'),
+      csvField(m.reason),
+      csvField(m.confidence != null ? m.confidence : ''),
+      csvField(m.preview)
+    ].join(','));
+  });
+  res.set('Content-Type', 'text/csv');
+  res.set('Content-Disposition', 'attachment; filename="boom-signals-' + dateStr + '.csv"');
+  res.send(rows.join('\n'));
+});
+
+app.get('/dashboard', requireAuth, (req, res) => {
   res.set('Content-Type', 'text/html');
   res.send(DASHBOARD_HTML);
+});
+
+// ─────────────────────────────────────────────────────────────────────
+//  Interface Generateur d'Images
+// ─────────────────────────────────────────────────────────────────────
+const IMAGE_GEN_HTML = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BOOM Image Generator</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; min-height: 100vh; }
+  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
+  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
+  .nav-link:hover { background: #3f4147; color: #dcddde; }
+  .nav-link.active { background: #5865f222; color: #5865f2; }
+  .main { display: grid; grid-template-columns: 360px 1fr; gap: 0; height: calc(100vh - 53px); }
+  .sidebar { background: #2b2d31; border-right: 1px solid #3f4147; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
+  .content { padding: 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
+  .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #80848e; margin-bottom: 10px; }
+  label { display: block; font-size: 13px; color: #b5bac1; margin-bottom: 6px; }
+  input[type=text], textarea, input[type=time] {
+    width: 100%; background: #1e1f22; border: 1px solid #3f4147; border-radius: 4px;
+    color: #dcddde; padding: 8px 10px; font-size: 14px; font-family: inherit;
+    outline: none; transition: border-color .15s;
+  }
+  input[type=text]:focus, textarea:focus, input[type=time]:focus { border-color: #5865f2; }
+  textarea { resize: vertical; min-height: 90px; }
+  .field { margin-bottom: 14px; }
+  .row { display: flex; gap: 10px; }
+  .row .field { flex: 1; }
+  .hint { font-size: 11px; color: #80848e; margin-top: 4px; }
+  .btn { display: inline-flex; align-items: center; gap: 7px; padding: 9px 18px; border-radius: 4px; border: none; cursor: pointer; font-size: 14px; font-weight: 600; transition: filter .15s; }
+  .btn:hover { filter: brightness(1.1); }
+  .btn:active { filter: brightness(0.9); }
+  .btn-primary { background: #5865f2; color: #fff; width: 100%; justify-content: center; }
+  .btn-success { background: #3ba55d; color: #fff; }
+  .btn-secondary { background: #4f5660; color: #fff; }
+  .preview-box { background: #111214; border: 1px solid #3f4147; border-radius: 8px; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 12px; min-height: 140px; justify-content: center; }
+  .preview-box img { max-width: 100%; border-radius: 6px; display: block; box-shadow: 0 4px 24px rgba(0,0,0,0.6); image-rendering: crisp-edges; }
+  .preview-placeholder { color: #80848e; font-size: 13px; width: 100%; text-align: center; padding: 30px 0; }
+  #preview-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .history-grid { display: flex; flex-direction: column; gap: 10px; }
+  .history-item { background: #111214; border: 1px solid #3f4147; border-radius: 6px; overflow: hidden; }
+  .history-item img { width: 100%; display: block; }
+  .history-meta { padding: 6px 10px; display: flex; justify-content: space-between; align-items: center; }
+  .history-meta span { font-size: 11px; color: #80848e; }
+  .history-meta button { background: none; border: 1px solid #3f4147; color: #80848e; border-radius: 3px; font-size: 11px; padding: 2px 8px; cursor: pointer; }
+  .history-meta button:hover { background: #2b2d31; color: #dcddde; }
+  .avatar-list { display: flex; flex-direction: column; gap: 8px; }
+  .avatar-item { display: flex; align-items: center; gap: 10px; background: #1e1f22; border: 1px solid #3f4147; border-radius: 4px; padding: 8px 10px; }
+  .avatar-circle { width: 32px; height: 32px; border-radius: 50%; background: #5865f2; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #fff; flex-shrink: 0; overflow: hidden; }
+  .avatar-circle img { width: 100%; height: 100%; object-fit: cover; }
+  .avatar-name { flex: 1; font-size: 13px; font-weight: 600; color: #D649CC; }
+  .avatar-url { font-size: 11px; color: #80848e; word-break: break-all; }
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #ffffff44; border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .status-bar { padding: 8px 12px; border-radius: 4px; font-size: 13px; display: none; }
+  .status-bar.ok { background: #1e3a2f; border: 1px solid #3ba55d44; color: #3ba55d; display: block; }
+  .status-bar.err { background: #3a1e1e; border: 1px solid #ed424544; color: #ed4245; display: block; }
+  ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #3f4147; border-radius: 3px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔥 BOOM</h1>
+  <a href="/dashboard" class="nav-link">Dashboard</a>
+  <a href="/raw-messages" class="nav-link">Messages bruts</a>
+  <a href="/image-generator" class="nav-link active">Image Generator</a>
+  <a href="/stats" class="nav-link">Stats</a>
+</header>
+
+<div class="main">
+  <!-- Panneau gauche : formulaire -->
+  <div class="sidebar">
+    <div>
+      <div class="section-title">Parametres de l'image</div>
+
+      <div class="field">
+        <label for="inp-author">Auteur</label>
+        <input type="text" id="inp-author" placeholder="ex: Z" value="Z" autocomplete="off">
+        <div class="hint">Doit correspondre exactement au username Discord pour l'avatar</div>
+      </div>
+
+      <div class="field">
+        <label for="inp-msg">Message</label>
+        <textarea id="inp-msg" placeholder="ex: $TSLA 150.00-155.00 entry long&#10;target 160 stop 148">$TSLA 150.00-155.00 entry long</textarea>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label for="inp-time">Heure</label>
+          <input type="time" id="inp-time" value="">
+        </div>
+        <div class="field">
+          <label>&nbsp;</label>
+          <button class="btn btn-secondary" id="btn-now" style="width:100%;justify-content:center;">Maintenant</button>
+        </div>
+      </div>
+
+      <div id="status-msg" class="status-bar"></div>
+
+      <button class="btn btn-primary" id="btn-generate" style="margin-top:8px;">
+        <span id="gen-icon">⚡</span> Generer l'image
+      </button>
+    </div>
+
+    <!-- Avatars connus -->
+    <div>
+      <div class="section-title">Avatars personnalises</div>
+      <div class="avatar-list" id="avatar-list">
+        <div style="color:#80848e;font-size:12px;">Chargement...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panneau droit : apercu + historique -->
+  <div class="content">
+    <div>
+      <div class="section-title">Apercu</div>
+      <div class="preview-box" id="preview-box">
+        <div class="preview-placeholder" id="preview-placeholder">Cliquez sur "Generer l'image" pour voir un apercu</div>
+        <img id="preview-img" style="display:none;" alt="apercu">
+      </div>
+      <div id="preview-actions" style="margin-top:12px; display:none;">
+        <button class="btn btn-success" id="btn-download">⬇ Telecharger PNG</button>
+        <button class="btn btn-secondary" id="btn-copy-url">🔗 Copier URL</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-title">Historique de session <span id="hist-count" style="font-weight:400;"></span></div>
+      <div class="history-grid" id="history-grid">
+        <div style="color:#80848e;font-size:12px;">Aucune image generee dans cette session.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  var timeNow = function() {
+    var d = new Date();
+    return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
+  };
+  document.getElementById('inp-time').value = timeNow();
+  document.getElementById('btn-now').addEventListener('click', function() {
+    document.getElementById('inp-time').value = timeNow();
+  });
+
+  var history = [];
+  var lastUrl = null;
+
+  function showStatus(msg, type) {
+    var el = document.getElementById('status-msg');
+    el.textContent = msg;
+    el.className = 'status-bar ' + type;
+    if (type === 'ok') { setTimeout(function() { el.className = 'status-bar'; }, 6000); }
+  }
+
+  function buildPreviewUrl(author, message, timeVal) {
+    var ts = '';
+    if (timeVal) {
+      var parts = timeVal.split(':');
+      var d = new Date();
+      d.setHours(parseInt(parts[0], 10), parseInt(parts[1], 10), 0, 0);
+      ts = d.toISOString();
+    }
+    return '/preview?author=' + encodeURIComponent(author) + '&message=' + encodeURIComponent(message) + (ts ? '&ts=' + encodeURIComponent(ts) : '');
+  }
+
+  document.getElementById('btn-generate').addEventListener('click', function() {
+    var author = document.getElementById('inp-author').value.trim() || 'Z';
+    var msg = document.getElementById('inp-msg').value.trim();
+    var timeVal = document.getElementById('inp-time').value;
+    if (!msg) { showStatus('Le message ne peut pas etre vide.', 'err'); return; }
+
+    var btn = document.getElementById('btn-generate');
+    var icon = document.getElementById('gen-icon');
+    btn.disabled = true;
+    icon.innerHTML = '<span class="spinner"></span>';
+
+    var url = buildPreviewUrl(author, msg, timeVal);
+    var img = document.getElementById('preview-img');
+    var placeholder = document.getElementById('preview-placeholder');
+    var actions = document.getElementById('preview-actions');
+
+    var tempImg = new Image();
+    tempImg.onload = function() {
+      img.src = url + '&nocache=' + Date.now();
+      img.style.display = 'block';
+      placeholder.style.display = 'none';
+      actions.style.display = 'flex';
+      lastUrl = url;
+      btn.disabled = false;
+      icon.textContent = '\u26a1';
+      showStatus('Image generee avec succes !', 'ok');
+      addHistory(author, msg, timeVal, url);
+    };
+    tempImg.onerror = function() {
+      btn.disabled = false;
+      icon.textContent = '\u26a1';
+      showStatus('Erreur lors de la generation de l image.', 'err');
+    };
+    tempImg.src = url + '&nocache=' + Date.now();
+  });
+
+  document.getElementById('btn-download').addEventListener('click', function() {
+    if (!lastUrl) return;
+    fetch(lastUrl + '&nocache=' + Date.now())
+      .then(function(r) { return r.blob(); })
+      .then(function(blob) {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        var author = document.getElementById('inp-author').value.trim() || 'signal';
+        a.download = 'boom-signal-' + author + '-' + Date.now() + '.png';
+        a.click();
+      })
+      .catch(function() { showStatus('Erreur lors du telechargement.', 'err'); });
+  });
+
+  document.getElementById('btn-copy-url').addEventListener('click', function() {
+    if (!lastUrl) return;
+    var fullUrl = window.location.origin + lastUrl;
+    navigator.clipboard.writeText(fullUrl).then(function() {
+      showStatus('URL copiee dans le presse-papier !', 'ok');
+    });
+  });
+
+  function addHistory(author, msg, timeVal, url) {
+    var entry = { author: author, msg: msg, timeVal: timeVal, url: url, ts: new Date().toLocaleTimeString('fr-FR') };
+    history.unshift(entry);
+    if (history.length > 20) history.pop();
+    renderHistory();
+  }
+
+  function renderHistory() {
+    var grid = document.getElementById('history-grid');
+    var cnt = document.getElementById('hist-count');
+    if (history.length === 0) {
+      grid.innerHTML = '<div style="color:#80848e;font-size:12px;">Aucune image generee dans cette session.</div>';
+      cnt.textContent = '';
+      return;
+    }
+    cnt.textContent = '(' + history.length + ')';
+    grid.innerHTML = '';
+    history.forEach(function(e, i) {
+      var item = document.createElement('div');
+      item.className = 'history-item';
+      var imgEl = document.createElement('img');
+      imgEl.src = e.url + '&nocache=' + (i + '_' + Date.now());
+      imgEl.alt = e.author;
+      imgEl.loading = 'lazy';
+      var meta = document.createElement('div');
+      meta.className = 'history-meta';
+      meta.innerHTML = '<span>' + e.ts + ' — ' + escHtml(e.author) + '</span>';
+      var dlBtn = document.createElement('button');
+      dlBtn.textContent = 'Telecharger';
+      dlBtn.addEventListener('click', (function(eu, ea) {
+        return function() {
+          fetch(eu + '&nocache=' + Date.now()).then(function(r) { return r.blob(); }).then(function(blob) {
+            var a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'boom-' + ea + '-' + Date.now() + '.png';
+            a.click();
+          });
+        };
+      })(e.url, e.author));
+      meta.appendChild(dlBtn);
+      item.appendChild(imgEl);
+      item.appendChild(meta);
+      grid.appendChild(item);
+    });
+  }
+
+  function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // Charger avatars connus depuis /api/custom-filters (ou affichage statique)
+  fetch('/api/custom-filters')
+    .then(function(r) { return r.json(); })
+    .then(function() {
+      // On affiche les auteurs vus dans le log
+      return fetch('/api/messages');
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(msgs) {
+      var seen = {};
+      msgs.forEach(function(m) { if (m.author) seen[m.author] = true; });
+      var authors = Object.keys(seen);
+      var list = document.getElementById('avatar-list');
+      if (authors.length === 0) {
+        list.innerHTML = '<div style="color:#80848e;font-size:12px;">Aucun auteur vu pour l instant.</div>';
+        return;
+      }
+      list.innerHTML = '';
+      authors.forEach(function(a) {
+        var item = document.createElement('div');
+        item.className = 'avatar-item';
+        var useBtn = document.createElement('button');
+        useBtn.textContent = 'Utiliser';
+        useBtn.style.cssText = 'background:#5865f222;border:1px solid #5865f244;color:#5865f2;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;';
+        useBtn.addEventListener('click', (function(name){ return function(){ document.getElementById('inp-author').value = name; }; })(a));
+        item.innerHTML = '<div class="avatar-circle">' + escHtml(a.slice(0,2).toUpperCase()) + '</div>' +
+          '<div style="flex:1"><div class="avatar-name">' + escHtml(a) + '</div></div>';
+        item.appendChild(useBtn);
+        list.appendChild(item);
+      });
+    })
+    .catch(function() {
+      document.getElementById('avatar-list').innerHTML = '<div style="color:#80848e;font-size:12px;">Impossible de charger les auteurs.</div>';
+    });
+})();
+</script>
+</body>
+</html>`;
+
+// ─────────────────────────────────────────────────────────────────────
+//  Page Messages Bruts — tous les messages Discord sans filtre
+// ─────────────────────────────────────────────────────────────────────
+const RAW_MESSAGES_HTML = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BOOM Messages Bruts</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
+  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
+  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
+  .nav-link:hover { background: #3f4147; color: #dcddde; }
+  .nav-link.active { background: #5865f222; color: #5865f2; }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: #aaa; flex-shrink: 0; transition: background .3s; }
+  #dot.on { background: #3ba55d; box-shadow: 0 0 6px #3ba55d; }
+  #dot.off { background: #ed4245; }
+  #lbl { font-size: 12px; color: #80848e; }
+  #cnt { margin-left: auto; font-size: 12px; color: #80848e; }
+  #wrap { padding: 16px 24px; }
+  #search-bar { display: flex; gap: 10px; margin-bottom: 16px; align-items: center; }
+  #search-input { flex: 1; background: #2b2d31; border: 1px solid #3f4147; border-radius: 4px; color: #dcddde; padding: 7px 12px; font-size: 13px; outline: none; }
+  #search-input:focus { border-color: #5865f2; }
+  #search-input::placeholder { color: #80848e; }
+  #filter-author { background: #2b2d31; border: 1px solid #3f4147; border-radius: 4px; color: #dcddde; padding: 7px 10px; font-size: 13px; outline: none; cursor: pointer; }
+  #filter-author:focus { border-color: #5865f2; }
+  .msg-card { background: #2b2d31; border: 1px solid #3f4147; border-radius: 6px; padding: 12px 16px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .msg-card.new { animation: flash .8s ease-out; }
+  .msg-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .msg-author { font-weight: 700; color: #D649CC; font-size: 14px; }
+  .msg-channel { font-size: 12px; color: #80848e; }
+  .msg-time { font-size: 12px; color: #80848e; margin-left: auto; }
+  .msg-body { font-size: 14px; color: #dcddde; white-space: pre-wrap; word-break: break-word; margin-top: 2px; }
+  .msg-reply { font-size: 12px; color: #80848e; border-left: 2px solid #3f4147; padding-left: 8px; margin-bottom: 4px; font-style: italic; }
+  .badge { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+  .b-entry   { background: #1e3a2f; color: #3ba55d; border: 1px solid #3ba55d44; }
+  .b-exit    { background: #3a1e1e; color: #ed4245; border: 1px solid #ed424544; }
+  .b-neutral { background: #2a2e3d; color: #5865f2; border: 1px solid #5865f244; }
+  .b-filter  { background: #3a2e1e; color: #faa61a; border: 1px solid #faa61a44; }
+  .b-convo   { background: #2e2e2e; color: #80848e; border: 1px solid #80848e44; }
+  #empty { padding: 60px 24px; text-align: center; color: #80848e; }
+  @keyframes flash { from { background: #2a3040; } to { background: #2b2d31; } }
+  ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #3f4147; border-radius: 3px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔥 BOOM</h1>
+  <a href="/dashboard" class="nav-link">Dashboard</a>
+  <a href="/raw-messages" class="nav-link active">Messages bruts</a>
+  <a href="/image-generator" class="nav-link">Image Generator</a>
+  <a href="/stats" class="nav-link">Stats</a>
+  <span id="dot"></span>
+  <span id="lbl">Connecting…</span>
+  <span id="cnt"></span>
+</header>
+<div id="wrap">
+  <div id="search-bar">
+    <input type="text" id="search-input" placeholder="Rechercher dans les messages...">
+    <select id="filter-author"><option value="">Tous les auteurs</option></select>
+  </div>
+  <div id="msg-list"><div id="empty">Aucun message pour l instant...</div></div>
+</div>
+<script>
+(function(){
+  var dot = document.getElementById('dot');
+  var lbl = document.getElementById('lbl');
+  var cnt = document.getElementById('cnt');
+  var list = document.getElementById('msg-list');
+  var searchInput = document.getElementById('search-input');
+  var filterAuthor = document.getElementById('filter-author');
+
+  var allMessages = [];
+  var authorsSet = {};
+
+  function fmtTime(iso) {
+    var d = new Date(iso);
+    return d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  function badgeClass(e) {
+    if (e.passed) {
+      if (e.type === 'entry') return 'b-entry';
+      if (e.type === 'exit') return 'b-exit';
+      return 'b-neutral';
+    }
+    if (e.reason === 'Conversational' || e.reason === 'No content') return 'b-convo';
+    return 'b-filter';
+  }
+
+  function badgeLabel(e) {
+    if (e.passed) return e.type ? e.type.toUpperCase() : 'ACCEPTE';
+    return 'FILTRE — ' + (e.reason || '');
+  }
+
+  function escHtml(s) {
+    return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function buildCard(e, isNew) {
+    var card = document.createElement('div');
+    card.className = 'msg-card' + (isNew ? ' new' : '');
+    card.dataset.id = e.id;
+    card.dataset.author = e.author || '';
+    card.dataset.content = (e.content || '').toLowerCase();
+
+    var header = '<div class="msg-header">' +
+      '<span class="msg-author">' + escHtml(e.author) + '</span>' +
+      '<span class="msg-channel">#' + escHtml(e.channel) + '</span>' +
+      '<span class="badge ' + badgeClass(e) + '">' + escHtml(badgeLabel(e)) + '</span>' +
+      '<span class="msg-time">' + fmtTime(e.ts) + '</span>' +
+      '</div>';
+
+    var reply = '';
+    if (e.isReply && e.parentPreview) {
+      reply = '<div class="msg-reply">Reponse a <strong>' + escHtml(e.parentAuthor || '?') + '</strong> : ' + escHtml(e.parentPreview) + '</div>';
+    }
+
+    var body = '<div class="msg-body">' + escHtml(e.content || '') + '</div>';
+
+    card.innerHTML = header + reply + body;
+    return card;
+  }
+
+  function applyFilters() {
+    var search = searchInput.value.toLowerCase();
+    var author = filterAuthor.value;
+    var cards = list.querySelectorAll('.msg-card');
+    var visible = 0;
+    cards.forEach(function(c) {
+      var matchAuthor = !author || c.dataset.author === author;
+      var matchSearch = !search || c.dataset.content.includes(search);
+      c.style.display = (matchAuthor && matchSearch) ? '' : 'none';
+      if (matchAuthor && matchSearch) visible++;
+    });
+    cnt.textContent = visible + ' message' + (visible > 1 ? 's' : '');
+  }
+
+  function addAuthorOption(name) {
+    if (authorsSet[name]) return;
+    authorsSet[name] = true;
+    var opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name;
+    filterAuthor.appendChild(opt);
+  }
+
+  function prependCard(e, isNew) {
+    var empty = document.getElementById('empty');
+    if (empty) empty.remove();
+    var card = buildCard(e, isNew);
+    list.insertBefore(card, list.firstChild);
+    addAuthorOption(e.author || '');
+    applyFilters();
+  }
+
+  // Charger les messages existants
+  fetch('/api/messages')
+    .then(function(r) { return r.json(); })
+    .then(function(msgs) {
+      allMessages = msgs;
+      // msgs est newest-first, on les affiche dans l ordre (newest en haut)
+      msgs.forEach(function(m) {
+        var empty = document.getElementById('empty');
+        if (empty) empty.remove();
+        var card = buildCard(m, false);
+        list.appendChild(card);
+        addAuthorOption(m.author || '');
+      });
+      cnt.textContent = msgs.length + ' message' + (msgs.length > 1 ? 's' : '');
+    })
+    .catch(function() { lbl.textContent = 'Erreur chargement'; });
+
+  // SSE pour les nouveaux messages en temps reel
+  var es = new EventSource('/api/events');
+  es.onopen = function() { dot.className = 'on'; lbl.textContent = 'Live'; };
+  es.onerror = function() { dot.className = 'off'; lbl.textContent = 'Deconnecte'; };
+  es.onmessage = function(ev) {
+    try {
+      var e = JSON.parse(ev.data);
+      prependCard(e, true);
+    } catch(_) {}
+  };
+
+  searchInput.addEventListener('input', applyFilters);
+  filterAuthor.addEventListener('change', applyFilters);
+})();
+</script>
+</body>
+</html>`;
+
+app.get('/raw-messages', requireAuth, (req, res) => {
+  res.set('Content-Type', 'text/html');
+  res.send(RAW_MESSAGES_HTML);
+});
+
+app.get('/image-generator', requireAuth, (req, res) => {
+  res.set('Content-Type', 'text/html');
+  res.send(IMAGE_GEN_HTML);
+});
+
+// Mise a jour de /preview pour supporter le parametre ?ts=
+app.get('/preview', async (req, res) => {
+  try {
+    const author = req.query.author || 'Z';
+    const message = req.query.message || '$TSLA 150.00-155.00';
+    const ts = req.query.ts || new Date().toISOString();
+    const buf = await generateImage(author, message, ts);
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'no-cache');
+    res.send(buf);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+//  Page Statistiques /stats
+// ─────────────────────────────────────────────────────────────────────
+const STATS_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BOOM Stats</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
+  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
+  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
+  .nav-link:hover { background: #3f4147; color: #dcddde; }
+  .nav-link.active { background: #5865f222; color: #5865f2; }
+  #wrap { padding: 24px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .card { background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px; padding: 20px; }
+  .card-full { grid-column: 1 / -1; }
+  .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #80848e; margin-bottom: 16px; }
+  .big-number { font-size: 52px; font-weight: 800; color: #fff; line-height: 1; }
+  .big-sub { font-size: 13px; color: #80848e; margin-top: 6px; }
+  .progress-bar { height: 10px; border-radius: 5px; background: #3f4147; margin-top: 14px; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 5px; transition: width .4s; }
+  .bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .bar-label { width: 80px; font-size: 12px; color: #b5bac1; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar-wrap { flex: 1; height: 14px; background: #3f4147; border-radius: 4px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 4px; transition: width .4s; }
+  .bar-val { width: 30px; font-size: 12px; color: #80848e; text-align: left; }
+  .badge-row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .stat-badge { display: flex; flex-direction: column; align-items: center; padding: 14px 20px; border-radius: 6px; font-size: 13px; font-weight: 600; min-width: 80px; }
+  .stat-badge .num { font-size: 28px; font-weight: 800; }
+  .b-entry { background: #1e3a2f; color: #3ba55d; border: 1px solid #3ba55d44; }
+  .b-exit { background: #3a1e1e; color: #ed4245; border: 1px solid #ed424544; }
+  .b-neutral { background: #2a2e3d; color: #5865f2; border: 1px solid #5865f244; }
+  .b-filter { background: #3a2e1e; color: #faa61a; border: 1px solid #faa61a44; }
+  .hour-chart { display: flex; align-items: flex-end; gap: 2px; height: 80px; margin-top: 10px; }
+  .hour-col { flex: 1; display: flex; flex-direction: column; align-items: center; }
+  .hour-bar { width: 100%; border-radius: 2px 2px 0 0; min-height: 1px; }
+  .hour-lbl { font-size: 9px; color: #80848e; margin-top: 3px; }
+  .btn-refresh { background: #5865f222; border: 1px solid #5865f244; color: #5865f2; border-radius: 4px; padding: 6px 16px; cursor: pointer; font-size: 13px; font-weight: 600; margin-left: auto; }
+  .btn-refresh:hover { background: #5865f244; }
+  @media (max-width: 700px) { #wrap { grid-template-columns: 1fr; } .card-full { grid-column: 1; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>&#x1F525; BOOM</h1>
+  <a href="/dashboard" class="nav-link">Dashboard</a>
+  <a href="/raw-messages" class="nav-link">Messages bruts</a>
+  <a href="/image-generator" class="nav-link">Image Generator</a>
+  <a href="/stats" class="nav-link active">Stats</a>
+  <button class="btn-refresh" id="btn-refresh">Actualiser</button>
+</header>
+<div id="wrap">
+  <div class="card">
+    <div class="card-title">Taux acceptation</div>
+    <div class="big-number" id="accept-pct">—</div>
+    <div class="big-sub" id="accept-sub">chargement...</div>
+    <div class="progress-bar"><div class="progress-fill" id="accept-bar" style="width:0%;background:#3ba55d;"></div></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Repartition des signaux</div>
+    <div class="badge-row" id="type-badges">
+      <div class="stat-badge b-entry"><span class="num" id="cnt-entry">0</span>Entry</div>
+      <div class="stat-badge b-exit"><span class="num" id="cnt-exit">0</span>Exit</div>
+      <div class="stat-badge b-neutral"><span class="num" id="cnt-neutral">0</span>Neutral</div>
+      <div class="stat-badge b-filter"><span class="num" id="cnt-filtered">0</span>Filtre</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-title">Top 5 auteurs</div>
+    <div id="top-authors"></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Top 5 tickers</div>
+    <div id="top-tickers"></div>
+  </div>
+  <div class="card card-full">
+    <div class="card-title">Volume par heure (24h)</div>
+    <div class="hour-chart" id="hour-chart"></div>
+  </div>
+</div>
+<script>
+(function(){
+  function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  function renderBars(containerId, data, color) {
+    var container = document.getElementById(containerId);
+    if (!data.length) { container.innerHTML = '<span style="color:#80848e;font-size:12px;">Aucune donnee</span>'; return; }
+    var max = data[0][1] || 1;
+    container.innerHTML = '';
+    data.forEach(function(item) {
+      var pct = Math.round(item[1] / max * 100);
+      var row = document.createElement('div');
+      row.className = 'bar-row';
+      row.innerHTML = '<span class="bar-label" title="' + esc(item[0]) + '">' + esc(item[0]) + '</span>'
+        + '<div class="bar-wrap"><div class="bar-fill" style="width:' + pct + '%;background:' + color + ';"></div></div>'
+        + '<span class="bar-val">' + item[1] + '</span>';
+      container.appendChild(row);
+    });
+  }
+
+  function loadStats() {
+    fetch('/api/messages')
+      .then(function(r){ return r.json(); })
+      .then(function(msgs) {
+        var total = msgs.length;
+        var accepted = msgs.filter(function(m){ return m.passed; }).length;
+        var pct = total ? Math.round(accepted / total * 100) : 0;
+
+        document.getElementById('accept-pct').textContent = pct + '%';
+        document.getElementById('accept-sub').textContent = accepted + ' acceptes sur ' + total + ' total';
+        document.getElementById('accept-bar').style.width = pct + '%';
+        document.getElementById('accept-bar').style.background = pct >= 50 ? '#3ba55d' : pct >= 25 ? '#faa61a' : '#ed4245';
+
+        var cEntry = 0, cExit = 0, cNeutral = 0, cFiltered = 0;
+        msgs.forEach(function(m){
+          if (!m.passed) { cFiltered++; return; }
+          if (m.type === 'entry') cEntry++;
+          else if (m.type === 'exit') cExit++;
+          else cNeutral++;
+        });
+        document.getElementById('cnt-entry').textContent = cEntry;
+        document.getElementById('cnt-exit').textContent = cExit;
+        document.getElementById('cnt-neutral').textContent = cNeutral;
+        document.getElementById('cnt-filtered').textContent = cFiltered;
+
+        var authorMap = {};
+        msgs.forEach(function(m){ if(m.author) authorMap[m.author] = (authorMap[m.author]||0) + 1; });
+        var topAuthors = Object.keys(authorMap).map(function(k){ return [k, authorMap[k]]; })
+          .sort(function(a,b){ return b[1]-a[1]; }).slice(0,5);
+        renderBars('top-authors', topAuthors, '#D649CC');
+
+        var tickerMap = {};
+        msgs.forEach(function(m){ if(m.ticker) tickerMap[m.ticker] = (tickerMap[m.ticker]||0) + 1; });
+        var topTickers = Object.keys(tickerMap).map(function(k){ return [k, tickerMap[k]]; })
+          .sort(function(a,b){ return b[1]-a[1]; }).slice(0,5);
+        renderBars('top-tickers', topTickers, '#5865f2');
+
+        var hourBuckets = new Array(24).fill(0);
+        var hourAccepted = new Array(24).fill(0);
+        msgs.forEach(function(m){
+          var h = new Date(m.ts).getHours();
+          hourBuckets[h]++;
+          if(m.passed) hourAccepted[h]++;
+        });
+        var maxH = Math.max.apply(null, hourBuckets) || 1;
+        var chart = document.getElementById('hour-chart');
+        chart.innerHTML = '';
+        for (var i = 0; i < 24; i++) {
+          var v = hourBuckets[i];
+          var heightPct = Math.round(v / maxH * 100);
+          var accRate = v ? hourAccepted[i] / v : 0;
+          var barColor = accRate >= 0.5 ? '#3ba55d' : accRate >= 0.25 ? '#faa61a' : '#ed4245';
+          if (v === 0) barColor = '#3f4147';
+          var col = document.createElement('div');
+          col.className = 'hour-col';
+          col.innerHTML = '<div class="hour-bar" title="' + v + ' msg" style="height:' + heightPct + '%;background:' + barColor + ';"></div>'
+            + '<span class="hour-lbl">' + String(i).padStart(2,'0') + '</span>';
+          chart.appendChild(col);
+        }
+      })
+      .catch(function(){ document.getElementById('accept-sub').textContent = 'Erreur de chargement'; });
+  }
+
+  loadStats();
+  document.getElementById('btn-refresh').addEventListener('click', loadStats);
+})();
+</script>
+</body>
+</html>`;
+
+app.get('/stats', requireAuth, (req, res) => {
+  res.set('Content-Type', 'text/html');
+  res.send(STATS_HTML);
 });
 
 app.listen(PORT, () => console.log('Server running on port ' + PORT));
@@ -706,92 +1554,54 @@ async function generateImage(author, content, timestamp) {
   ctx.fillText(author || 'Z', CONTENT_X, nameY);
   const nameW = ctx.measureText(author || 'Z').width;
 
-  // BOOM badge
-  const BADGE_H = 16;
-  const BADGE_PAD_X = 5;
-  const BADGE_RADIUS = 3;
-  const BADGE_LABEL = 'BOOM';
-  const FLAME_W = 9;
-  const BADGE_GAP = 3;
-
-  ctx.font = 'bold 10px ' + FONT;
-  const labelW = ctx.measureText(BADGE_LABEL).width;
-
-  const BADGE_W = BADGE_PAD_X + FLAME_W + BADGE_GAP + labelW + BADGE_PAD_X;
+  // tag_boom.png — remplace le badge dessiné
+  const TAG_H = 18;
   const badgeX = CONTENT_X + nameW + 6;
-  const badgeY = nameY - BADGE_H + 2;
+  const badgeY = nameY - TAG_H + 2;
+  let BADGE_W = 0;
+  try {
+    const tagImg = await loadImage(path.join(__dirname, 'tag_boom.png'));
+    // Conserver le ratio de l'image
+    const tagRatio = tagImg.width / tagImg.height;
+    BADGE_W = Math.round(TAG_H * tagRatio);
+    ctx.drawImage(tagImg, badgeX, badgeY, BADGE_W, TAG_H);
+  } catch(e) {
+    // Fallback texte si image manquante
+    ctx.font = 'bold 10px ' + FONT;
+    ctx.fillStyle = '#ffffff';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('BOOM', badgeX, badgeY + TAG_H / 2);
+    ctx.textBaseline = 'alphabetic';
+    BADGE_W = 50;
+  }
 
-  ctx.fillStyle = CONFIG.BADGE_BG;
-  roundRect(ctx, badgeX, badgeY, BADGE_W, BADGE_H, BADGE_RADIUS);
-  ctx.fill();
-
-  ctx.strokeStyle = CONFIG.BADGE_BORDER;
-  ctx.lineWidth = 0.5;
-  roundRect(ctx, badgeX, badgeY, BADGE_W, BADGE_H, BADGE_RADIUS);
-  ctx.stroke();
-
-  // Flamme Canvas — fidele au logo de reference (base large, pointe fine)
-  const flameX = badgeX + BADGE_PAD_X;
-  const flameY = badgeY + 0.5;
-  const fw = FLAME_W;
-  const fh = BADGE_H - 1;
-  ctx.save();
-  const flameGrad = ctx.createLinearGradient(flameX + fw/2, flameY + fh, flameX + fw/2, flameY);
-  flameGrad.addColorStop(0,    CONFIG.FLAME_BOTTOM);
-  flameGrad.addColorStop(0.45, CONFIG.FLAME_MID);
-  flameGrad.addColorStop(1,    CONFIG.FLAME_TOP);
-  ctx.fillStyle = flameGrad;
-  ctx.beginPath();
-  ctx.moveTo(flameX + fw * 0.50, flameY);
-  ctx.bezierCurveTo(
-    flameX + fw * 0.75, flameY + fh * 0.18,
-    flameX + fw * 1.00, flameY + fh * 0.42,
-    flameX + fw * 0.92, flameY + fh * 0.70
-  );
-  ctx.bezierCurveTo(
-    flameX + fw * 0.88, flameY + fh * 0.85,
-    flameX + fw * 0.80, flameY + fh * 0.95,
-    flameX + fw * 0.50, flameY + fh * 1.00
-  );
-  ctx.bezierCurveTo(
-    flameX + fw * 0.20, flameY + fh * 0.95,
-    flameX + fw * 0.12, flameY + fh * 0.85,
-    flameX + fw * 0.08, flameY + fh * 0.70
-  );
-  ctx.bezierCurveTo(
-    flameX + fw * 0.00, flameY + fh * 0.42,
-    flameX + fw * 0.25, flameY + fh * 0.18,
-    flameX + fw * 0.50, flameY
-  );
-  ctx.closePath();
-  ctx.fill();
-  const innerGrad = ctx.createLinearGradient(flameX + fw/2, flameY + fh * 0.9, flameX + fw/2, flameY + fh * 0.35);
-  innerGrad.addColorStop(0, 'rgba(255,255,180,0.55)');
-  innerGrad.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = innerGrad;
-  ctx.beginPath();
-  ctx.moveTo(flameX + fw * 0.50, flameY + fh * 0.38);
-  ctx.bezierCurveTo(flameX + fw * 0.65, flameY + fh * 0.52, flameX + fw * 0.70, flameY + fh * 0.72, flameX + fw * 0.50, flameY + fh * 0.90);
-  ctx.bezierCurveTo(flameX + fw * 0.30, flameY + fh * 0.72, flameX + fw * 0.35, flameY + fh * 0.52, flameX + fw * 0.50, flameY + fh * 0.38);
-  ctx.closePath();
-  ctx.fill();
-  ctx.restore();
-
-  ctx.font = 'bold 10px ' + FONT;
-  ctx.fillStyle = '#ffffff';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(BADGE_LABEL, badgeX + BADGE_PAD_X + FLAME_W + BADGE_GAP, badgeY + BADGE_H / 2);
-  ctx.textBaseline = 'alphabetic';
+  // Logo BOOM circulaire entre le badge et l'heure
+  const LOGO_SIZE = 18;
+  const logoX = badgeX + BADGE_W + 6;
+  const logoCY = badgeY + TAG_H / 2;
+  let logoEndX = logoX;
+  try {
+    const logoImg = await loadImage(path.join(__dirname, 'logo_boom.png'));
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(logoX + LOGO_SIZE / 2, logoCY, LOGO_SIZE / 2, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+    ctx.drawImage(logoImg, logoX, logoCY - LOGO_SIZE / 2, LOGO_SIZE, LOGO_SIZE);
+    ctx.restore();
+    logoEndX = logoX + LOGO_SIZE + 6;
+  } catch(e) {
+    logoEndX = logoX;
+  }
 
   // Time
   const d = timestamp ? new Date(timestamp) : new Date();
   const hh = d.getHours().toString().padStart(2, '0');
   const mm = d.getMinutes().toString().padStart(2, '0');
-  const timeStr = 'Today at ' + hh + ':' + mm;
-  const timeX = badgeX + BADGE_W + 6;
+  const timeStr = hh + ':' + mm;
   ctx.fillStyle = CONFIG.TIME_COLOR;
   ctx.font = '12px ' + FONT;
-  ctx.fillText(timeStr, timeX, nameY - 1);
+  ctx.fillText(timeStr, logoEndX, nameY - 1);
 
   // (gain% in X post text, not in image)
 
@@ -883,46 +1693,122 @@ function enrichContent(content) {
   const sign = gain_pct >= 0 ? '+' : '';
   return content + ' | Gain: ' + sign + gain_pct + '%';
 }
-function classifySignal(content) {
-  if (!content) return { type: null, reason: 'No content' };
-  const lower = content.toLowerCase();
+const TICKER_IGNORE = new Set(['I','A','THE','AND','OR','TO','IN','AT','ON','BY','FOR','OF','UP','OK']);
+function detectTicker(content) {
+  if (!content) return null;
+  const m1 = content.match(/\$([A-Z]{1,6})/i);
+  if (m1) return m1[1].toUpperCase();
+  const m2 = content.match(/\b([A-Z]{2,5})\b/g);
+  if (m2) {
+    for (const t of m2) {
+      if (!TICKER_IGNORE.has(t)) return t;
+    }
+  }
+  return null;
+}
 
-  // 1. Liste blanche custom — bypass tous les filtres (corrections faux-négatifs)
+function classifySignal(content) {
+  if (!content) return { type: null, reason: 'No content', confidence: 90, ticker: null };
+  const lower = content.toLowerCase();
+  const ticker = detectTicker(content);
+
+  // 1. Liste blanche custom — bypass tous les filtres (corrections faux-negatifs)
   for (const phrase of customFilters.allowed) {
     if (lower.includes(phrase.toLowerCase())) {
-      return { type: 'neutral', reason: 'Accepted' };
+      return { type: 'neutral', reason: 'Accepted', confidence: 90, ticker };
     }
   }
 
-  // 2. Liste noire custom — règles apprises (faux-positifs corrigés)
+  // 2. Liste noire custom — regles apprises (faux-positifs corriges)
   for (const phrase of customFilters.blocked) {
     if (lower.includes(phrase.toLowerCase())) {
-      return { type: null, reason: 'Learned filter' };
+      return { type: null, reason: 'Learned filter', confidence: 90, ticker };
     }
   }
 
-  // 3. Mots-clés bloqués (hardcodés)
+  // 3. Mots-cles bloques (hardcodes)
   const blocked = ['news', 'sec', 'ipo', 'offering', 'halted', 'form 8-k', 'reverse stock split'];
   for (const b of blocked) {
-    if (lower.includes(b)) return { type: null, reason: 'Blocked keyword' };
+    if (lower.includes(b)) return { type: null, reason: 'Blocked keyword', confidence: 95, ticker };
   }
   // REQUIS: ticker ($TSLA, AAPL, NCT...)
   const hasTicker = /\$[A-Z]{1,6}/i.test(content) || /\b[A-Z]{2,5}\b/.test(content);
   if (!hasTicker) {
     console.log('[FILTER] No ticker, ignored: ' + content.substring(0, 60));
-    return { type: null, reason: 'No ticker' };
+    return { type: null, reason: 'No ticker', confidence: 90, ticker: null };
   }
-  if (lower.includes('entree') || lower.includes('entry') || lower.includes('long') || lower.includes('scalp')) return { type: 'entry', reason: 'Accepted' };
-  if (lower.includes('sortie') || lower.includes('exit') || lower.includes('stop')) return { type: 'exit', reason: 'Accepted' };
+  if (lower.includes('entree') || lower.includes('entry') || lower.includes('long') || lower.includes('scalp')) {
+    const hasPrice = /\d+(?:\.\d+)?/.test(content);
+    return { type: 'entry', reason: 'Accepted', confidence: hasPrice ? 90 : 70, ticker };
+  }
+  if (lower.includes('sortie') || lower.includes('exit') || lower.includes('stop')) {
+    const hasPrice = /\d+(?:\.\d+)?/.test(content);
+    return { type: 'exit', reason: 'Accepted', confidence: hasPrice ? 90 : 70, ticker };
+  }
   // FILTRE: messages conversationnels (questions/chat sans prix)
   const hasPrice = /\d+(?:\.\d+)?/.test(content);
   const isQuestion = content.trim().endsWith('?');
   const startsConvo = /^(and\s+)?(how|who|what|when|why|did|do|are|is|can|any|anyone|has|have|congrats|gg|nice|good|great|lol|haha|check|look|wow|reminder|just|btw|fyi|ok|okay)\b/i.test(content.trim());
   if ((isQuestion || startsConvo) && !hasPrice) {
     console.log('[FILTER] Conversational ignored: ' + content.substring(0, 60));
-    return { type: null, reason: 'Conversational' };
+    return { type: null, reason: 'Conversational', confidence: 75, ticker };
   }
-  return { type: 'neutral', reason: 'Accepted' };
+  return { type: 'neutral', reason: 'Accepted', confidence: 60, ticker };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  Resume journalier Discord — envoye a 18h00 heure locale
+// ─────────────────────────────────────────────────────────────────────
+let lastSummaryDate = null;
+
+function sendDailySummary() {
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  const todayMsgs = messageLog.filter(function(m) { return new Date(m.ts) >= midnight; });
+  const total = todayMsgs.length;
+  const accepted = todayMsgs.filter(function(m) { return m.passed; }).length;
+  const filtered = total - accepted;
+  const rate = total ? Math.round(accepted / total * 100) : 0;
+
+  const tickerMap = {};
+  todayMsgs.forEach(function(m) { if (m.ticker) tickerMap[m.ticker] = (tickerMap[m.ticker] || 0) + 1; });
+  const topTickers = Object.keys(tickerMap).map(function(k) { return [k, tickerMap[k]]; })
+    .sort(function(a, b) { return b[1] - a[1]; }).slice(0, 3);
+
+  const authorMap = {};
+  todayMsgs.forEach(function(m) { if (m.author) authorMap[m.author] = (authorMap[m.author] || 0) + 1; });
+  const topAuthors = Object.keys(authorMap).map(function(k) { return [k, authorMap[k]]; })
+    .sort(function(a, b) { return b[1] - a[1]; }).slice(0, 3);
+
+  const tickersStr = topTickers.length ? topTickers.map(function(t) { return t[0] + ' (' + t[1] + ')'; }).join(', ') : 'Aucun';
+  const authorsStr = topAuthors.length ? topAuthors.map(function(a) { return a[0] + ' (' + a[1] + ')'; }).join(', ') : 'Aucun';
+
+  const summaryText = [
+    '**Resume journalier BOOM** — ' + todayStr,
+    '> Messages totaux : **' + total + '**',
+    '> Acceptes : **' + accepted + '** | Filtres : **' + filtered + '**',
+    '> Taux acceptation : **' + rate + '%**',
+    '> Top tickers : ' + tickersStr,
+    '> Top auteurs : ' + authorsStr,
+  ].join('\n');
+
+  try {
+    const channel = client.channels.cache.find(function(ch) {
+      return ch.name && ch.name.includes(TRADING_CHANNEL);
+    });
+    if (channel && channel.send) {
+      channel.send(summaryText).then(function() {
+        console.log('[summary] Resume journalier envoye dans #' + channel.name);
+      }).catch(function(err) {
+        console.error('[summary] Erreur envoi resume:', err.message);
+      });
+    } else {
+      console.warn('[summary] Channel introuvable pour le resume journalier');
+    }
+  } catch (e) {
+    console.error('[summary] Erreur:', e.message);
+  }
 }
 
 const client = new Client({
@@ -932,6 +1818,18 @@ const client = new Client({
 client.once('ready', () => {
   console.log('Bot connected as ' + client.user.tag);
   console.log('Listening for channels containing: ' + TRADING_CHANNEL);
+
+  // Verification toutes les minutes pour le resume a 18h00
+  setInterval(function() {
+    const now = new Date();
+    if (now.getHours() === 18 && now.getMinutes() === 0) {
+      const todayStr = now.toISOString().slice(0, 10);
+      if (lastSummaryDate !== todayStr) {
+        lastSummaryDate = todayStr;
+        sendDailySummary();
+      }
+    }
+  }, 60000);
 });
 
 client.on('messageCreate', async (message) => {
@@ -982,23 +1880,28 @@ client.on('messageCreate', async (message) => {
   };
   // ──────────────────────────────────────────────────────────────────────────
 
-  // Auteur autorisé → bypass du filtre de contenu
-  let signalType, signalReason;
+  // Auteur autorise → bypass du filtre de contenu
+  let signalType, signalReason, signalConfidence, signalTicker;
   if (authorAllowed) {
-    signalType   = 'neutral';
-    signalReason = 'Accepted';
+    signalType       = 'neutral';
+    signalReason     = 'Accepted';
+    signalConfidence = 80;
+    signalTicker     = detectTicker(classifyContent);
     console.log('[AUTHOR ALLOWED] bypass filter for ' + authorName);
   } else {
-    const result = classifySignal(classifyContent);
-    signalType   = result.type;
-    signalReason = result.reason;
+    const result     = classifySignal(classifyContent);
+    signalType       = result.type;
+    signalReason     = result.reason;
+    signalConfidence = result.confidence;
+    signalTicker     = result.ticker;
   }
+  const extraWithSignal = Object.assign({}, extra, { confidence: signalConfidence, ticker: signalTicker });
   if (!signalType) {
     console.log('Filtered (' + signalReason + '): ' + content.substring(0, 80));
-    logEvent(authorName, channelName, content, null, signalReason, extra);
+    logEvent(authorName, channelName, content, null, signalReason, extraWithSignal);
     return;
   }
-  logEvent(authorName, channelName, content, signalType, 'Accepted', extra);
+  logEvent(authorName, channelName, content, signalType, 'Accepted', extraWithSignal);
   console.log('[' + signalType.toUpperCase() + ']' + (isReply ? ' [REPLY]' : '') + ' ' + content);
 
   let imageUrl = null;

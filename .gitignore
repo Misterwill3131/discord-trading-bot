@@ -1,0 +1,5 @@
+node_modules/
+messages.json
+custom-filters.json
+.claude/worktrees/
+*.log

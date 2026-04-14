@@ -2327,11 +2327,16 @@ client.on('messageCreate', async (message) => {
       t + ' ' + gain + ' ✅\nSignals like this every day.\n' + link,
       // Format 5 — community
       t + ' just delivered ' + gain + ' 🎯\nTemple of Boom members were ready.\n\n' + link,
+      // Format 6 — proper alerts
+      t + ' ' + gain + ' with guidance.\n\nNo WW. No eyes emoji. No watch it.\n\nProper alerts only with guidance.\n\n' + link,
+      // Format 7 — about to give
+      t + ' about to give us ' + gain + '\n\n' + link,
     ] : [
       // Sans gain %
       t + ' ' + range + ' with guidance\n\n' + link,
       '🔥 ' + t + ' setup: ' + range + '\n\nJoin the community 👇\n' + link,
       'We called ' + t + ' at ' + prices.entry_price + ' 🎯\nTarget: ' + prices.target_price + '\n\n' + link,
+      t + ' with guidance.\n\nNo WW. No eyes emoji. No watch it.\n\nProper alerts only with guidance.\n\n' + link,
     ];
     promoMessage = formats[Math.floor(Math.random() * formats.length)];
     console.log('[PROMO] ' + promoMessage.split('\n')[0]);

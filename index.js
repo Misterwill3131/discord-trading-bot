@@ -225,6 +225,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <h1>🔥 BOOM</h1>
   <a href="/dashboard" class="nav-link active">Dashboard</a>
   <a href="/raw-messages" class="nav-link">Messages bruts</a>
+  <a href="/signals" class="nav-link">Signaux</a>
   <a href="/image-generator" class="nav-link">Image Generator</a>
   <a href="/stats" class="nav-link">Stats</a>
   <span id="dot"></span>
@@ -598,8 +599,19 @@ app.post('/login', (req, res) => {
 let lastImageBuffer = null;
 let lastImageId = null;
 
+// Cache des images générées — associe un imageId à un Buffer PNG (100 dernières)
+const imageCache = new Map();
+const MAX_IMAGE_CACHE = 100;
+
 const messageLog = loadInitialMessages();
 const sseClients = [];
+
+function storeImage(imageId, buf) {
+  imageCache.set(imageId, buf);
+  if (imageCache.size > MAX_IMAGE_CACHE) {
+    imageCache.delete(imageCache.keys().next().value);
+  }
+}
 
 function logEvent(author, channel, content, signalType, reason, extra) {
   const entry = {
@@ -612,11 +624,13 @@ function logEvent(author, channel, content, signalType, reason, extra) {
     passed:  signalType !== null,
     type:    signalType,
     reason,
-    confidence: extra?.confidence != null ? extra.confidence : null,
-    ticker:     extra?.ticker     != null ? extra.ticker     : null,
-    isReply:       extra?.isReply || false,
+    confidence:    extra?.confidence    != null ? extra.confidence    : null,
+    ticker:        extra?.ticker        != null ? extra.ticker        : null,
+    isReply:       extra?.isReply       || false,
     parentPreview: extra?.parentPreview || null,
-    parentAuthor:  extra?.parentAuthor || null,
+    parentAuthor:  extra?.parentAuthor  || null,
+    imageId:       extra?.imageId       || null,
+    promoMessage:  extra?.promoMessage  || null,
   };
   messageLog.unshift(entry);
   if (messageLog.length > MAX_LOG) messageLog.pop();
@@ -633,6 +647,14 @@ app.get('/image/latest', (req, res) => {
   res.set('Content-Type', 'image/png');
   res.set('Cache-Control', 'no-cache');
   res.send(lastImageBuffer);
+});
+
+app.get('/image/cache/:id', (req, res) => {
+  const buf = imageCache.get(req.params.id);
+  if (!buf) return res.status(404).json({ error: 'Image not found' });
+  res.set('Content-Type', 'image/png');
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.send(buf);
 });
 
 app.options('/generate-and-store', (req, res) => {
@@ -954,6 +976,7 @@ const IMAGE_GEN_HTML = `<!DOCTYPE html>
   <h1>🔥 BOOM</h1>
   <a href="/dashboard" class="nav-link">Dashboard</a>
   <a href="/raw-messages" class="nav-link">Messages bruts</a>
+  <a href="/signals" class="nav-link">Signaux</a>
   <a href="/image-generator" class="nav-link active">Image Generator</a>
   <a href="/stats" class="nav-link">Stats</a>
 </header>
@@ -1257,6 +1280,7 @@ const RAW_MESSAGES_HTML = `<!DOCTYPE html>
   <h1>🔥 BOOM</h1>
   <a href="/dashboard" class="nav-link">Dashboard</a>
   <a href="/raw-messages" class="nav-link active">Messages bruts</a>
+  <a href="/signals" class="nav-link">Signaux</a>
   <a href="/image-generator" class="nav-link">Image Generator</a>
   <a href="/stats" class="nav-link">Stats</a>
   <span id="dot"></span>
@@ -1403,6 +1427,76 @@ app.get('/raw-messages', requireAuth, (req, res) => {
   res.send(RAW_MESSAGES_HTML);
 });
 
+app.get('/signals', requireAuth, (req, res) => {
+  res.set('Content-Type', 'text/html');
+  const rows = messageLog
+    .filter(m => m.passed)
+    .map(m => {
+      const ts = new Date(m.ts).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' });
+      const date = new Date(m.ts).toLocaleDateString('fr-CA');
+      const imgTag = m.imageId
+        ? '<img src="/image/cache/' + m.imageId + '" style="max-width:100%;border-radius:6px;margin-top:10px;" loading="lazy">'
+        : '<div style="color:#80848e;font-size:12px;margin-top:8px;">Pas d\'image disponible</div>';
+      const typeBadge = m.type === 'entry'
+        ? '<span style="background:#1e3a2f;color:#3ba55d;border:1px solid #3ba55d44;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;">ENTRY</span>'
+        : m.type === 'exit'
+        ? '<span style="background:#3a1e1e;color:#ed4245;border:1px solid #ed424544;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;">EXIT</span>'
+        : '<span style="background:#2a2e3d;color:#5865f2;border:1px solid #5865f244;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;">NEUTRAL</span>';
+      const promoBlock = m.promoMessage
+        ? '<div style="margin-top:12px;background:#1a1d2e;border:1px solid #5865f244;border-radius:6px;padding:10px 14px;">'
+          + '<div style="font-size:11px;color:#5865f2;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Message Buffer / X</div>'
+          + '<pre style="margin:0;font-family:inherit;font-size:13px;color:#dcddde;white-space:pre-wrap;word-break:break-word;">' + m.promoMessage.replace(/</g,'&lt;') + '</pre>'
+          + '<button onclick="navigator.clipboard.writeText(this.dataset.text)" data-text="' + m.promoMessage.replace(/"/g,'&quot;') + '" style="margin-top:8px;background:#5865f2;border:none;color:#fff;padding:4px 12px;border-radius:4px;font-size:12px;cursor:pointer;">Copier</button>'
+          + '</div>'
+        : '';
+      return '<div style="background:#2b2d31;border:1px solid #3f4147;border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:6px;">'
+        + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
+        + typeBadge
+        + '<span style="color:#D649CC;font-weight:700;">' + (m.author || '') + '</span>'
+        + (m.ticker ? '<span style="background:#36393f;color:#faa61a;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:700;">$' + m.ticker + '</span>' : '')
+        + '<span style="color:#80848e;font-size:12px;margin-left:auto;">' + date + ' ' + ts + '</span>'
+        + '</div>'
+        + '<div style="color:#dcddde;font-size:14px;line-height:1.5;">' + (m.content || '').replace(/</g,'&lt;') + '</div>'
+        + imgTag
+        + promoBlock
+        + '</div>';
+    }).join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Signaux — BOOM</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
+  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
+  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
+  .nav-link:hover { background: #3f4147; color: #dcddde; }
+  .nav-link.active { background: #5865f222; color: #5865f2; }
+  #wrap { padding: 20px 24px; display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; }
+  #empty { padding: 60px 24px; text-align: center; color: #80848e; grid-column: 1/-1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Signaux</h1>
+  <a href="/dashboard" class="nav-link">Dashboard</a>
+  <a href="/raw-messages" class="nav-link">Messages bruts</a>
+  <a href="/signals" class="nav-link active">Signaux</a>
+  <a href="/stats" class="nav-link">Stats</a>
+  <a href="/image-generator" class="nav-link">Générateur</a>
+</header>
+<div id="wrap">
+  ${rows || '<div id="empty">Aucun signal accepté pour le moment.</div>'}
+</div>
+</body>
+</html>`;
+  res.send(html);
+});
+
 app.get('/image-generator', requireAuth, (req, res) => {
   res.set('Content-Type', 'text/html');
   res.send(IMAGE_GEN_HTML);
@@ -1488,6 +1582,7 @@ const STATS_HTML = `<!DOCTYPE html>
   <h1>&#x1F525; BOOM</h1>
   <a href="/dashboard" class="nav-link">Dashboard</a>
   <a href="/raw-messages" class="nav-link">Messages bruts</a>
+  <a href="/signals" class="nav-link">Signaux</a>
   <a href="/image-generator" class="nav-link">Image Generator</a>
   <a href="/stats" class="nav-link active">Stats</a>
   <div class="period-btns">
@@ -2189,30 +2284,6 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  if (!filterType && authorAllowed) {
-    // Filtré par le contenu MAIS auteur autorisé → on logue passed:false (stats honnêtes)
-    // mais on continue quand même pour envoyer le signal
-    console.log('[AUTHOR ALLOWED bypass] ' + authorName + ': ' + content.substring(0, 60));
-    logEvent(authorName, channelName, content, null, 'Auteur autorise (contenu filtre)', extraWithSignal);
-    // on ne return pas : on envoie quand même l'image/webhook
-  } else {
-    // Filtre passé normalement
-    logEvent(authorName, channelName, content, filterType, filterReason, extraWithSignal);
-  }
-  const sendType = filterType || 'neutral';
-  console.log('[' + sendType.toUpperCase() + ']' + (isReply ? ' [REPLY]' : '') + ' ' + content);
-
-  let imageUrl = null;
-  try {
-    const imgBuf = await generateImage(message.author.username, content, message.createdAt.toISOString());
-    lastImageBuffer = imgBuf;
-    lastImageId = Date.now();
-    imageUrl = RAILWAY_URL + '/image/latest?t=' + lastImageId;
-    console.log('Image generated, URL: ' + imageUrl);
-  } catch (err) {
-    console.error('Image generation error:', err.message);
-  }
-
   // ── Message promotionnel Buffer / X (Twitter) ────────────────────────────
   const prices = extractPrices(classifyContent);
   const promoTicker = extractTicker(classifyContent);
@@ -2225,6 +2296,33 @@ client.on('messageCreate', async (message) => {
     console.log('[PROMO] ' + gainLine);
   }
   // ──────────────────────────────────────────────────────────────────────────
+
+  // ── Génération image ──────────────────────────────────────────────────────
+  let imageUrl = null;
+  let msgImageId = null;
+  try {
+    const imgBuf = await generateImage(message.author.username, content, message.createdAt.toISOString());
+    lastImageBuffer = imgBuf;
+    lastImageId = Date.now();
+    msgImageId = String(lastImageId);
+    storeImage(msgImageId, imgBuf);
+    imageUrl = RAILWAY_URL + '/image/cache/' + msgImageId;
+    console.log('Image generated, URL: ' + imageUrl);
+  } catch (err) {
+    console.error('Image generation error:', err.message);
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
+  const extraFull = Object.assign({}, extraWithSignal, { imageId: msgImageId, promoMessage });
+
+  if (!filterType && authorAllowed) {
+    console.log('[AUTHOR ALLOWED bypass] ' + authorName + ': ' + content.substring(0, 60));
+    logEvent(authorName, channelName, content, null, 'Auteur autorise (contenu filtre)', extraFull);
+  } else {
+    logEvent(authorName, channelName, content, filterType, filterReason, extraFull);
+  }
+  const sendType = filterType || 'neutral';
+  console.log('[' + sendType.toUpperCase() + ']' + (isReply ? ' [REPLY]' : '') + ' ' + content);
 
   try {
     const result = await fetch(MAKE_WEBHOOK_URL, {

@@ -2290,7 +2290,10 @@ app.get('/promo-image/latest', (req, res) => {
 
 app.listen(PORT, () => console.log('Server running on port ' + PORT));
 
-async function generateImage(author, content, timestamp) {
+async function generateImage(author, content, timestamp, parentAuthor, parentContent) {
+  // Normalise vers le nom affiché (ex: "traderzz1m" → "Z")
+  author = getDisplayName(author);
+  if (parentAuthor) parentAuthor = getDisplayName(parentAuthor);
   const W = 740;
   const PADDING_V = 18;
   const PADDING_L = 16;
@@ -2371,21 +2374,28 @@ async function generateImage(author, content, timestamp) {
 
   const nameY = PADDING_V + NAME_H - 3;
 
-  // Username
+  // Username — dégradé pour tous sauf Legacy Trading (rouge)
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
-  ctx.fillStyle = CONFIG.USERNAME_COLOR;
   ctx.font = 'bold 16px ' + FONT;
-  ctx.fillText(author || 'Z', CONTENT_X, nameY);
   const nameW = ctx.measureText(author || 'Z').width;
+  if (author === 'Legacy Trading') {
+    ctx.fillStyle = '#e84040';
+  } else {
+    const nameGrad = ctx.createLinearGradient(CONTENT_X, 0, CONTENT_X + nameW, 0);
+    nameGrad.addColorStop(0, '#ff79f2');
+    nameGrad.addColorStop(1, '#d649cc');
+    ctx.fillStyle = nameGrad;
+  }
+  ctx.fillText(author || 'Z', CONTENT_X, nameY);
 
-  // tag_boom.png — remplace le badge dessiné
+  // tag_boom.png
   const TAG_H = 18;
   const badgeX = CONTENT_X + nameW + 6;
   const badgeY = nameY - TAG_H + 2;
   let BADGE_W = 0;
   try {
-    const tagImg = await loadImage(path.join(__dirname, 'tag_boom.png'));
+    const tagImg = await loadImage(path.join(__dirname, 'avatar', 'tag_boom.png'));
     // Conserver le ratio de l'image
     const tagRatio = tagImg.width / tagImg.height;
     BADGE_W = Math.round(TAG_H * tagRatio);
@@ -2419,11 +2429,9 @@ async function generateImage(author, content, timestamp) {
     logoEndX = logoX;
   }
 
-  // Time
+  // Time — fuseau EST/EDT (America/New_York)
   const d = timestamp ? new Date(timestamp) : new Date();
-  const hh = d.getHours().toString().padStart(2, '0');
-  const mm = d.getMinutes().toString().padStart(2, '0');
-  const timeStr = hh + ':' + mm;
+  const timeStr = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
   ctx.fillStyle = CONFIG.TIME_COLOR;
   ctx.font = '12px ' + FONT;
   ctx.fillText(timeStr, logoEndX, nameY - 1);

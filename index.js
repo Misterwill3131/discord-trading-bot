@@ -26,25 +26,30 @@ const DATA_DIR = fs.existsSync('/data') ? '/data' : __dirname;
 // ─────────────────────────────────────────────────────────────────────
 //  AUTHOR_ALIASES — canonical display names mapped from Discord usernames
 // ─────────────────────────────────────────────────────────────────────
-const AUTHOR_ALIASES_DEFAULT = {
-  // 'discordUsername': 'DisplayName',
+// ─────────────────────────────────────────────────────────────────────
+//  ALIAS D'AUTEURS — Tag Discord → Nom affiché
+// ─────────────────────────────────────────────────────────────────────
+const AUTHOR_ALIASES = {
+  'sanibel2026':       'AR',
+  'therealbora':       'Bora',
+  'traderzz1m':        'Z',
+  'viking9496':        'Viking',
+  'legacytrading506':  'Legacy Trading',
+  'rf0496_76497':      'RF',
+  'wulftrader':        'L',
+  'beppels':           'beppels',
+  'gnew123_83101':     'Gaz',
+  'capital__gains':    'CapitalGains',
+  'gblivin141414':     'Michael',
+  'protraderjs':       'ProTrader',
+  'disciplined04':     'THE REVERSAL',
+  'k.str.l':           'kestrel',
+  'the1albatross':     'the1albatross',
+  'thedutchess1':      'thedutchess1',
 };
-
-// Load config-overrides.json to merge with hardcoded values
-const CONFIG_OVERRIDES_PATH = path.join(DATA_DIR, 'config-overrides.json');
-function loadConfigOverrides() {
-  try {
-    if (fs.existsSync(CONFIG_OVERRIDES_PATH)) {
-      return JSON.parse(fs.readFileSync(CONFIG_OVERRIDES_PATH, 'utf8'));
-    }
-  } catch (e) {
-    console.error('[config] Failed to load config-overrides.json:', e.message);
-  }
-  return {};
+function getDisplayName(username) {
+  return AUTHOR_ALIASES[username] || username;
 }
-
-let configOverrides = loadConfigOverrides();
-const AUTHOR_ALIASES = Object.assign({}, AUTHOR_ALIASES_DEFAULT, configOverrides.authorAliases || {});
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
@@ -101,77 +106,20 @@ function saveProfitData(dateKey, data) {
 let lastPromoImageBuffer = null;
 
 // ─────────────────────────────────────────────────────────────────────
-//  SQLite — persistence des messages avec better-sqlite3
+//  Persistence JSON journalière
 // ─────────────────────────────────────────────────────────────────────
-let db = null;
-let dbStmtInsert = null;
-let dbStmtAll = null;
-let dbStmtRange = null;
-try {
-  const BetterSqlite3 = require('better-sqlite3');
-  db = new BetterSqlite3(path.join(__dirname, 'signals.db'));
-  db.exec(`CREATE TABLE IF NOT EXISTS messages (
-    id TEXT PRIMARY KEY,
-    ts TEXT,
-    author TEXT,
-    channel TEXT,
-    content TEXT,
-    preview TEXT,
-    passed INTEGER,
-    type TEXT,
-    reason TEXT,
-    confidence REAL,
-    ticker TEXT,
-    is_reply INTEGER,
-    parent_preview TEXT,
-    parent_author TEXT
-  )`);
-  dbStmtInsert = db.prepare(
-    'INSERT OR REPLACE INTO messages (id,ts,author,channel,content,preview,passed,type,reason,confidence,ticker,is_reply,parent_preview,parent_author) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
-  );
-  dbStmtAll = db.prepare('SELECT * FROM messages ORDER BY ts DESC LIMIT 200');
-  dbStmtRange = db.prepare('SELECT * FROM messages WHERE ts >= ? AND ts <= ? ORDER BY ts DESC LIMIT 5000');
-  console.log('[sqlite] Database opened at signals.db');
-} catch (e) {
-  console.warn('[sqlite] better-sqlite3 not available, running without SQLite persistence:', e.message);
-}
-
-function dbInsertMessage(entry) {
-  if (!dbStmtInsert) return;
+function saveTodayMessages(msgs) {
   try {
-    dbStmtInsert.run(
-      entry.id, entry.ts, entry.author, entry.channel,
-      entry.content, entry.preview,
-      entry.passed ? 1 : 0,
-      entry.type || null, entry.reason || null,
-      entry.confidence != null ? entry.confidence : null,
-      entry.ticker || null,
-      entry.isReply ? 1 : 0,
-      entry.parentPreview || null,
-      entry.parentAuthor || null
-    );
-  } catch (e) {
-    console.error('[sqlite] Insert error:', e.message);
-  }
+    fs.writeFileSync(path.join(DATA_DIR, 'messages-' + todayKey() + '.json'), JSON.stringify(msgs, null, 2), 'utf8');
+  } catch(e) { console.error('[daily] save error:', e.message); }
 }
 
-function dbRowToEntry(row) {
-  return {
-    id: row.id,
-    ts: row.ts,
-    author: row.author,
-    channel: row.channel,
-    content: row.content,
-    preview: row.preview,
-    passed: row.passed === 1,
-    type: row.type,
-    reason: row.reason,
-    confidence: row.confidence,
-    ticker: row.ticker,
-    isReply: row.is_reply === 1,
-    parentPreview: row.parent_preview,
-    parentAuthor: row.parent_author,
-  };
+function loadInitialMessages() {
+  try {
+    const today = loadDailyFile(todayKey());
+    return today.slice(0, MAX_LOG);
+  } catch(e) {}
+  return [];
 }
 // ─────────────────────────────────────────────────────────────────────
 
@@ -207,11 +155,24 @@ let customFilters = loadCustomFilters();
 //  Format : 'NomExact': 'URL_de_l_image'
 //  Si un utilisateur n'est pas dans cette liste, ses initiales seront utilisées.
 // ─────────────────────────────────────────────────────────────────────
+const AV = (f) => path.join(__dirname, 'avatar', f);
 const CUSTOM_AVATARS = {
-  'Z': 'https://raw.githubusercontent.com/Misterwill3131/discord-trading-bot/main/z-avatar.jpg',
-  // Ajoutez d'autres utilisateurs ici:
-  // 'Will': 'https://url-de-l-avatar-de-will.jpg',
-  // 'Alex': 'https://url-de-l-avatar-alex.jpg',
+  'Z':              AV('z-avatar.jpg'),
+  'AR':             AV('AR_AVATAR.png'),
+  'beppels':        AV('beppels_avatar.png'),
+  'L':              AV('L_avatar.png'),
+  'RF':             AV('RF_AVATAR.png'),
+  'Viking':         AV('Viking_avatar.png'),
+  'ProTrader':      AV('ProTrader_avatar.png'),
+  'Gaz':            AV('Gaz_avatar.png'),
+  'CapitalGains':   AV('CapitalGains_avatar.png'),
+  'THE REVERSAL':   AV('THE REVERSAL_avatar.png'),
+  'kestrel':        AV('kestrel_avatar.png'),
+  'the1albatross':  AV('the1albatross_avatar.png'),
+  'Bora':           AV('Bora_avatar.png'),
+  'Michael':        AV('Michael_avatar.png'),
+  'thedutchess1':   AV('thedutchess1_avatar.png'),
+  'Legacy Trading': AV('Legacy Trading_avatar.png'),
 };
 // ─────────────────────────────────────────────────────────────────────
 
@@ -661,17 +622,7 @@ let lastImageBuffer = null;
 let lastImageId = null;
 
 const MAX_LOG = 200;
-const messageLog = (function loadMessages() {
-  if (db && dbStmtAll) {
-    try {
-      const rows = dbStmtAll.all();
-      return rows.map(dbRowToEntry);
-    } catch (e) {
-      console.error('[sqlite] Failed to load initial messages:', e.message);
-    }
-  }
-  return [];
-})();
+const messageLog = loadInitialMessages();
 const sseClients = [];
 
 function logEvent(author, channel, content, signalType, reason, extra) {
@@ -693,7 +644,7 @@ function logEvent(author, channel, content, signalType, reason, extra) {
   };
   messageLog.unshift(entry);
   if (messageLog.length > MAX_LOG) messageLog.pop();
-  dbInsertMessage(entry);
+  saveTodayMessages(messageLog);
   const payload = 'data: ' + JSON.stringify(entry) + '\n\n';
   for (let i = sseClients.length - 1; i >= 0; i--) {
     try { sseClients[i].res.write(payload); } catch (_) { sseClients.splice(i, 1); }
@@ -786,35 +737,12 @@ app.get('/health', async (req, res) => {
 });
 
 app.get('/api/messages', requireAuth, (req, res) => {
-  var hasFrom = !!req.query.from;
-  var hasTo   = !!req.query.to;
-  if ((hasFrom || hasTo) && db && dbStmtRange) {
-    try {
-      var fromTs = hasFrom ? new Date(req.query.from).toISOString() : '1970-01-01T00:00:00.000Z';
-      var toTs   = hasTo   ? new Date(req.query.to).toISOString()   : new Date().toISOString();
-      if (isNaN(new Date(fromTs).getTime())) fromTs = '1970-01-01T00:00:00.000Z';
-      if (isNaN(new Date(toTs).getTime()))   toTs   = new Date().toISOString();
-      var rows = dbStmtRange.all(fromTs, toTs);
-      return res.json(rows.map(dbRowToEntry));
-    } catch (e) {
-      console.error('[sqlite] Range query error:', e.message);
-    }
-  }
-  if (!hasFrom && !hasTo && db && dbStmtAll) {
-    try {
-      var rows = dbStmtAll.all();
-      return res.json(rows.map(dbRowToEntry));
-    } catch (e) {
-      console.error('[sqlite] All query error:', e.message);
-    }
-  }
-  // Fallback: in-memory log (no SQLite)
   var msgs = messageLog;
-  if (hasFrom) {
+  if (req.query.from) {
     var from = new Date(req.query.from).getTime();
     if (!isNaN(from)) msgs = msgs.filter(function(m) { return new Date(m.ts).getTime() >= from; });
   }
-  if (hasTo) {
+  if (req.query.to) {
     var to = new Date(req.query.to).getTime();
     if (!isNaN(to)) msgs = msgs.filter(function(m) { return new Date(m.ts).getTime() <= to; });
   }

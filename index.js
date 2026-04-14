@@ -2531,10 +2531,12 @@ function addProfitMessage(author, content) {
   return data.count;
 }
 
-// Écoute les messages du salon #profits
+// Écoute les messages du salon #profits — compte uniquement les messages avec image
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   if (message.channel.id !== PROFITS_CHANNEL_ID) return;
+  const hasImage = message.attachments.some(a => a.contentType && a.contentType.startsWith('image/'));
+  if (!hasImage) return;
   addProfitMessage(message.author.username, message.content);
 });
 

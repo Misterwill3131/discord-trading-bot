@@ -21,7 +21,7 @@ const SESSION_TOKEN = crypto.randomBytes(16).toString('hex');
 // ─────────────────────────────────────────────────────────────────────
 //  DATA_DIR — /data on Railway, __dirname locally
 // ─────────────────────────────────────────────────────────────────────
-const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || __dirname;
+const DATA_DIR = fs.existsSync('/data') ? '/data' : __dirname;
 
 // ─────────────────────────────────────────────────────────────────────
 //  AUTHOR_ALIASES — canonical display names mapped from Discord usernames

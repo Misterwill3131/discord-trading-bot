@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL;
 const TRADING_CHANNEL = process.env.TRADING_CHANNEL || 'trading-floor';
+const PROFITS_CHANNEL_ID = '1241620890953846914';
 const PORT = process.env.PORT || 3000;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
@@ -2497,5 +2498,87 @@ function roundRect(ctx, x, y, width, height, radius) {
   ctx.quadraticCurveTo(x, y, x + radius, y);
   ctx.closePath();
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  📊 COMPTEUR DE PROFITS — Salon #profits (ID: PROFITS_CHANNEL_ID)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function profitsPath(dateKey) {
+  return path.join(DATA_DIR, 'profits-' + dateKey + '.json');
+}
+
+function loadProfitsDay(dateKey) {
+  try {
+    const p = profitsPath(dateKey);
+    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch(e) {}
+  return { count: 0, messages: [] };
+}
+
+function saveProfitsDay(dateKey, data) {
+  try {
+    fs.writeFileSync(profitsPath(dateKey), JSON.stringify(data, null, 2), 'utf8');
+  } catch(e) { console.error('[profits] save error:', e.message); }
+}
+
+function addProfitMessage(author, content) {
+  const key  = todayKey();
+  const data = loadProfitsDay(key);
+  data.count++;
+  data.messages.push({ ts: new Date().toISOString(), author: getDisplayName(author), content });
+  saveProfitsDay(key, data);
+  console.log('[PROFITS] +1 → total today: ' + data.count + ' (author: ' + getDisplayName(author) + ')');
+  return data.count;
+}
+
+// Écoute les messages du salon #profits
+client.on('messageCreate', async (message) => {
+  if (message.author.bot) return;
+  if (message.channel.id !== PROFITS_CHANNEL_ID) return;
+  addProfitMessage(message.author.username, message.content);
+});
+
+// Commande !bilan — réponse dans n'importe quel salon
+client.on('messageCreate', async (message) => {
+  if (message.author.bot) return;
+  if (!message.content.toLowerCase().startsWith('!bilan')) return;
+  const key  = todayKey();
+  const data = loadProfitsDay(key);
+  const now  = new Date().toLocaleString('fr-CA', { timeZone: 'America/New_York' });
+  try {
+    await message.reply(
+      '📊 **Bilan profits du jour** — ' + key + '\n' +
+      '> Posts de profit publiés : **' + data.count + '**\n' +
+      '> Heure EDT : ' + now
+    );
+  } catch(e) { console.error('[!bilan] reply error:', e.message); }
+});
+
+// Post automatique à 20h00 EDT
+let lastProfitSummaryDate = null;
+setInterval(function() {
+  const now = new Date();
+  const edtHour = parseInt(now.toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'America/New_York' }), 10);
+  const edtMin  = parseInt(now.toLocaleString('en-US', { minute: 'numeric', timeZone: 'America/New_York' }), 10);
+  const todayStr = todayKey();
+  if (edtHour === 20 && edtMin === 0 && lastProfitSummaryDate !== todayStr) {
+    lastProfitSummaryDate = todayStr;
+    const data = loadProfitsDay(todayStr);
+    const channel = client.channels.cache.get(PROFITS_CHANNEL_ID);
+    if (channel && channel.send) {
+      channel.send(
+        '📊 **Bilan profits du jour** — ' + todayStr + '\n' +
+        '> Nos membres ont partagé **' + data.count + '** post' + (data.count > 1 ? 's' : '') + ' de profit aujourd\'hui 🔥\n' +
+        '> Continuez comme ça ! 💰'
+      ).then(function() {
+        console.log('[profits] Bilan journalier posté — ' + data.count + ' profits');
+      }).catch(function(e) {
+        console.error('[profits] Erreur post bilan:', e.message);
+      });
+    } else {
+      console.warn('[profits] Channel introuvable pour le bilan journalier');
+    }
+  }
+}, 60000);
 
 client.login(DISCORD_TOKEN);

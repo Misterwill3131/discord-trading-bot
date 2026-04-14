@@ -2521,13 +2521,24 @@ function saveProfitsDay(dateKey, data) {
   } catch(e) { console.error('[profits] save error:', e.message); }
 }
 
+// Compte le nombre de trades individuels dans un message
+// Chaque ligne avec un range de prix (ex: .34-.55, 1.23-3.21) = 1 profit
+function countProfitEntries(content) {
+  if (!content || !content.trim()) return 1; // image sans texte = 1 profit
+  const priceRange = /\.?\d+(?:\.\d+)?\s*[-–]\s*\.?\d+(?:\.\d+)?/;
+  const lines = content.split('\n').map(function(l) { return l.trim(); }).filter(function(l) { return l.length > 0; });
+  const count = lines.filter(function(l) { return priceRange.test(l); }).length;
+  return count > 0 ? count : 1; // au moins 1 si image présente
+}
+
 function addProfitMessage(author, content) {
-  const key  = todayKey();
-  const data = loadProfitsDay(key);
-  data.count++;
-  data.messages.push({ ts: new Date().toISOString(), author: getDisplayName(author), content });
+  const key     = todayKey();
+  const data    = loadProfitsDay(key);
+  const entries = countProfitEntries(content);
+  data.count   += entries;
+  data.messages.push({ ts: new Date().toISOString(), author: getDisplayName(author), content, entries });
   saveProfitsDay(key, data);
-  console.log('[PROFITS] +1 → total today: ' + data.count + ' (author: ' + getDisplayName(author) + ')');
+  console.log('[PROFITS] +' + entries + ' → total today: ' + data.count + ' (author: ' + getDisplayName(author) + ')');
   return data.count;
 }
 

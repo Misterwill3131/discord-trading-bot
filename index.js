@@ -1861,9 +1861,10 @@ app.get('/stats', requireAuth, (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => console.log('Server running on port ' + PORT));
 
-async function generateImage(author, content, timestamp) {
+async function generateImage(author, content, timestamp, parentAuthor, parentContent) {
   // Normalise le nom : tag Discord → nom affiché (ex: "therealbora" → "Bora")
   author = getDisplayName(author);
+  if (parentAuthor) parentAuthor = getDisplayName(parentAuthor);
   const W = 740;
   const PADDING_V = 18;
   const PADDING_L = 16;
@@ -1879,7 +1880,8 @@ async function generateImage(author, content, timestamp) {
 
   const LINE_H = 22;
   const NAME_H = 20;
-  const H = PADDING_V + NAME_H + (lines.length * LINE_H) + PADDING_V + 2;
+  const REPLY_H = parentContent ? 22 : 0; // hauteur de la zone reply
+  const H = REPLY_H + PADDING_V + NAME_H + (lines.length * LINE_H) + PADDING_V + 2;
 
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
@@ -1888,9 +1890,44 @@ async function generateImage(author, content, timestamp) {
   ctx.fillStyle = CONFIG.BG_COLOR;
   ctx.fillRect(0, 0, W, H);
 
+  // ── Reply preview (si réponse) ──────────────────────────────────────────
+  if (parentContent) {
+    const replyX = CONTENT_X;
+    const replyY = 11;
+    const connX  = AVATAR_X + AVATAR_D / 2; // centre de l'avatar
+
+    // Ligne courbe style Discord
+    ctx.strokeStyle = '#4f5660';
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.lineCap  = 'round';
+    ctx.beginPath();
+    ctx.moveTo(connX, replyY + 2);
+    ctx.quadraticCurveTo(connX, replyY + 10, connX + 12, replyY + 10);
+    ctx.stroke();
+
+    // Nom du parent
+    ctx.font = 'bold 12px ' + FONT;
+    ctx.fillStyle = '#ff79f2';
+    const pName = parentAuthor || 'Unknown';
+    ctx.fillText(pName, replyX, replyY + 10);
+    const pNameW = ctx.measureText(pName).width;
+
+    // Contenu tronqué du parent
+    const maxReplyW = W - replyX - pNameW - 10 - PADDING_L;
+    ctx.font = '12px ' + FONT;
+    ctx.fillStyle = '#80848e';
+    let replyPreview = parentContent.replace(/\n/g, ' ');
+    while (replyPreview.length > 0 && ctx.measureText(replyPreview + '…').width > maxReplyW) {
+      replyPreview = replyPreview.slice(0, -1);
+    }
+    ctx.fillText(replyPreview + (replyPreview.length < parentContent.length ? '…' : ''), replyX + pNameW + 6, replyY + 10);
+  }
+  // ────────────────────────────────────────────────────────────────────────
+
   // ── Avatar ──
   const avatarCX = AVATAR_X + AVATAR_D / 2;
-  const avatarCY = PADDING_V + NAME_H / 2 + 2;
+  const avatarCY = REPLY_H + PADDING_V + NAME_H / 2 + 2;
   const avatarR = AVATAR_D / 2;
 
   // Clip circulaire pour l'avatar
@@ -1944,7 +1981,7 @@ async function generateImage(author, content, timestamp) {
     ctx.textBaseline = 'alphabetic';
   }
 
-  const nameY = PADDING_V + NAME_H - 3;
+  const nameY = REPLY_H + PADDING_V + NAME_H - 3;
 
   // Username — dégradé pour tous sauf Legacy Trading (rouge)
   ctx.textAlign = 'left';
@@ -2399,7 +2436,7 @@ client.on('messageCreate', async (message) => {
   let imageUrl = null;
   let msgImageId = null;
   try {
-    const imgBuf = await generateImage(authorName, content, message.createdAt.toISOString());
+    const imgBuf = await generateImage(authorName, content, message.createdAt.toISOString(), parentAuthor, parentContent);
     lastImageBuffer = imgBuf;
     lastImageId = Date.now();
     msgImageId = String(lastImageId);

@@ -115,10 +115,13 @@ function getDisplayName(username) {
 //  Si un utilisateur n'est pas dans cette liste, ses initiales seront utilisées.
 // ─────────────────────────────────────────────────────────────────────
 const CUSTOM_AVATARS = {
-  'Z': 'https://raw.githubusercontent.com/Misterwill3131/discord-trading-bot/main/z-avatar.jpg',
-  // Ajoutez d'autres utilisateurs ici:
-  // 'Will': 'https://url-de-l-avatar-de-will.jpg',
-  // 'Alex': 'https://url-de-l-avatar-alex.jpg',
+  'Z':          path.join(__dirname, 'z-avatar.jpg'),
+  'AR':         path.join(__dirname, 'AR_AVATAR.png'),
+  'beppels':    path.join(__dirname, 'beppels_avatar.png'),
+  'L':          path.join(__dirname, 'L_avatar.png'),
+  'RF':         path.join(__dirname, 'RF_AVATAR.png'),
+  'Viking':     path.join(__dirname, 'Viking_avatar.png'),
+  'ProTrader':  path.join(__dirname, 'Protrader Alerts_avatar.png'),
 };
 // ─────────────────────────────────────────────────────────────────────
 

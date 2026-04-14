@@ -87,9 +87,22 @@ let customFilters = loadCustomFilters();
 //  Format : 'username_discord': 'Nom affiché'
 // ─────────────────────────────────────────────────────────────────────
 const AUTHOR_ALIASES = {
-  'sanibel2026': 'AR',
-  // Ajoutez d'autres alias ici:
-  // 'autreusername': 'Pseudo affiché',
+  'sanibel2026':       'AR',
+  'therealbora':       'Bora',
+  'traderzz1m':        'Z',
+  'viking9496':        'Viking',
+  'legacytrading506':  'Legacy Trading',
+  'rf0496_76497':      'RF',
+  'wulftrader':        'L',
+  'beppels':           'beppels',
+  'gnew123_83101':     'Gaz',
+  'capital__gains':    'CapitalGains',
+  'gblivin141414':     'Michael',
+  'protraderjs':       'ProTrader',
+  'disciplined04':     'THE REVERSAL',
+  'k.str.l':           'kestrel',
+  'the1albatross':     'the1albatross',
+  'thedutchess1':      'thedutchess1',
 };
 function getDisplayName(username) {
   return AUTHOR_ALIASES[username] || username;

@@ -2120,7 +2120,6 @@ function classifySignal(content) {
   // 4. Messages recap/bilan — résumé de trades passés, pas un signal
   const isRecap = /^recap[:\s]/i.test(content.trim())
     || /let[''']?s get ready/i.test(content)
-    || /@everyone/.test(content)
     || (content.match(/\$[A-Z]{1,6}\s+\d+%/g) || []).length >= 3; // 3+ lignes "$TICK XX%"
   if (isRecap) {
     console.log('[FILTER] Recap/broadcast ignored: ' + content.substring(0, 60));

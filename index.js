@@ -56,14 +56,17 @@ function loadInitialMessages() {
 const FILTERS_PATH = path.join(__dirname, 'custom-filters.json');
 
 function loadCustomFilters() {
+  const defaults = { blocked: [], allowed: [], blockedAuthors: [], allowedAuthors: [], falsePositiveCounts: {}, allowedChannels: ['trading-floor'] };
   try {
     if (fs.existsSync(FILTERS_PATH)) {
-      return JSON.parse(fs.readFileSync(FILTERS_PATH, 'utf8'));
+      const loaded = JSON.parse(fs.readFileSync(FILTERS_PATH, 'utf8'));
+      // Fusionner avec les defaults pour ajouter les nouveaux champs manquants
+      return Object.assign({}, defaults, loaded);
     }
   } catch (e) {
     console.error('[filters] Failed to load custom-filters.json:', e.message);
   }
-  return { blocked: [], allowed: [], blockedAuthors: [], allowedAuthors: [], falsePositiveCounts: {}, allowedChannels: ['trading-floor'] };
+  return defaults;
 }
 
 function saveCustomFilters() {
@@ -2094,6 +2097,10 @@ const client = new Client({
 client.once('ready', () => {
   console.log('Bot connected as ' + client.user.tag);
   console.log('Listening for channels containing: ' + TRADING_CHANNEL);
+  // Log tous les salons texte visibles par le bot
+  const textChannels = client.channels.cache.filter(ch => ch.type === 0);
+  console.log('Salons visibles par le bot (' + textChannels.size + ') :');
+  textChannels.forEach(ch => console.log('  - "' + ch.name + '" (guild: ' + (ch.guild ? ch.guild.name : '?') + ')'));
 
   // Verification toutes les minutes pour le resume a 18h00
   setInterval(function() {
@@ -2111,12 +2118,16 @@ client.once('ready', () => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   const channelName = message.channel.name || '';
-  console.log('Message received - channel: "' + channelName + '", author: ' + message.author.username);
+  const channelId   = message.channel.id   || '';
+  console.log('Message received - channel: "' + channelName + '" (id:' + channelId + '), author: ' + message.author.username);
   const allowedChannels = (customFilters.allowedChannels && customFilters.allowedChannels.length > 0)
     ? customFilters.allowedChannels
     : [TRADING_CHANNEL];
-  const channelAllowed = allowedChannels.some(ch => channelName.includes(ch));
-  if (!channelAllowed) return;
+  const channelAllowed = allowedChannels.some(ch => channelName.toLowerCase().includes(ch.toLowerCase()));
+  if (!channelAllowed) {
+    console.log('[SKIP] Channel "' + channelName + '" not in allowed list: ' + JSON.stringify(allowedChannels));
+    return;
+  }
 
   const content = message.content;
   const authorName = message.author.username;

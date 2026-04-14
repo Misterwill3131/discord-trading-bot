@@ -83,6 +83,20 @@ let customFilters = loadCustomFilters();
 // ─────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────
+//  ALIAS D'AUTEURS — Renomme les usernames Discord pour l'affichage
+//  Format : 'username_discord': 'Nom affiché'
+// ─────────────────────────────────────────────────────────────────────
+const AUTHOR_ALIASES = {
+  'sanibel2026': 'AR',
+  // Ajoutez d'autres alias ici:
+  // 'autreusername': 'Pseudo affiché',
+};
+function getDisplayName(username) {
+  return AUTHOR_ALIASES[username] || username;
+}
+// ─────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────
 //  SECTION AVATARS — Ajouter ici les avatars personnalisés par Discord username
 //  Format : 'NomExact': 'URL_de_l_image'
 //  Si un utilisateur n'est pas dans cette liste, ses initiales seront utilisées.
@@ -2229,7 +2243,7 @@ client.on('messageCreate', async (message) => {
   }
 
   const content = message.content;
-  const authorName = message.author.username;
+  const authorName = getDisplayName(message.author.username);
 
   // ── Filtre par auteur ──────────────────────────────────────────────────────
   if ((customFilters.blockedAuthors || []).includes(authorName)) {
@@ -2303,7 +2317,7 @@ client.on('messageCreate', async (message) => {
   let imageUrl = null;
   let msgImageId = null;
   try {
-    const imgBuf = await generateImage(message.author.username, content, message.createdAt.toISOString());
+    const imgBuf = await generateImage(authorName, content, message.createdAt.toISOString());
     lastImageBuffer = imgBuf;
     lastImageId = Date.now();
     msgImageId = String(lastImageId);
@@ -2332,7 +2346,7 @@ client.on('messageCreate', async (message) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         content,
-        author: message.author.username,
+        author: authorName,
         channel: channelName,
         signal_type: sendType,
         timestamp: message.createdAt.toISOString(),

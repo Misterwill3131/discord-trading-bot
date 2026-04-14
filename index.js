@@ -1946,15 +1946,19 @@ async function generateImage(author, content, timestamp) {
 
   const nameY = PADDING_V + NAME_H - 3;
 
-  // Username — dégradé gauche → droite
+  // Username — dégradé pour tous sauf Legacy Trading (rouge)
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   ctx.font = 'bold 16px ' + FONT;
   const nameW = ctx.measureText(author || 'Z').width;
-  const nameGrad = ctx.createLinearGradient(CONTENT_X, 0, CONTENT_X + nameW, 0);
-  nameGrad.addColorStop(0, '#ff79f2');
-  nameGrad.addColorStop(1, '#d649cc');
-  ctx.fillStyle = nameGrad;
+  if (author === 'Legacy Trading') {
+    ctx.fillStyle = '#e84040';
+  } else {
+    const nameGrad = ctx.createLinearGradient(CONTENT_X, 0, CONTENT_X + nameW, 0);
+    nameGrad.addColorStop(0, '#ff79f2');
+    nameGrad.addColorStop(1, '#d649cc');
+    ctx.fillStyle = nameGrad;
+  }
   ctx.fillText(author || 'Z', CONTENT_X, nameY);
 
   // tag_boom.png — remplace le badge dessiné

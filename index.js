@@ -1862,6 +1862,8 @@ app.get('/stats', requireAuth, (req, res) => {
 app.listen(PORT, '0.0.0.0', () => console.log('Server running on port ' + PORT));
 
 async function generateImage(author, content, timestamp) {
+  // Normalise le nom : tag Discord → nom affiché (ex: "therealbora" → "Bora")
+  author = getDisplayName(author);
   const W = 740;
   const PADDING_V = 18;
   const PADDING_L = 16;

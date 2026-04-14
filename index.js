@@ -1720,7 +1720,7 @@ app.get('/stats', requireAuth, (req, res) => {
   res.send(STATS_HTML);
 });
 
-app.listen(PORT, () => console.log('Server running on port ' + PORT));
+app.listen(PORT, '0.0.0.0', () => console.log('Server running on port ' + PORT));
 
 async function generateImage(author, content, timestamp) {
   const W = 740;

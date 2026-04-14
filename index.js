@@ -115,13 +115,18 @@ function getDisplayName(username) {
 //  Si un utilisateur n'est pas dans cette liste, ses initiales seront utilisées.
 // ─────────────────────────────────────────────────────────────────────
 const CUSTOM_AVATARS = {
-  'Z':          path.join(__dirname, 'z-avatar.jpg'),
-  'AR':         path.join(__dirname, 'AR_AVATAR.png'),
-  'beppels':    path.join(__dirname, 'beppels_avatar.png'),
-  'L':          path.join(__dirname, 'L_avatar.png'),
-  'RF':         path.join(__dirname, 'RF_AVATAR.png'),
-  'Viking':     path.join(__dirname, 'Viking_avatar.png'),
-  'ProTrader':  path.join(__dirname, 'Protrader Alerts_avatar.png'),
+  'Z':              path.join(__dirname, 'z-avatar.jpg'),
+  'AR':             path.join(__dirname, 'AR_AVATAR.png'),
+  'beppels':        path.join(__dirname, 'beppels_avatar.png'),
+  'L':              path.join(__dirname, 'L_avatar.png'),
+  'RF':             path.join(__dirname, 'RF_AVATAR.png'),
+  'Viking':         path.join(__dirname, 'Viking_avatar.png'),
+  'ProTrader':      path.join(__dirname, 'ProTrader_avatar.png'),
+  'Gaz':            path.join(__dirname, 'Gaz_avatar.png'),
+  'CapitalGains':   path.join(__dirname, 'CapitalGains_avatar.png'),
+  'THE REVERSAL':   path.join(__dirname, 'THE REVERSAL_avatar.png'),
+  'kestrel':        path.join(__dirname, 'kestrel_avatar.png'),
+  'the1albatross':  path.join(__dirname, 'the1albatross_avatar.png'),
 };
 // ─────────────────────────────────────────────────────────────────────
 

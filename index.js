@@ -20,7 +20,9 @@ const SESSION_TOKEN = crypto.randomBytes(16).toString('hex');
 //  Persistence par fichiers JSON journaliers (messages-YYYY-MM-DD.json)
 // ─────────────────────────────────────────────────────────────────────
 const MAX_LOG = 200;
-const DATA_DIR = __dirname;
+// Sur Railway, les fichiers sont stockés dans le volume persistant /data
+// En local, on utilise le dossier du projet
+const DATA_DIR = fs.existsSync('/data') ? '/data' : __dirname;
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);

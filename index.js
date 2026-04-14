@@ -575,6 +575,8 @@ const LOGIN_HTML = `<!DOCTYPE html>
 </body>
 </html>`;
 
+app.get('/', (req, res) => res.redirect('/dashboard'));
+
 app.get('/login', (req, res) => {
   var cookies = parseCookies(req.headers.cookie);
   if (cookies['boom_session'] === SESSION_TOKEN) return res.redirect('/dashboard');

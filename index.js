@@ -2213,6 +2213,26 @@ client.on('messageCreate', async (message) => {
     console.error('Image generation error:', err.message);
   }
 
+  // ── Message promotionnel Discord ──────────────────────────────────────────
+  const prices = extractPrices(classifyContent);
+  const promoTicker = extractTicker(classifyContent);
+  let promoMessage = null;
+  if (promoTicker && prices.entry_price !== null && prices.target_price !== null) {
+    const gainStr = prices.gain_pct !== null
+      ? '\n💰 Potentiel : **+' + prices.gain_pct + '%**'
+      : '';
+    const stopStr = prices.stop_price !== null
+      ? '\n🛑 Stop : **' + prices.stop_price + '**'
+      : '';
+    promoMessage = [
+      '🔥 **Signal BOOM** — $' + promoTicker,
+      '📊 Entrée : **' + prices.entry_price + '** → Sortie : **' + prices.target_price + '**' + gainStr + stopStr,
+      '👤 Analyste : **' + message.author.username + '**',
+    ].join('\n');
+    console.log('[PROMO] Generated promo message for ' + promoTicker);
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
   try {
     const result = await fetch(MAKE_WEBHOOK_URL, {
       method: 'POST',
@@ -2224,11 +2244,12 @@ client.on('messageCreate', async (message) => {
         signal_type: sendType,
         timestamp: message.createdAt.toISOString(),
         image_url: imageUrl,
-        ticker: extractTicker(classifyContent),
+        ticker: promoTicker,
         is_reply: isReply,
         parent_content: parentContent,
         parent_author: parentAuthor,
-        ...extractPrices(classifyContent)
+        promo_message: promoMessage,
+        ...prices
       }),
     });
     console.log('Sent to Make, status: ' + result.status);

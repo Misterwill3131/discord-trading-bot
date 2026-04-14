@@ -1964,11 +1964,9 @@ async function generateImage(author, content, timestamp) {
     logoEndX = logoX;
   }
 
-  // Time
+  // Time — fuseau EST/EDT (America/New_York)
   const d = timestamp ? new Date(timestamp) : new Date();
-  const hh = d.getHours().toString().padStart(2, '0');
-  const mm = d.getMinutes().toString().padStart(2, '0');
-  const timeStr = hh + ':' + mm;
+  const timeStr = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
   ctx.fillStyle = CONFIG.TIME_COLOR;
   ctx.font = '12px ' + FONT;
   ctx.fillText(timeStr, logoEndX, nameY - 1);

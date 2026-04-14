@@ -5,11 +5,12 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { exec } = require('child_process');
 
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL;
 const TRADING_CHANNEL = process.env.TRADING_CHANNEL || 'trading-floor';
-const PROFITS_CHANNEL_ID = '1241620890953846914';
+const PROFITS_CHANNEL_ID = process.env.PROFITS_CHANNEL_ID || '';
 const PORT = process.env.PORT || 3000;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
@@ -18,38 +19,159 @@ const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || 'boom2024';
 const SESSION_TOKEN = crypto.randomBytes(16).toString('hex');
 
 // ─────────────────────────────────────────────────────────────────────
-//  Persistence par fichiers JSON journaliers (messages-YYYY-MM-DD.json)
+//  DATA_DIR — /data on Railway, __dirname locally
 // ─────────────────────────────────────────────────────────────────────
-const MAX_LOG = 200;
-// Sur Railway, les fichiers sont stockés dans le volume persistant /data
-// En local, on utilise le dossier du projet
-const DATA_DIR = fs.existsSync('/data') ? '/data' : __dirname;
+const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || __dirname;
+
+// ─────────────────────────────────────────────────────────────────────
+//  AUTHOR_ALIASES — canonical display names mapped from Discord usernames
+// ─────────────────────────────────────────────────────────────────────
+const AUTHOR_ALIASES_DEFAULT = {
+  // 'discordUsername': 'DisplayName',
+};
+
+// Load config-overrides.json to merge with hardcoded values
+const CONFIG_OVERRIDES_PATH = path.join(DATA_DIR, 'config-overrides.json');
+function loadConfigOverrides() {
+  try {
+    if (fs.existsSync(CONFIG_OVERRIDES_PATH)) {
+      return JSON.parse(fs.readFileSync(CONFIG_OVERRIDES_PATH, 'utf8'));
+    }
+  } catch (e) {
+    console.error('[config] Failed to load config-overrides.json:', e.message);
+  }
+  return {};
+}
+
+let configOverrides = loadConfigOverrides();
+const AUTHOR_ALIASES = Object.assign({}, AUTHOR_ALIASES_DEFAULT, configOverrides.authorAliases || {});
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function dailyPath(dateKey) {
-  return path.join(DATA_DIR, 'messages-' + dateKey + '.json');
-}
-
 function loadDailyFile(dateKey) {
   try {
-    var p = dailyPath(dateKey);
-    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'));
-  } catch(e) {}
+    const filePath = path.join(DATA_DIR, 'messages-' + dateKey + '.json');
+    if (fs.existsSync(filePath)) {
+      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    }
+  } catch (e) {
+    console.error('[daily] Failed to load messages-' + dateKey + '.json:', e.message);
+  }
   return [];
 }
 
-function saveTodayMessages(msgs) {
+function saveDailyFile(dateKey, messages) {
   try {
-    fs.writeFileSync(dailyPath(todayKey()), JSON.stringify(msgs, null, 2), 'utf8');
-  } catch(e) {}
+    const filePath = path.join(DATA_DIR, 'messages-' + dateKey + '.json');
+    fs.writeFileSync(filePath, JSON.stringify(messages, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[daily] Failed to save messages-' + dateKey + '.json:', e.message);
+  }
 }
 
-function loadInitialMessages() {
-  var today = loadDailyFile(todayKey());
-  return today.slice(0, MAX_LOG);
+// ─────────────────────────────────────────────────────────────────────
+//  Profit counter — profits-YYYY-MM-DD.json
+// ─────────────────────────────────────────────────────────────────────
+const PROFIT_MILESTONES = [10, 25, 50, 100, 150, 200];
+
+function loadProfitData(dateKey) {
+  try {
+    const filePath = path.join(DATA_DIR, 'profits-' + dateKey + '.json');
+    if (fs.existsSync(filePath)) {
+      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    }
+  } catch (e) {
+    console.error('[profits] Failed to load profits-' + dateKey + '.json:', e.message);
+  }
+  return { count: 0, milestones: [] };
+}
+
+function saveProfitData(dateKey, data) {
+  try {
+    const filePath = path.join(DATA_DIR, 'profits-' + dateKey + '.json');
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[profits] Failed to save profits-' + dateKey + '.json:', e.message);
+  }
+}
+
+// Last generated promo image
+let lastPromoImageBuffer = null;
+
+// ─────────────────────────────────────────────────────────────────────
+//  SQLite — persistence des messages avec better-sqlite3
+// ─────────────────────────────────────────────────────────────────────
+let db = null;
+let dbStmtInsert = null;
+let dbStmtAll = null;
+let dbStmtRange = null;
+try {
+  const BetterSqlite3 = require('better-sqlite3');
+  db = new BetterSqlite3(path.join(__dirname, 'signals.db'));
+  db.exec(`CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    ts TEXT,
+    author TEXT,
+    channel TEXT,
+    content TEXT,
+    preview TEXT,
+    passed INTEGER,
+    type TEXT,
+    reason TEXT,
+    confidence REAL,
+    ticker TEXT,
+    is_reply INTEGER,
+    parent_preview TEXT,
+    parent_author TEXT
+  )`);
+  dbStmtInsert = db.prepare(
+    'INSERT OR REPLACE INTO messages (id,ts,author,channel,content,preview,passed,type,reason,confidence,ticker,is_reply,parent_preview,parent_author) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+  );
+  dbStmtAll = db.prepare('SELECT * FROM messages ORDER BY ts DESC LIMIT 200');
+  dbStmtRange = db.prepare('SELECT * FROM messages WHERE ts >= ? AND ts <= ? ORDER BY ts DESC LIMIT 5000');
+  console.log('[sqlite] Database opened at signals.db');
+} catch (e) {
+  console.warn('[sqlite] better-sqlite3 not available, running without SQLite persistence:', e.message);
+}
+
+function dbInsertMessage(entry) {
+  if (!dbStmtInsert) return;
+  try {
+    dbStmtInsert.run(
+      entry.id, entry.ts, entry.author, entry.channel,
+      entry.content, entry.preview,
+      entry.passed ? 1 : 0,
+      entry.type || null, entry.reason || null,
+      entry.confidence != null ? entry.confidence : null,
+      entry.ticker || null,
+      entry.isReply ? 1 : 0,
+      entry.parentPreview || null,
+      entry.parentAuthor || null
+    );
+  } catch (e) {
+    console.error('[sqlite] Insert error:', e.message);
+  }
+}
+
+function dbRowToEntry(row) {
+  return {
+    id: row.id,
+    ts: row.ts,
+    author: row.author,
+    channel: row.channel,
+    content: row.content,
+    preview: row.preview,
+    passed: row.passed === 1,
+    type: row.type,
+    reason: row.reason,
+    confidence: row.confidence,
+    ticker: row.ticker,
+    isReply: row.is_reply === 1,
+    parentPreview: row.parent_preview,
+    parentAuthor: row.parent_author,
+  };
 }
 // ─────────────────────────────────────────────────────────────────────
 
@@ -59,17 +181,14 @@ function loadInitialMessages() {
 const FILTERS_PATH = path.join(__dirname, 'custom-filters.json');
 
 function loadCustomFilters() {
-  const defaults = { blocked: [], allowed: [], blockedAuthors: [], allowedAuthors: [], falsePositiveCounts: {}, allowedChannels: ['trading-floor'] };
   try {
     if (fs.existsSync(FILTERS_PATH)) {
-      const loaded = JSON.parse(fs.readFileSync(FILTERS_PATH, 'utf8'));
-      // Fusionner avec les defaults pour ajouter les nouveaux champs manquants
-      return Object.assign({}, defaults, loaded);
+      return JSON.parse(fs.readFileSync(FILTERS_PATH, 'utf8'));
     }
   } catch (e) {
     console.error('[filters] Failed to load custom-filters.json:', e.message);
   }
-  return defaults;
+  return { blocked: [], allowed: [], blockedAuthors: [], allowedAuthors: [], falsePositiveCounts: {} };
 }
 
 function saveCustomFilters() {
@@ -84,55 +203,15 @@ let customFilters = loadCustomFilters();
 // ─────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────
-//  ALIAS D'AUTEURS — Renomme les usernames Discord pour l'affichage
-//  Format : 'username_discord': 'Nom affiché'
-// ─────────────────────────────────────────────────────────────────────
-const AUTHOR_ALIASES = {
-  'sanibel2026':       'AR',
-  'therealbora':       'Bora',
-  'traderzz1m':        'Z',
-  'viking9496':        'Viking',
-  'legacytrading506':  'Legacy Trading',
-  'rf0496_76497':      'RF',
-  'wulftrader':        'L',
-  'beppels':           'beppels',
-  'gnew123_83101':     'Gaz',
-  'capital__gains':    'CapitalGains',
-  'gblivin141414':     'Michael',
-  'protraderjs':       'ProTrader',
-  'disciplined04':     'THE REVERSAL',
-  'k.str.l':           'kestrel',
-  'the1albatross':     'the1albatross',
-  'thedutchess1':      'thedutchess1',
-};
-function getDisplayName(username) {
-  return AUTHOR_ALIASES[username] || username;
-}
-// ─────────────────────────────────────────────────────────────────────
-
-// ─────────────────────────────────────────────────────────────────────
 //  SECTION AVATARS — Ajouter ici les avatars personnalisés par Discord username
 //  Format : 'NomExact': 'URL_de_l_image'
 //  Si un utilisateur n'est pas dans cette liste, ses initiales seront utilisées.
 // ─────────────────────────────────────────────────────────────────────
-const AV = (f) => path.join(__dirname, 'avatar', f);
 const CUSTOM_AVATARS = {
-  'Z':              AV('z-avatar.jpg'),
-  'AR':             AV('AR_AVATAR.png'),
-  'beppels':        AV('beppels_avatar.png'),
-  'L':              AV('L_avatar.png'),
-  'RF':             AV('RF_AVATAR.png'),
-  'Viking':         AV('Viking_avatar.png'),
-  'ProTrader':      AV('ProTrader_avatar.png'),
-  'Gaz':            AV('Gaz_avatar.png'),
-  'CapitalGains':   AV('CapitalGains_avatar.png'),
-  'THE REVERSAL':   AV('THE REVERSAL_avatar.png'),
-  'kestrel':        AV('kestrel_avatar.png'),
-  'the1albatross':  AV('the1albatross_avatar.png'),
-  'Bora':           AV('Bora_avatar.png'),
-  'Michael':        AV('Michael_avatar.png'),
-  'thedutchess1':   AV('thedutchess1_avatar.png'),
-  'Legacy Trading': AV('Legacy Trading_avatar.png'),
+  'Z': 'https://raw.githubusercontent.com/Misterwill3131/discord-trading-bot/main/z-avatar.jpg',
+  // Ajoutez d'autres utilisateurs ici:
+  // 'Will': 'https://url-de-l-avatar-de-will.jpg',
+  // 'Alex': 'https://url-de-l-avatar-alex.jpg',
 };
 // ─────────────────────────────────────────────────────────────────────
 
@@ -268,9 +347,11 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <h1>🔥 BOOM</h1>
   <a href="/dashboard" class="nav-link active">Dashboard</a>
   <a href="/raw-messages" class="nav-link">Messages bruts</a>
-  <a href="/signals" class="nav-link">Signaux</a>
   <a href="/image-generator" class="nav-link">Image Generator</a>
   <a href="/stats" class="nav-link">Stats</a>
+  <a href="/leaderboard" class="nav-link">Leaderboard</a>
+  <a href="/profits" class="nav-link">Profits</a>
+  <a href="/config" class="nav-link">Config</a>
   <span id="dot"></span>
   <span id="lbl">Connecting…</span>
   <span id="cnt"></span>
@@ -290,21 +371,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   </button>
   <div id="authors-body">
     <div id="authors-list"><span style="color:#80848e;font-size:12px;font-style:italic">Aucun auteur vu pour l&#39;instant</span></div>
-  </div>
-</div>
-
-<div id="channels-panel" style="margin:0 24px 12px;border:1px solid #3f4147;border-radius:6px;overflow:hidden">
-  <button id="channels-toggle" style="width:100%;background:#2b2d31;border:none;color:#dcddde;padding:10px 16px;text-align:left;cursor:pointer;font-size:13px;display:flex;justify-content:space-between;align-items:center;">
-    <span>Salons surveilles : <span id="channels-count">0</span></span>
-    <span id="channels-arrow">&#9658;</span>
-  </button>
-  <div id="channels-body" style="display:none;padding:12px 16px;background:#1e1f22;">
-    <div id="channels-list" style="margin-bottom:10px;display:flex;flex-wrap:wrap;gap:6px;"></div>
-    <div style="display:flex;gap:8px;margin-top:8px;">
-      <input type="text" id="channel-input" placeholder="ex: trading-signals" style="flex:1;background:#2b2d31;border:1px solid #3f4147;border-radius:4px;color:#dcddde;padding:6px 10px;font-size:13px;outline:none;">
-      <button id="channel-add-btn" style="background:#5865f2;border:none;color:#fff;border-radius:4px;padding:6px 14px;font-size:13px;cursor:pointer;font-weight:600;">Ajouter</button>
-    </div>
-    <div style="font-size:11px;color:#80848e;margin-top:6px;">Entrez une partie du nom du salon (sans #). Le bot surveillera tout salon contenant ce texte.</div>
   </div>
 </div>
 
@@ -498,52 +564,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     arrow.textContent=body.classList.contains('open')?'▼':'▶';
   });
 
-  // ── Gestion des salons ────────────────────────────────────────────────────
-  function renderChannels(channels){
-    var list=document.getElementById('channels-list');
-    var cnt=document.getElementById('channels-count');
-    channels=channels||[];
-    cnt.textContent=channels.length;
-    list.innerHTML='';
-    channels.forEach(function(ch){
-      var tag=document.createElement('div');
-      tag.style.cssText='display:inline-flex;align-items:center;gap:6px;background:#2b2d31;border:1px solid #3f4147;border-radius:4px;padding:3px 10px;font-size:13px;';
-      tag.innerHTML='<span style="color:#5865f2;font-weight:600;">#'+esc(ch)+'</span>'
-        +(channels.length>1?'<button data-ch="'+esc(ch)+'" style="background:none;border:none;color:#80848e;cursor:pointer;font-size:14px;line-height:1;padding:0;" title="Supprimer">&#215;</button>':'');
-      list.appendChild(tag);
-    });
-  }
-
-  fetch('/api/custom-filters').then(function(r){return r.json();}).then(function(cf){
-    renderChannels(cf.allowedChannels||['trading-floor']);
-  }).catch(function(){});
-
-  document.getElementById('channels-list').addEventListener('click', function(ev){
-    var btn=ev.target.closest('button[data-ch]');
-    if(!btn) return;
-    var ch=btn.getAttribute('data-ch');
-    fetch('/api/channel-filter',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:ch,action:'remove'})})
-      .then(function(r){return r.json();}).then(function(data){ if(data.ok) renderChannels(data.allowedChannels); })
-      .catch(function(){});
-  });
-
-  document.getElementById('channel-add-btn').addEventListener('click', function(){
-    var input=document.getElementById('channel-input');
-    var ch=input.value.trim().replace(/^#/,'').toLowerCase();
-    if(!ch) return;
-    fetch('/api/channel-filter',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:ch,action:'add'})})
-      .then(function(r){return r.json();}).then(function(data){ if(data.ok){ renderChannels(data.allowedChannels); input.value=''; } })
-      .catch(function(){});
-  });
-
-  document.getElementById('channels-toggle').addEventListener('click', function(){
-    var body=document.getElementById('channels-body');
-    var arrow=document.getElementById('channels-arrow');
-    var open=body.style.display==='block';
-    body.style.display=open?'none':'block';
-    arrow.innerHTML=open?'&#9658;':'&#9660;';
-  });
-
   (function connect(){
     var es=new EventSource('/api/events');
     es.onopen=function(){ dot.className='on'; lbl.textContent='Live'; };
@@ -619,8 +639,6 @@ const LOGIN_HTML = `<!DOCTYPE html>
 </body>
 </html>`;
 
-app.get('/', (req, res) => res.redirect('/dashboard'));
-
 app.get('/login', (req, res) => {
   var cookies = parseCookies(req.headers.cookie);
   if (cookies['boom_session'] === SESSION_TOKEN) return res.redirect('/dashboard');
@@ -642,19 +660,19 @@ app.post('/login', (req, res) => {
 let lastImageBuffer = null;
 let lastImageId = null;
 
-// Cache des images générées — associe un imageId à un Buffer PNG (100 dernières)
-const imageCache = new Map();
-const MAX_IMAGE_CACHE = 100;
-
-const messageLog = loadInitialMessages();
-const sseClients = [];
-
-function storeImage(imageId, buf) {
-  imageCache.set(imageId, buf);
-  if (imageCache.size > MAX_IMAGE_CACHE) {
-    imageCache.delete(imageCache.keys().next().value);
+const MAX_LOG = 200;
+const messageLog = (function loadMessages() {
+  if (db && dbStmtAll) {
+    try {
+      const rows = dbStmtAll.all();
+      return rows.map(dbRowToEntry);
+    } catch (e) {
+      console.error('[sqlite] Failed to load initial messages:', e.message);
+    }
   }
-}
+  return [];
+})();
+const sseClients = [];
 
 function logEvent(author, channel, content, signalType, reason, extra) {
   const entry = {
@@ -667,17 +685,15 @@ function logEvent(author, channel, content, signalType, reason, extra) {
     passed:  signalType !== null,
     type:    signalType,
     reason,
-    confidence:    extra?.confidence    != null ? extra.confidence    : null,
-    ticker:        extra?.ticker        != null ? extra.ticker        : null,
-    isReply:       extra?.isReply       || false,
+    confidence: extra?.confidence != null ? extra.confidence : null,
+    ticker:     extra?.ticker     != null ? extra.ticker     : null,
+    isReply:       extra?.isReply || false,
     parentPreview: extra?.parentPreview || null,
-    parentAuthor:  extra?.parentAuthor  || null,
-    imageId:       extra?.imageId       || null,
-    promoMessage:  extra?.promoMessage  || null,
+    parentAuthor:  extra?.parentAuthor || null,
   };
   messageLog.unshift(entry);
   if (messageLog.length > MAX_LOG) messageLog.pop();
-  saveTodayMessages(messageLog);
+  dbInsertMessage(entry);
   const payload = 'data: ' + JSON.stringify(entry) + '\n\n';
   for (let i = sseClients.length - 1; i >= 0; i--) {
     try { sseClients[i].res.write(payload); } catch (_) { sseClients.splice(i, 1); }
@@ -690,14 +706,6 @@ app.get('/image/latest', (req, res) => {
   res.set('Content-Type', 'image/png');
   res.set('Cache-Control', 'no-cache');
   res.send(lastImageBuffer);
-});
-
-app.get('/image/cache/:id', (req, res) => {
-  const buf = imageCache.get(req.params.id);
-  if (!buf) return res.status(404).json({ error: 'Image not found' });
-  res.set('Content-Type', 'image/png');
-  res.set('Cache-Control', 'public, max-age=3600');
-  res.send(buf);
 });
 
 app.options('/generate-and-store', (req, res) => {
@@ -778,29 +786,38 @@ app.get('/health', async (req, res) => {
 });
 
 app.get('/api/messages', requireAuth, (req, res) => {
-  var from = req.query.from;
-  var to   = req.query.to;
-  var days = req.query.days;
-
-  if (days && parseInt(days) > 1) {
-    var n = Math.min(parseInt(days), 30);
-    var all = [];
-    for (var i = 0; i < n; i++) {
-      var d = new Date();
-      d.setDate(d.getDate() - i);
-      var key = d.toISOString().slice(0, 10);
-      all = all.concat(loadDailyFile(key));
+  var hasFrom = !!req.query.from;
+  var hasTo   = !!req.query.to;
+  if ((hasFrom || hasTo) && db && dbStmtRange) {
+    try {
+      var fromTs = hasFrom ? new Date(req.query.from).toISOString() : '1970-01-01T00:00:00.000Z';
+      var toTs   = hasTo   ? new Date(req.query.to).toISOString()   : new Date().toISOString();
+      if (isNaN(new Date(fromTs).getTime())) fromTs = '1970-01-01T00:00:00.000Z';
+      if (isNaN(new Date(toTs).getTime()))   toTs   = new Date().toISOString();
+      var rows = dbStmtRange.all(fromTs, toTs);
+      return res.json(rows.map(dbRowToEntry));
+    } catch (e) {
+      console.error('[sqlite] Range query error:', e.message);
     }
-    all.sort(function(a, b) { return new Date(b.ts) - new Date(a.ts); });
-    if (from) all = all.filter(function(m) { return m.ts >= from; });
-    if (to)   all = all.filter(function(m) { return m.ts <= to; });
-    return res.json(all);
   }
-
-  // Default: today's messages from in-memory log
-  var msgs = [...messageLog];
-  if (from) msgs = msgs.filter(function(m) { return m.ts >= from; });
-  if (to)   msgs = msgs.filter(function(m) { return m.ts <= to; });
+  if (!hasFrom && !hasTo && db && dbStmtAll) {
+    try {
+      var rows = dbStmtAll.all();
+      return res.json(rows.map(dbRowToEntry));
+    } catch (e) {
+      console.error('[sqlite] All query error:', e.message);
+    }
+  }
+  // Fallback: in-memory log (no SQLite)
+  var msgs = messageLog;
+  if (hasFrom) {
+    var from = new Date(req.query.from).getTime();
+    if (!isNaN(from)) msgs = msgs.filter(function(m) { return new Date(m.ts).getTime() >= from; });
+  }
+  if (hasTo) {
+    var to = new Date(req.query.to).getTime();
+    if (!isNaN(to)) msgs = msgs.filter(function(m) { return new Date(m.ts).getTime() <= to; });
+  }
   res.json(msgs);
 });
 
@@ -887,26 +904,6 @@ app.post('/api/author-filter', requireAuth, (req, res) => {
   saveCustomFilters();
   console.log('[author-filter] action=' + action + ' user=' + u);
   res.json({ ok: true, customFilters });
-});
-
-app.post('/api/channel-filter', requireAuth, (req, res) => {
-  const { channel, action } = req.body || {};
-  if (!channel || !['add', 'remove'].includes(action)) {
-    return res.status(400).json({ error: 'Missing or invalid fields' });
-  }
-  if (!customFilters.allowedChannels) customFilters.allowedChannels = ['trading-floor'];
-  const ch = channel.trim().toLowerCase();
-  if (action === 'add') {
-    if (!customFilters.allowedChannels.includes(ch)) customFilters.allowedChannels.push(ch);
-  } else if (action === 'remove') {
-    if (customFilters.allowedChannels.length <= 1) {
-      return res.status(400).json({ error: 'Vous devez garder au moins un salon' });
-    }
-    customFilters.allowedChannels = customFilters.allowedChannels.filter(c => c !== ch);
-  }
-  saveCustomFilters();
-  console.log('[channel-filter] action=' + action + ' channel=' + ch);
-  res.json({ ok: true, allowedChannels: customFilters.allowedChannels });
 });
 
 app.get('/api/export-csv', requireAuth, (req, res) => {
@@ -1019,9 +1016,11 @@ const IMAGE_GEN_HTML = `<!DOCTYPE html>
   <h1>🔥 BOOM</h1>
   <a href="/dashboard" class="nav-link">Dashboard</a>
   <a href="/raw-messages" class="nav-link">Messages bruts</a>
-  <a href="/signals" class="nav-link">Signaux</a>
   <a href="/image-generator" class="nav-link active">Image Generator</a>
   <a href="/stats" class="nav-link">Stats</a>
+  <a href="/leaderboard" class="nav-link">Leaderboard</a>
+  <a href="/profits" class="nav-link">Profits</a>
+  <a href="/config" class="nav-link">Config</a>
 </header>
 
 <div class="main">
@@ -1323,9 +1322,11 @@ const RAW_MESSAGES_HTML = `<!DOCTYPE html>
   <h1>🔥 BOOM</h1>
   <a href="/dashboard" class="nav-link">Dashboard</a>
   <a href="/raw-messages" class="nav-link active">Messages bruts</a>
-  <a href="/signals" class="nav-link">Signaux</a>
   <a href="/image-generator" class="nav-link">Image Generator</a>
   <a href="/stats" class="nav-link">Stats</a>
+  <a href="/leaderboard" class="nav-link">Leaderboard</a>
+  <a href="/profits" class="nav-link">Profits</a>
+  <a href="/config" class="nav-link">Config</a>
   <span id="dot"></span>
   <span id="lbl">Connecting…</span>
   <span id="cnt"></span>
@@ -1470,76 +1471,6 @@ app.get('/raw-messages', requireAuth, (req, res) => {
   res.send(RAW_MESSAGES_HTML);
 });
 
-app.get('/signals', requireAuth, (req, res) => {
-  res.set('Content-Type', 'text/html');
-  const rows = messageLog
-    .filter(m => m.passed)
-    .map(m => {
-      const ts = new Date(m.ts).toLocaleTimeString('fr-CA', { hour: '2-digit', minute: '2-digit' });
-      const date = new Date(m.ts).toLocaleDateString('fr-CA');
-      const imgTag = m.imageId
-        ? '<img src="/image/cache/' + m.imageId + '" style="max-width:100%;border-radius:6px;margin-top:10px;" loading="lazy">'
-        : '<div style="color:#80848e;font-size:12px;margin-top:8px;">Pas d\'image disponible</div>';
-      const typeBadge = m.type === 'entry'
-        ? '<span style="background:#1e3a2f;color:#3ba55d;border:1px solid #3ba55d44;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;">ENTRY</span>'
-        : m.type === 'exit'
-        ? '<span style="background:#3a1e1e;color:#ed4245;border:1px solid #ed424544;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;">EXIT</span>'
-        : '<span style="background:#2a2e3d;color:#5865f2;border:1px solid #5865f244;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;">NEUTRAL</span>';
-      const promoBlock = m.promoMessage
-        ? '<div style="margin-top:12px;background:#1a1d2e;border:1px solid #5865f244;border-radius:6px;padding:10px 14px;">'
-          + '<div style="font-size:11px;color:#5865f2;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Message Buffer / X</div>'
-          + '<pre style="margin:0;font-family:inherit;font-size:13px;color:#dcddde;white-space:pre-wrap;word-break:break-word;">' + m.promoMessage.replace(/</g,'&lt;') + '</pre>'
-          + '<button onclick="navigator.clipboard.writeText(this.dataset.text)" data-text="' + m.promoMessage.replace(/"/g,'&quot;') + '" style="margin-top:8px;background:#5865f2;border:none;color:#fff;padding:4px 12px;border-radius:4px;font-size:12px;cursor:pointer;">Copier</button>'
-          + '</div>'
-        : '';
-      return '<div style="background:#2b2d31;border:1px solid #3f4147;border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:6px;">'
-        + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">'
-        + typeBadge
-        + '<span style="color:#D649CC;font-weight:700;">' + (m.author || '') + '</span>'
-        + (m.ticker ? '<span style="background:#36393f;color:#faa61a;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:700;">$' + m.ticker + '</span>' : '')
-        + '<span style="color:#80848e;font-size:12px;margin-left:auto;">' + date + ' ' + ts + '</span>'
-        + '</div>'
-        + '<div style="color:#dcddde;font-size:14px;line-height:1.5;">' + (m.content || '').replace(/</g,'&lt;') + '</div>'
-        + imgTag
-        + promoBlock
-        + '</div>';
-    }).join('');
-
-  const html = `<!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Signaux — BOOM</title>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
-  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
-  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
-  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
-  .nav-link:hover { background: #3f4147; color: #dcddde; }
-  .nav-link.active { background: #5865f222; color: #5865f2; }
-  #wrap { padding: 20px 24px; display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; }
-  #empty { padding: 60px 24px; text-align: center; color: #80848e; grid-column: 1/-1; }
-</style>
-</head>
-<body>
-<header>
-  <h1>Signaux</h1>
-  <a href="/dashboard" class="nav-link">Dashboard</a>
-  <a href="/raw-messages" class="nav-link">Messages bruts</a>
-  <a href="/signals" class="nav-link active">Signaux</a>
-  <a href="/stats" class="nav-link">Stats</a>
-  <a href="/image-generator" class="nav-link">Générateur</a>
-</header>
-<div id="wrap">
-  ${rows || '<div id="empty">Aucun signal accepté pour le moment.</div>'}
-</div>
-</body>
-</html>`;
-  res.send(html);
-});
-
 app.get('/image-generator', requireAuth, (req, res) => {
   res.set('Content-Type', 'text/html');
   res.send(IMAGE_GEN_HTML);
@@ -1625,9 +1556,11 @@ const STATS_HTML = `<!DOCTYPE html>
   <h1>&#x1F525; BOOM</h1>
   <a href="/dashboard" class="nav-link">Dashboard</a>
   <a href="/raw-messages" class="nav-link">Messages bruts</a>
-  <a href="/signals" class="nav-link">Signaux</a>
   <a href="/image-generator" class="nav-link">Image Generator</a>
   <a href="/stats" class="nav-link active">Stats</a>
+  <a href="/leaderboard" class="nav-link">Leaderboard</a>
+  <a href="/profits" class="nav-link">Profits</a>
+  <a href="/config" class="nav-link">Config</a>
   <div class="period-btns">
     <button class="btn-period active" id="btn-today" data-period="today">Aujourd&#39;hui</button>
     <button class="btn-period" id="btn-7d" data-period="7d">7 jours</button>
@@ -1660,6 +1593,10 @@ const STATS_HTML = `<!DOCTYPE html>
     <div id="top-tickers"></div>
   </div>
   <div class="card card-full">
+    <div class="card-title">Top 10 tickers — taux de succes</div>
+    <div id="ticker-success-wrap"><span style="color:#80848e;font-size:12px;">Chargement...</span></div>
+  </div>
+  <div class="card card-full">
     <div class="card-title">Performance par auteur</div>
     <div id="author-perf-wrap"><span style="color:#80848e;font-size:12px;">Chargement...</span></div>
   </div>
@@ -1674,10 +1611,16 @@ const STATS_HTML = `<!DOCTYPE html>
 
   var currentPeriod = 'today';
 
-  function periodUrl() {
-    if (currentPeriod === '7d')  return '/api/messages?days=7';
-    if (currentPeriod === '30d') return '/api/messages?days=30';
-    return '/api/messages';
+  function periodFromTs() {
+    var now = new Date();
+    if (currentPeriod === 'today') {
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).toISOString();
+    } else if (currentPeriod === '7d') {
+      return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    } else if (currentPeriod === '30d') {
+      return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    }
+    return null;
   }
 
   function renderBars(containerId, data, color) {
@@ -1792,8 +1735,41 @@ const STATS_HTML = `<!DOCTYPE html>
     }
   }
 
+  function renderTickerSuccess(msgs) {
+    var wrap = document.getElementById('ticker-success-wrap');
+    var tickerStats = {};
+    msgs.forEach(function(m) {
+      if (!m.ticker) return;
+      if (!tickerStats[m.ticker]) tickerStats[m.ticker] = { total: 0, accepted: 0 };
+      tickerStats[m.ticker].total++;
+      if (m.passed) tickerStats[m.ticker].accepted++;
+    });
+    var rows = Object.keys(tickerStats).map(function(t) { return [t, tickerStats[t]]; })
+      .sort(function(a, b) { return b[1].total - a[1].total; }).slice(0, 10);
+    if (!rows.length) { wrap.innerHTML = '<span style="color:#80848e;font-size:12px;">Aucune donnee</span>'; return; }
+    var html = '<table class="perf-table"><thead><tr>'
+      + '<th>#</th><th>Ticker</th><th>Total</th><th>Acceptes</th><th>Filtres</th><th>Taux succes</th>'
+      + '</tr></thead><tbody>';
+    rows.forEach(function(row, i) {
+      var t = row[0], s = row[1];
+      var rate = s.total ? Math.round(s.accepted / s.total * 100) : 0;
+      var barColor = rate >= 50 ? '#3ba55d' : rate >= 25 ? '#faa61a' : '#ed4245';
+      html += '<tr>'
+        + '<td style="color:#80848e;">' + (i + 1) + '</td>'
+        + '<td class="perf-ticker" style="font-weight:700;font-size:13px;">$' + esc(t) + '</td>'
+        + '<td>' + s.total + '</td>'
+        + '<td class="perf-acc">' + s.accepted + '</td>'
+        + '<td class="perf-flt">' + (s.total - s.accepted) + '</td>'
+        + '<td><span class="perf-bar-wrap"><span class="perf-bar-fill" style="width:' + rate + '%;background:' + barColor + ';"></span></span>' + rate + '%</td>'
+        + '</tr>';
+    });
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
+  }
+
   function loadStats() {
-    var url = periodUrl();
+    var fromTs = periodFromTs();
+    var url = '/api/messages' + (fromTs ? '?from=' + encodeURIComponent(fromTs) : '');
     fetch(url)
       .then(function(r){ return r.json(); })
       .then(function(msgs) {
@@ -1832,6 +1808,7 @@ const STATS_HTML = `<!DOCTYPE html>
 
         renderAuthorPerf(msgs);
         renderVolumeChart(msgs);
+        renderTickerSuccess(msgs);
       })
       .catch(function(){ document.getElementById('accept-sub').textContent = 'Erreur de chargement'; });
   }
@@ -1860,12 +1837,532 @@ app.get('/stats', requireAuth, (req, res) => {
   res.send(STATS_HTML);
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log('Server running on port ' + PORT));
+// ─────────────────────────────────────────────────────────────────────
+//  Feature 2: addProfitMessage — profit counter with milestone alerts
+// ─────────────────────────────────────────────────────────────────────
+async function addProfitMessage() {
+  const dateKey = todayKey();
+  const data = loadProfitData(dateKey);
+  if (!data.milestones) data.milestones = [];
+  data.count = (data.count || 0) + 1;
+  saveProfitData(dateKey, data);
 
-async function generateImage(author, content, timestamp, parentAuthor, parentContent) {
-  // Normalise le nom : tag Discord → nom affiché (ex: "therealbora" → "Bora")
-  author = getDisplayName(author);
-  if (parentAuthor) parentAuthor = getDisplayName(parentAuthor);
+  // Check milestones
+  for (const milestone of PROFIT_MILESTONES) {
+    if (data.count >= milestone && !data.milestones.includes(milestone)) {
+      data.milestones.push(milestone);
+      saveProfitData(dateKey, data);
+      // Post to profits channel
+      if (PROFITS_CHANNEL_ID && client) {
+        try {
+          const ch = client.channels.cache.get(PROFITS_CHANNEL_ID);
+          if (ch && ch.send) {
+            await ch.send('🎯 Milestone atteint — **' + milestone + ' profits aujourd\'hui !** 🔥');
+            console.log('[profits] Milestone ' + milestone + ' posted to #profits');
+          }
+        } catch (e) {
+          console.error('[profits] Error posting milestone:', e.message);
+        }
+      }
+    }
+  }
+  return data.count;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  Feature 4a: GET /api/profits-history?days=7
+// ─────────────────────────────────────────────────────────────────────
+app.get('/api/profits-history', requireAuth, (req, res) => {
+  const days = Math.min(parseInt(req.query.days || '7', 10), 90);
+  const result = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateKey = d.toISOString().slice(0, 10);
+    const data = loadProfitData(dateKey);
+    result.push({ date: dateKey, count: data.count || 0 });
+  }
+  res.json(result);
+});
+
+// Expose profit count increment via API (called externally or via Make.com)
+app.post('/api/add-profit', requireAuth, async (req, res) => {
+  try {
+    const count = await addProfitMessage();
+    res.json({ ok: true, count });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+//  Feature 4b: GET /profits — bar chart page
+// ─────────────────────────────────────────────────────────────────────
+const PROFITS_PAGE_HTML = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BOOM Profits</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
+  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
+  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
+  .nav-link:hover { background: #3f4147; color: #dcddde; }
+  .nav-link.active { background: #5865f222; color: #5865f2; }
+  #wrap { padding: 24px; display: flex; flex-direction: column; gap: 28px; }
+  .card { background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px; padding: 20px; }
+  .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #80848e; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; }
+  .period-btns { display: flex; gap: 6px; }
+  .btn-period { background: #1e1f22; border: 1px solid #3f4147; color: #80848e; border-radius: 4px; padding: 4px 12px; cursor: pointer; font-size: 12px; font-weight: 600; }
+  .btn-period:hover { background: #3f4147; color: #dcddde; }
+  .btn-period.active { background: #5865f244; border-color: #5865f2; color: #5865f2; }
+  .chart-wrap { position: relative; height: 220px; }
+  svg.bar-chart { width: 100%; height: 100%; }
+  .bar-chart .bar { fill: #3ba55d; transition: opacity .15s; cursor: default; }
+  .bar-chart .bar:hover { opacity: 0.75; }
+  .bar-chart .axis-label { fill: #80848e; font-size: 11px; font-family: 'Segoe UI', system-ui, sans-serif; }
+  .bar-chart .value-label { fill: #dcddde; font-size: 10px; font-family: 'Segoe UI', system-ui, sans-serif; text-anchor: middle; }
+  .summary-row { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 16px; }
+  .stat-box { background: #1e1f22; border: 1px solid #3f4147; border-radius: 6px; padding: 14px 20px; flex: 1; min-width: 120px; }
+  .stat-box .num { font-size: 30px; font-weight: 800; color: #3ba55d; }
+  .stat-box .lbl { font-size: 12px; color: #80848e; margin-top: 4px; }
+  .btn-add { background: #3ba55d; border: none; color: #fff; border-radius: 4px; padding: 8px 18px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .btn-add:hover { background: #2d8049; }
+</style>
+</head>
+<body>
+<header>
+  <h1>&#x1F525; BOOM</h1>
+  <a href="/dashboard" class="nav-link">Dashboard</a>
+  <a href="/raw-messages" class="nav-link">Messages bruts</a>
+  <a href="/image-generator" class="nav-link">Image Generator</a>
+  <a href="/stats" class="nav-link">Stats</a>
+  <a href="/leaderboard" class="nav-link">Leaderboard</a>
+  <a href="/profits" class="nav-link active">Profits</a>
+  <a href="/config" class="nav-link">Config</a>
+</header>
+<div id="wrap">
+  <div class="card">
+    <div class="card-title">
+      <span>Profits par jour</span>
+      <div class="period-btns">
+        <button class="btn-period active" id="btn-7d" data-days="7">7 jours</button>
+        <button class="btn-period" id="btn-30d" data-days="30">30 jours</button>
+      </div>
+    </div>
+    <div class="chart-wrap">
+      <svg class="bar-chart" id="profit-chart" viewBox="0 0 800 200" preserveAspectRatio="none"></svg>
+    </div>
+    <div class="summary-row" id="summary-row">
+      <div class="stat-box"><div class="num" id="stat-today">—</div><div class="lbl">Aujourd'hui</div></div>
+      <div class="stat-box"><div class="num" id="stat-total">—</div><div class="lbl">Total periode</div></div>
+      <div class="stat-box"><div class="num" id="stat-avg">—</div><div class="lbl">Moyenne / jour</div></div>
+      <div class="stat-box"><div class="num" id="stat-best">—</div><div class="lbl">Meilleur jour</div></div>
+    </div>
+  </div>
+  <div class="card" style="display:flex;align-items:center;gap:16px;">
+    <div style="flex:1;color:#80848e;font-size:13px;">Enregistrer manuellement un profit aujourd'hui</div>
+    <button class="btn-add" id="btn-add-profit">+ Ajouter profit</button>
+    <span id="add-msg" style="font-size:13px;color:#3ba55d;display:none;"></span>
+  </div>
+</div>
+<script>
+(function(){
+  var currentDays = 7;
+
+  function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  function renderChart(data) {
+    var svg = document.getElementById('profit-chart');
+    svg.innerHTML = '';
+    if (!data.length) return;
+    var max = Math.max.apply(null, data.map(function(d){ return d.count; })) || 1;
+    var W = 800, H = 200, padL = 30, padR = 10, padT = 20, padB = 30;
+    var chartW = W - padL - padR;
+    var chartH = H - padT - padB;
+    var barW = Math.floor(chartW / data.length * 0.7);
+    var gap  = Math.floor(chartW / data.length * 0.3);
+
+    // Y axis labels
+    for (var y = 0; y <= 4; y++) {
+      var val = Math.round(max * y / 4);
+      var yPos = padT + chartH - Math.round(chartH * y / 4);
+      var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', padL); line.setAttribute('x2', W - padR);
+      line.setAttribute('y1', yPos); line.setAttribute('y2', yPos);
+      line.setAttribute('stroke', '#3f4147'); line.setAttribute('stroke-width', '1');
+      svg.appendChild(line);
+      var txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      txt.setAttribute('x', padL - 4); txt.setAttribute('y', yPos + 4);
+      txt.setAttribute('class', 'axis-label'); txt.setAttribute('text-anchor', 'end');
+      txt.textContent = val;
+      svg.appendChild(txt);
+    }
+
+    data.forEach(function(d, i) {
+      var slotW = chartW / data.length;
+      var x = padL + i * slotW + (slotW - barW) / 2;
+      var barH = max ? Math.round(chartH * d.count / max) : 0;
+      var y = padT + chartH - barH;
+
+      var rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      rect.setAttribute('class', 'bar');
+      rect.setAttribute('x', x); rect.setAttribute('y', barH ? y : padT + chartH - 1);
+      rect.setAttribute('width', barW); rect.setAttribute('height', barH || 1);
+      rect.setAttribute('rx', '2');
+      if (d.date === new Date().toISOString().slice(0,10)) rect.setAttribute('fill', '#faa61a');
+      var title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      title.textContent = d.date + ': ' + d.count + ' profits';
+      rect.appendChild(title);
+      svg.appendChild(rect);
+
+      if (d.count > 0) {
+        var vt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        vt.setAttribute('class', 'value-label');
+        vt.setAttribute('x', x + barW / 2); vt.setAttribute('y', y - 4);
+        vt.textContent = d.count;
+        svg.appendChild(vt);
+      }
+
+      // X label (MM-DD)
+      var lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      lbl.setAttribute('class', 'axis-label');
+      lbl.setAttribute('x', x + barW / 2); lbl.setAttribute('y', H - 4);
+      lbl.setAttribute('text-anchor', 'middle');
+      lbl.textContent = d.date.slice(5);
+      if (data.length > 14 && i % 2 !== 0) lbl.setAttribute('display', 'none');
+      svg.appendChild(lbl);
+    });
+  }
+
+  function loadData(days) {
+    fetch('/api/profits-history?days=' + days)
+      .then(function(r){ return r.json(); })
+      .then(function(data) {
+        renderChart(data);
+        var today = new Date().toISOString().slice(0,10);
+        var todayEntry = data.find(function(d){ return d.date === today; });
+        var total = data.reduce(function(s,d){ return s + d.count; }, 0);
+        var avg = data.length ? (total / days).toFixed(1) : '0';
+        var best = data.length ? Math.max.apply(null, data.map(function(d){ return d.count; })) : 0;
+        document.getElementById('stat-today').textContent = todayEntry ? todayEntry.count : 0;
+        document.getElementById('stat-total').textContent = total;
+        document.getElementById('stat-avg').textContent = avg;
+        document.getElementById('stat-best').textContent = best;
+      })
+      .catch(function(){ });
+  }
+
+  document.getElementById('btn-7d').addEventListener('click', function(){
+    currentDays = 7;
+    document.querySelectorAll('.btn-period').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-days')==='7'); });
+    loadData(7);
+  });
+  document.getElementById('btn-30d').addEventListener('click', function(){
+    currentDays = 30;
+    document.querySelectorAll('.btn-period').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-days')==='30'); });
+    loadData(30);
+  });
+
+  document.getElementById('btn-add-profit').addEventListener('click', function(){
+    var btn = this;
+    btn.disabled = true;
+    fetch('/api/add-profit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        var msg = document.getElementById('add-msg');
+        msg.textContent = 'Profit #' + data.count + ' enregistre !';
+        msg.style.display = '';
+        setTimeout(function(){ msg.style.display = 'none'; }, 4000);
+        loadData(currentDays);
+        btn.disabled = false;
+      })
+      .catch(function(){ btn.disabled = false; });
+  });
+
+  loadData(7);
+})();
+</script>
+</body>
+</html>`;
+
+app.get('/profits', requireAuth, (req, res) => {
+  res.set('Content-Type', 'text/html');
+  res.send(PROFITS_PAGE_HTML);
+});
+
+// ─────────────────────────────────────────────────────────────────────
+//  Feature 3: GET /leaderboard — 30-day leaderboard
+// ─────────────────────────────────────────────────────────────────────
+const LEADERBOARD_HTML = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BOOM Leaderboard</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
+  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
+  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
+  .nav-link:hover { background: #3f4147; color: #dcddde; }
+  .nav-link.active { background: #5865f222; color: #5865f2; }
+  #wrap { padding: 24px; }
+  .card { background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px; padding: 20px; }
+  .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #80848e; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th { text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #80848e; padding: 0 10px 10px; border-bottom: 1px solid #3f4147; }
+  tbody tr { border-bottom: 1px solid #2b2d31; transition: background .15s; }
+  tbody tr:hover { background: #32353b; }
+  td { padding: 10px 10px; vertical-align: middle; }
+  .rank { font-size: 18px; font-weight: 800; color: #80848e; width: 40px; }
+  .rank-1 { color: #ffd700; }
+  .rank-2 { color: #c0c0c0; }
+  .rank-3 { color: #cd7f32; }
+  .author-name { font-weight: 700; color: #D649CC; font-size: 14px; }
+  .signals-count { font-weight: 700; color: #3ba55d; font-size: 16px; }
+  .ticker-badge { display: inline-block; background: #2a2e3d; border: 1px solid #5865f244; color: #5865f2; border-radius: 4px; padding: 2px 8px; font-size: 12px; font-weight: 600; }
+  .bar-wrap { width: 120px; height: 8px; background: #3f4147; border-radius: 4px; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 6px; }
+  .bar-fill { height: 100%; border-radius: 4px; background: #3ba55d; }
+  .period-note { font-size: 12px; color: #80848e; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>&#x1F525; BOOM</h1>
+  <a href="/dashboard" class="nav-link">Dashboard</a>
+  <a href="/raw-messages" class="nav-link">Messages bruts</a>
+  <a href="/image-generator" class="nav-link">Image Generator</a>
+  <a href="/stats" class="nav-link">Stats</a>
+  <a href="/leaderboard" class="nav-link active">Leaderboard</a>
+  <a href="/profits" class="nav-link">Profits</a>
+  <a href="/config" class="nav-link">Config</a>
+</header>
+<div id="wrap">
+  <div class="card">
+    <div class="card-title">&#x1F3C6; Leaderboard — 30 derniers jours</div>
+    <div class="period-note" id="period-note">Chargement...</div>
+    <div id="leaderboard-wrap"><span style="color:#80848e;font-size:12px;">Chargement...</span></div>
+  </div>
+</div>
+<script>
+(function(){
+  function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  fetch('/api/leaderboard?days=30')
+    .then(function(r){ return r.json(); })
+    .then(function(data) {
+      var wrap = document.getElementById('leaderboard-wrap');
+      var note = document.getElementById('period-note');
+      note.textContent = data.period || '30 derniers jours';
+      if (!data.rows || !data.rows.length) {
+        wrap.innerHTML = '<span style="color:#80848e;font-size:12px;">Aucune donnee sur cette periode</span>';
+        return;
+      }
+      var maxSig = data.rows[0] ? data.rows[0].signals : 1;
+      var html = '<table><thead><tr><th>#</th><th>Analyste</th><th>Signaux acceptes</th><th>Ticker favori</th><th>Progression</th></tr></thead><tbody>';
+      data.rows.forEach(function(row, i) {
+        var rankCls = i === 0 ? 'rank-1' : i === 1 ? 'rank-2' : i === 2 ? 'rank-3' : '';
+        var medal = i === 0 ? '&#x1F947;' : i === 1 ? '&#x1F948;' : i === 2 ? '&#x1F949;' : (i+1);
+        var pct = maxSig ? Math.round(row.signals / maxSig * 100) : 0;
+        html += '<tr>'
+          + '<td class="rank ' + rankCls + '">' + medal + '</td>'
+          + '<td class="author-name">' + esc(row.author) + '</td>'
+          + '<td class="signals-count">' + row.signals + '</td>'
+          + '<td>' + (row.topTicker ? '<span class="ticker-badge">$' + esc(row.topTicker) + '</span>' : '—') + '</td>'
+          + '<td><span class="bar-wrap"><span class="bar-fill" style="width:' + pct + '%;"></span></span>' + pct + '%</td>'
+          + '</tr>';
+      });
+      html += '</tbody></table>';
+      wrap.innerHTML = html;
+    })
+    .catch(function() {
+      document.getElementById('leaderboard-wrap').innerHTML = '<span style="color:#ed4245;font-size:12px;">Erreur de chargement</span>';
+    });
+})();
+</script>
+</body>
+</html>`;
+
+app.get('/leaderboard', requireAuth, (req, res) => {
+  res.set('Content-Type', 'text/html');
+  res.send(LEADERBOARD_HTML);
+});
+
+app.get('/api/leaderboard', requireAuth, (req, res) => {
+  const days = Math.min(parseInt(req.query.days || '30', 10), 90);
+  const authorStats = {};
+  for (let i = 0; i < days; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateKey = d.toISOString().slice(0, 10);
+    // Try daily file first
+    const dailyMsgs = loadDailyFile(dateKey);
+    // Also look at in-memory messageLog for today
+    const msgs = i === 0
+      ? messageLog.filter(function(m) { return m.ts && m.ts.slice(0, 10) === dateKey; })
+      : dailyMsgs;
+    msgs.forEach(function(m) {
+      if (!m.passed || !m.author) return;
+      if (!authorStats[m.author]) authorStats[m.author] = { signals: 0, tickers: {} };
+      authorStats[m.author].signals++;
+      if (m.ticker) {
+        authorStats[m.author].tickers[m.ticker] = (authorStats[m.author].tickers[m.ticker] || 0) + 1;
+      }
+    });
+  }
+  const rows = Object.keys(authorStats).map(function(author) {
+    const s = authorStats[author];
+    let topTicker = null, topCount = 0;
+    Object.keys(s.tickers).forEach(function(t) {
+      if (s.tickers[t] > topCount) { topCount = s.tickers[t]; topTicker = t; }
+    });
+    return { author, signals: s.signals, topTicker };
+  }).sort(function(a, b) { return b.signals - a.signals; });
+
+  const fromDate = new Date();
+  fromDate.setDate(fromDate.getDate() - days + 1);
+  const period = fromDate.toISOString().slice(0, 10) + ' → ' + new Date().toISOString().slice(0, 10);
+  res.json({ rows, period });
+});
+
+// ─────────────────────────────────────────────────────────────────────
+//  Feature 7: GET /config — read-only config display page
+// ─────────────────────────────────────────────────────────────────────
+app.get('/config', requireAuth, (req, res) => {
+  // Reload overrides fresh
+  const overrides = loadConfigOverrides();
+  const aliases = Object.assign({}, AUTHOR_ALIASES_DEFAULT, overrides.authorAliases || {});
+  const channelOverrides = overrides.allowedChannels || [];
+  const safeFilters = {
+    blocked: customFilters.blocked || [],
+    allowed: customFilters.allowed || [],
+    blockedAuthors: customFilters.blockedAuthors || [],
+    allowedAuthors: customFilters.allowedAuthors || [],
+    allowedChannels: customFilters.allowedChannels || [],
+  };
+
+  const configPageHtml = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BOOM Config</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
+  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
+  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
+  .nav-link:hover { background: #3f4147; color: #dcddde; }
+  .nav-link.active { background: #5865f222; color: #5865f2; }
+  #wrap { padding: 24px; display: flex; flex-direction: column; gap: 20px; max-width: 900px; }
+  .card { background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px; padding: 20px; }
+  .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #80848e; margin-bottom: 14px; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th { text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #80848e; padding: 0 8px 8px; border-bottom: 1px solid #3f4147; }
+  tbody tr { border-bottom: 1px solid #2b2d31; }
+  tbody tr:hover { background: #32353b; }
+  td { padding: 7px 8px; font-size: 13px; vertical-align: middle; }
+  .alias-key { font-weight: 700; color: #D649CC; }
+  .alias-val { color: #dcddde; }
+  .tag { display: inline-block; background: #1e1f22; border: 1px solid #3f4147; border-radius: 4px; padding: 2px 8px; font-size: 12px; margin: 3px; }
+  .tag-blocked { border-color: #ed424544; color: #ed4245; background: #3a1e1e; }
+  .tag-allowed { border-color: #3ba55d44; color: #3ba55d; background: #1e3a2f; }
+  .tag-author  { border-color: #D649CC44; color: #D649CC; background: #2a1e2e; }
+  .tag-channel { border-color: #5865f244; color: #5865f2; background: #2a2e3d; }
+  .env-row { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+  .env-key { font-size: 12px; color: #80848e; width: 220px; flex-shrink: 0; }
+  .env-val { font-size: 12px; color: #dcddde; background: #1e1f22; border: 1px solid #3f4147; border-radius: 4px; padding: 4px 10px; flex: 1; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .note { font-size: 12px; color: #80848e; margin-top: 8px; font-style: italic; }
+</style>
+</head>
+<body>
+<header>
+  <h1>&#x1F525; BOOM</h1>
+  <a href="/dashboard" class="nav-link">Dashboard</a>
+  <a href="/raw-messages" class="nav-link">Messages bruts</a>
+  <a href="/image-generator" class="nav-link">Image Generator</a>
+  <a href="/stats" class="nav-link">Stats</a>
+  <a href="/leaderboard" class="nav-link">Leaderboard</a>
+  <a href="/profits" class="nav-link">Profits</a>
+  <a href="/config" class="nav-link active">Config</a>
+</header>
+<div id="wrap">
+  <div class="card">
+    <div class="card-title">Variables d'environnement</div>
+    <div class="env-row"><span class="env-key">TRADING_CHANNEL</span><span class="env-val">${String(process.env.TRADING_CHANNEL || 'trading-floor (defaut)')}</span></div>
+    <div class="env-row"><span class="env-key">PROFITS_CHANNEL_ID</span><span class="env-val">${process.env.PROFITS_CHANNEL_ID ? '*** (defini)' : '— (non defini)'}</span></div>
+    <div class="env-row"><span class="env-key">DASHBOARD_PASSWORD</span><span class="env-val">*** (masque)</span></div>
+    <div class="env-row"><span class="env-key">MAKE_WEBHOOK_URL</span><span class="env-val">${process.env.MAKE_WEBHOOK_URL ? '*** (defini)' : '— (non defini)'}</span></div>
+    <div class="env-row"><span class="env-key">RAILWAY_PUBLIC_DOMAIN</span><span class="env-val">${String(process.env.RAILWAY_PUBLIC_DOMAIN || '— (local)')}</span></div>
+    <div class="note">Les variables d'environnement sont definies dans Railway ou le fichier .env local.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Aliases auteurs (AUTHOR_ALIASES)</div>
+    ${Object.keys(aliases).length === 0
+      ? '<span style="color:#80848e;font-size:12px;font-style:italic">Aucun alias configure — editer config-overrides.json pour en ajouter.</span>'
+      : '<table><thead><tr><th>Username Discord</th><th>Nom affiche</th></tr></thead><tbody>'
+        + Object.keys(aliases).map(function(k) {
+            return '<tr><td class="alias-key">' + k.replace(/</g,'&lt;') + '</td><td class="alias-val">' + String(aliases[k]).replace(/</g,'&lt;') + '</td></tr>';
+          }).join('')
+        + '</tbody></table>'
+    }
+    <div class="note">Editer <code>config-overrides.json</code> dans DATA_DIR pour modifier les aliases.</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Filtres actifs (customFilters)</div>
+    <div style="margin-bottom:12px;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#80848e;margin-bottom:6px;">Phrases bloqu&#233;es (${safeFilters.blocked.length})</div>
+      ${safeFilters.blocked.length ? safeFilters.blocked.map(function(p){ return '<span class="tag tag-blocked">' + p.replace(/</g,'&lt;').substring(0,60) + '</span>'; }).join('') : '<span style="color:#80848e;font-size:12px;font-style:italic">Aucune</span>'}
+    </div>
+    <div style="margin-bottom:12px;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#80848e;margin-bottom:6px;">Phrases autoris&#233;es (${safeFilters.allowed.length})</div>
+      ${safeFilters.allowed.length ? safeFilters.allowed.map(function(p){ return '<span class="tag tag-allowed">' + p.replace(/</g,'&lt;').substring(0,60) + '</span>'; }).join('') : '<span style="color:#80848e;font-size:12px;font-style:italic">Aucune</span>'}
+    </div>
+    <div style="margin-bottom:12px;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#80848e;margin-bottom:6px;">Auteurs bloqu&#233;s (${safeFilters.blockedAuthors.length})</div>
+      ${safeFilters.blockedAuthors.length ? safeFilters.blockedAuthors.map(function(a){ return '<span class="tag tag-blocked">' + a.replace(/</g,'&lt;') + '</span>'; }).join('') : '<span style="color:#80848e;font-size:12px;font-style:italic">Aucun</span>'}
+    </div>
+    <div style="margin-bottom:12px;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#80848e;margin-bottom:6px;">Auteurs autoris&#233;s (${safeFilters.allowedAuthors.length})</div>
+      ${safeFilters.allowedAuthors.length ? safeFilters.allowedAuthors.map(function(a){ return '<span class="tag tag-allowed">' + a.replace(/</g,'&lt;') + '</span>'; }).join('') : '<span style="color:#80848e;font-size:12px;font-style:italic">Aucun</span>'}
+    </div>
+    <div class="note">Modifier les filtres depuis le Dashboard (boutons ✕ ❌ ✅ sur chaque message).</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Canaux de trading autoris&#233;s</div>
+    <span class="tag tag-channel">${String(process.env.TRADING_CHANNEL || 'trading-floor')}</span>
+    ${channelOverrides.map(function(c){ return '<span class="tag tag-channel">' + c.replace(/</g,'&lt;') + '</span>'; }).join('')}
+    <div class="note">Canal principal defini par TRADING_CHANNEL. Canaux additionnels via config-overrides.json.</div>
+  </div>
+</div>
+</body>
+</html>`;
+  res.set('Content-Type', 'text/html');
+  res.send(configPageHtml);
+});
+
+// ─────────────────────────────────────────────────────────────────────
+//  Feature 8: GET /promo-image/latest — serve last promo image
+// ─────────────────────────────────────────────────────────────────────
+app.get('/promo-image/latest', (req, res) => {
+  if (!lastPromoImageBuffer) return res.status(404).json({ error: 'No promo image available' });
+  res.set('Content-Type', 'image/png');
+  res.set('Cache-Control', 'no-cache');
+  res.send(lastPromoImageBuffer);
+});
+
+app.listen(PORT, () => console.log('Server running on port ' + PORT));
+
+async function generateImage(author, content, timestamp) {
   const W = 740;
   const PADDING_V = 18;
   const PADDING_L = 16;
@@ -1881,8 +2378,7 @@ async function generateImage(author, content, timestamp, parentAuthor, parentCon
 
   const LINE_H = 22;
   const NAME_H = 20;
-  const REPLY_H = parentContent ? 22 : 0; // hauteur de la zone reply
-  const H = REPLY_H + PADDING_V + NAME_H + (lines.length * LINE_H) + PADDING_V + 2;
+  const H = PADDING_V + NAME_H + (lines.length * LINE_H) + PADDING_V + 2;
 
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
@@ -1891,44 +2387,9 @@ async function generateImage(author, content, timestamp, parentAuthor, parentCon
   ctx.fillStyle = CONFIG.BG_COLOR;
   ctx.fillRect(0, 0, W, H);
 
-  // ── Reply preview (si réponse) ──────────────────────────────────────────
-  if (parentContent) {
-    const replyX = CONTENT_X;
-    const replyY = 11;
-    const connX  = AVATAR_X + AVATAR_D / 2; // centre de l'avatar
-
-    // Ligne courbe style Discord
-    ctx.strokeStyle = '#4f5660';
-    ctx.lineWidth = 2;
-    ctx.lineJoin = 'round';
-    ctx.lineCap  = 'round';
-    ctx.beginPath();
-    ctx.moveTo(connX, replyY + 2);
-    ctx.quadraticCurveTo(connX, replyY + 10, connX + 12, replyY + 10);
-    ctx.stroke();
-
-    // Nom du parent
-    ctx.font = 'bold 12px ' + FONT;
-    ctx.fillStyle = '#ff79f2';
-    const pName = parentAuthor || 'Unknown';
-    ctx.fillText(pName, replyX, replyY + 10);
-    const pNameW = ctx.measureText(pName).width;
-
-    // Contenu tronqué du parent
-    const maxReplyW = W - replyX - pNameW - 10 - PADDING_L;
-    ctx.font = '12px ' + FONT;
-    ctx.fillStyle = '#80848e';
-    let replyPreview = parentContent.replace(/\n/g, ' ');
-    while (replyPreview.length > 0 && ctx.measureText(replyPreview + '…').width > maxReplyW) {
-      replyPreview = replyPreview.slice(0, -1);
-    }
-    ctx.fillText(replyPreview + (replyPreview.length < parentContent.length ? '…' : ''), replyX + pNameW + 6, replyY + 10);
-  }
-  // ────────────────────────────────────────────────────────────────────────
-
   // ── Avatar ──
   const avatarCX = AVATAR_X + AVATAR_D / 2;
-  const avatarCY = REPLY_H + PADDING_V + NAME_H / 2 + 2;
+  const avatarCY = PADDING_V + NAME_H / 2 + 2;
   const avatarR = AVATAR_D / 2;
 
   // Clip circulaire pour l'avatar
@@ -1939,7 +2400,6 @@ async function generateImage(author, content, timestamp, parentAuthor, parentCon
   ctx.clip();
 
   const customAvatarUrl = CUSTOM_AVATARS[author];
-  console.log('[AVATAR] author="' + author + '" path=' + (customAvatarUrl || 'none') + ' exists=' + (customAvatarUrl ? fs.existsSync(customAvatarUrl) : false));
   if (customAvatarUrl) {
     // Charger et dessiner la photo de profil personnalisée
     try {
@@ -1958,7 +2418,6 @@ async function generateImage(author, content, timestamp, parentAuthor, parentCon
       }
       ctx.drawImage(img, drawX, drawY, drawW, drawH);
     } catch (e) {
-      console.error('[AVATAR] Failed to load "' + customAvatarUrl + '":', e.message);
       // Fallback: cercle blurple avec initiales
       ctx.fillStyle = CONFIG.AVATAR_COLOR;
       ctx.fillRect(avatarCX - avatarR, avatarCY - avatarR, AVATAR_D, AVATAR_D);
@@ -1982,22 +2441,15 @@ async function generateImage(author, content, timestamp, parentAuthor, parentCon
     ctx.textBaseline = 'alphabetic';
   }
 
-  const nameY = REPLY_H + PADDING_V + NAME_H - 3;
+  const nameY = PADDING_V + NAME_H - 3;
 
-  // Username — dégradé pour tous sauf Legacy Trading (rouge)
+  // Username
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = CONFIG.USERNAME_COLOR;
   ctx.font = 'bold 16px ' + FONT;
-  const nameW = ctx.measureText(author || 'Z').width;
-  if (author === 'Legacy Trading') {
-    ctx.fillStyle = '#e84040';
-  } else {
-    const nameGrad = ctx.createLinearGradient(CONTENT_X, 0, CONTENT_X + nameW, 0);
-    nameGrad.addColorStop(0, '#ff79f2');
-    nameGrad.addColorStop(1, '#d649cc');
-    ctx.fillStyle = nameGrad;
-  }
   ctx.fillText(author || 'Z', CONTENT_X, nameY);
+  const nameW = ctx.measureText(author || 'Z').width;
 
   // tag_boom.png — remplace le badge dessiné
   const TAG_H = 18;
@@ -2039,9 +2491,11 @@ async function generateImage(author, content, timestamp, parentAuthor, parentCon
     logoEndX = logoX;
   }
 
-  // Time — fuseau EST/EDT (America/New_York)
+  // Time
   const d = timestamp ? new Date(timestamp) : new Date();
-  const timeStr = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
+  const hh = d.getHours().toString().padStart(2, '0');
+  const mm = d.getMinutes().toString().padStart(2, '0');
+  const timeStr = hh + ':' + mm;
   ctx.fillStyle = CONFIG.TIME_COLOR;
   ctx.font = '12px ' + FONT;
   ctx.fillText(timeStr, logoEndX, nameY - 1);
@@ -2075,6 +2529,101 @@ function wrapText(ctx, text, maxWidth) {
   }
   if (current) lines.push(current);
   return lines.length ? lines : [''];
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  Feature 8: generatePromoImage — 1080x1080 square for X/Instagram
+// ─────────────────────────────────────────────────────────────────────
+async function generatePromoImage(ticker, gainPct, entryPrice, targetPrice) {
+  const W = 1080, H = 1080;
+  const canvas = createCanvas(W, H);
+  const ctx = canvas.getContext('2d');
+
+  // Background
+  ctx.fillStyle = '#1e1f22';
+  ctx.fillRect(0, 0, W, H);
+
+  // Subtle gradient overlay (top stripe)
+  const grad = ctx.createLinearGradient(0, 0, W, 0);
+  grad.addColorStop(0, '#2a1e3a');
+  grad.addColorStop(0.5, '#1a2a3a');
+  grad.addColorStop(1, '#1a3a2a');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, 180);
+
+  // Top left: BOOM branding
+  ctx.fillStyle = '#D649CC';
+  ctx.font = 'bold 28px ' + FONT;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  ctx.fillText('🔥 BOOM', 60, 50);
+
+  // Try to draw logo
+  try {
+    const logoImg = await loadImage(path.join(__dirname, 'logo_boom.png'));
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(60 + 20, 50 + 20 + 40, 22, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(logoImg, 60, 110, 44, 44);
+    ctx.restore();
+  } catch(e) {}
+
+  // Ticker — centered, large gradient text
+  const tickerDisplay = ticker ? '$' + ticker.toUpperCase() : '$???';
+  const tickerGrad = ctx.createLinearGradient(W / 2 - 200, 0, W / 2 + 200, 0);
+  tickerGrad.addColorStop(0, '#D649CC');
+  tickerGrad.addColorStop(1, '#5865f2');
+  ctx.font = 'bold 160px ' + FONT;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = tickerGrad;
+  ctx.fillText(tickerDisplay, W / 2, 350);
+
+  // Gain percentage — large green
+  const gainStr = gainPct != null
+    ? (gainPct >= 0 ? '+' : '') + gainPct.toFixed(0) + '%'
+    : '';
+  if (gainStr) {
+    ctx.font = 'bold 200px ' + FONT;
+    ctx.fillStyle = gainPct >= 0 ? '#3ba55d' : '#ed4245';
+    ctx.textAlign = 'center';
+    ctx.fillText(gainStr, W / 2, 580);
+  }
+
+  // Entry → Target prices
+  if (entryPrice != null && targetPrice != null) {
+    ctx.font = '48px ' + FONT;
+    ctx.fillStyle = '#b5bac1';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const priceStr = '$' + entryPrice + '  →  $' + targetPrice;
+    ctx.fillText(priceStr, W / 2, 760);
+  }
+
+  // Separator line
+  ctx.strokeStyle = '#3f4147';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(80, 860);
+  ctx.lineTo(W - 80, 860);
+  ctx.stroke();
+
+  // Bottom: discord.gg link
+  ctx.font = '32px ' + FONT;
+  ctx.fillStyle = '#80848e';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('discord.gg/templeofboom', W / 2, 960);
+
+  // Bottom right: date
+  ctx.font = '22px ' + FONT;
+  ctx.fillStyle = '#3f4147';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'bottom';
+  ctx.fillText(new Date().toISOString().slice(0, 10), W - 60, H - 40);
+
+  return canvas.toBuffer('image/png');
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -2140,21 +2689,6 @@ function extractPrices(content) {
   // exit_price kept for backward compat
   return { entry_price: entry, target_price: target, stop_price: stop, exit_price: target, gain_pct };
 }
-
-// ─────────────────────────────────────────────────────────────────────
-//  cleanContent — Supprime les codes Discord bruts du contenu
-//  Ex: <@123456789> → ""   <:greatcall:140988...> → ""   <#channelid> → ""
-// ─────────────────────────────────────────────────────────────────────
-function cleanContent(text) {
-  if (!text) return '';
-  return text
-    .replace(/<a?:[a-zA-Z0-9_]+:[0-9]+>/g, '')   // emojis custom :nom:
-    .replace(/<@!?[0-9]+>/g, '')                   // mentions @user
-    .replace(/<#[0-9]+>/g, '')                     // mentions #channel
-    .replace(/<@&[0-9]+>/g, '')                    // mentions @role
-    .replace(/\s{2,}/g, ' ')                       // espaces multiples
-    .trim();
-}
 // ─────────────────────────────────────────────────────────────────────
 
 function extractTicker(content) {
@@ -2205,15 +2739,6 @@ function classifySignal(content) {
   const blocked = ['news', 'sec', 'ipo', 'offering', 'halted', 'form 8-k', 'reverse stock split'];
   for (const b of blocked) {
     if (lower.includes(b)) return { type: null, reason: 'Blocked keyword', confidence: 95, ticker };
-  }
-
-  // 4. Messages recap/bilan — résumé de trades passés, pas un signal
-  const isRecap = /^recap[:\s]/i.test(content.trim())
-    || /let[''']?s get ready/i.test(content)
-    || (content.match(/\$[A-Z]{1,6}\s+\d+%/g) || []).length >= 3; // 3+ lignes "$TICK XX%"
-  if (isRecap) {
-    console.log('[FILTER] Recap/broadcast ignored: ' + content.substring(0, 60));
-    return { type: null, reason: 'Recap ou broadcast', confidence: 95, ticker };
   }
   // REQUIS: ticker ($TSLA, AAPL, NCT...)
   const hasTicker = /\$[A-Z]{1,6}/i.test(content) || /\b[A-Z]{2,5}\b/.test(content);
@@ -2304,23 +2829,61 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
 });
 
+// ─────────────────────────────────────────────────────────────────────
+//  Feature 6: Auto backup to GitHub at midnight EDT
+// ─────────────────────────────────────────────────────────────────────
+let lastBackupDate = null;
+const backupLog = [];
+
+function runGitBackup() {
+  const dateKey = todayKey();
+  const dataGlob = path.join(DATA_DIR, '*.json').replace(/\\/g, '/');
+  const cmd = 'git -C "' + __dirname.replace(/\\/g, '/') + '" add "' + dataGlob + '" && git -C "' + __dirname.replace(/\\/g, '/') + '" commit -m "Auto backup data ' + dateKey + '" --allow-empty && git -C "' + __dirname.replace(/\\/g, '/') + '" push';
+  console.log('[backup] Running git backup for ' + dateKey);
+  exec(cmd, function(err, stdout, stderr) {
+    const entry = {
+      date: new Date().toISOString(),
+      success: !err,
+      stdout: (stdout || '').trim().substring(0, 300),
+      stderr: (stderr || '').trim().substring(0, 300),
+      error: err ? err.message : null,
+    };
+    backupLog.unshift(entry);
+    if (backupLog.length > 30) backupLog.pop();
+    if (err) {
+      console.error('[backup] Git backup failed:', err.message);
+    } else {
+      console.log('[backup] Git backup success:', stdout.trim().substring(0, 100));
+    }
+  });
+}
+
 client.once('ready', () => {
   console.log('Bot connected as ' + client.user.tag);
   console.log('Listening for channels containing: ' + TRADING_CHANNEL);
-  // Log tous les salons texte visibles par le bot
-  const textChannels = client.channels.cache.filter(ch => ch.type === 0);
-  console.log('Salons visibles par le bot (' + textChannels.size + ') :');
-  textChannels.forEach(ch => console.log('  - "' + ch.name + '" (guild: ' + (ch.guild ? ch.guild.name : '?') + ')'));
 
-  // Verification toutes les minutes pour le resume a 18h00
+  // Verification toutes les minutes pour le resume a 18h00 et backup midnight EDT
   setInterval(function() {
     const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
+
+    // Resume journalier a 18h00 heure locale
     if (now.getHours() === 18 && now.getMinutes() === 0) {
-      const todayStr = now.toISOString().slice(0, 10);
       if (lastSummaryDate !== todayStr) {
         lastSummaryDate = todayStr;
         sendDailySummary();
       }
+    }
+
+    // Backup a minuit EDT (UTC-4 en ete, UTC-5 en hiver)
+    // Minuit EDT = 04:00 UTC en ete, 05:00 UTC en hiver
+    // On essaie les deux: 04:00 et 05:00 UTC
+    const utcH = now.getUTCHours();
+    const utcM = now.getUTCMinutes();
+    const isMidnightEDT = (utcH === 4 || utcH === 5) && utcM === 0;
+    if (isMidnightEDT && lastBackupDate !== todayStr) {
+      lastBackupDate = todayStr;
+      runGitBackup();
     }
   }, 60000);
 });
@@ -2328,19 +2891,63 @@ client.once('ready', () => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   const channelName = message.channel.name || '';
-  const channelId   = message.channel.id   || '';
-  console.log('Message received - channel: "' + channelName + '" (id:' + channelId + '), author: ' + message.author.username);
-  const allowedChannels = (customFilters.allowedChannels && customFilters.allowedChannels.length > 0)
-    ? customFilters.allowedChannels
-    : [TRADING_CHANNEL];
-  const channelAllowed = allowedChannels.some(ch => channelName.toLowerCase().includes(ch.toLowerCase()));
-  if (!channelAllowed) {
-    console.log('[SKIP] Channel "' + channelName + '" not in allowed list: ' + JSON.stringify(allowedChannels));
+  console.log('Message received - channel: "' + channelName + '", author: ' + message.author.username);
+  if (!channelName.includes(TRADING_CHANNEL)) return;
+
+  const content = message.content;
+  const authorName = message.author.username;
+
+  // ── Feature 1: Discord commands !top and !stats TICKER ─────────────────────
+  if (content.trim() === '!top') {
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    const todayMsgs = messageLog.filter(function(m) { return m.passed && new Date(m.ts) >= midnight; });
+    const authorMap = {};
+    todayMsgs.forEach(function(m) {
+      if (m.author) authorMap[m.author] = (authorMap[m.author] || 0) + 1;
+    });
+    const top = Object.keys(authorMap).map(function(k) { return [k, authorMap[k]]; })
+      .sort(function(a, b) { return b[1] - a[1]; }).slice(0, 3);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const medals = ['1.', '2.', '3.'];
+    const lines = ['**🏆 Top analystes du jour — ' + dateStr + '**'];
+    if (!top.length) {
+      lines.push('> Aucun signal accepte aujourd\'hui');
+    } else {
+      top.forEach(function(t, i) {
+        lines.push('> ' + medals[i] + ' **' + t[0] + '** — ' + t[1] + ' signal' + (t[1] > 1 ? 's' : ''));
+      });
+    }
+    try { await message.reply(lines.join('\n')); } catch(e) { console.error('[!top]', e.message); }
     return;
   }
 
-  const content = cleanContent(message.content);
-  const authorName = getDisplayName(message.author.username);
+  const statsMatch = content.trim().match(/^!stats\s+([A-Z$]{1,7})/i);
+  if (statsMatch) {
+    const ticker = statsMatch[1].replace('$', '').toUpperCase();
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    const todayMsgs = messageLog.filter(function(m) { return new Date(m.ts) >= midnight && m.ticker && m.ticker.toUpperCase() === ticker; });
+    const total = todayMsgs.length;
+    const accepted = todayMsgs.filter(function(m) { return m.passed; }).length;
+    const filtered = total - accepted;
+    const authorMap = {};
+    todayMsgs.filter(function(m) { return m.passed; }).forEach(function(m) {
+      if (m.author) authorMap[m.author] = (authorMap[m.author] || 0) + 1;
+    });
+    const topAuthors = Object.keys(authorMap).map(function(k) { return k + ' (' + authorMap[k] + ')'; })
+      .sort(function(a, b) { return authorMap[b.split(' ')[0]] - authorMap[a.split(' ')[0]]; });
+    const authorStr = topAuthors.length ? topAuthors.join(', ') : 'Aucun';
+    const lines = [
+      '**📈 Stats $' + ticker + ' — aujourd\'hui**',
+      '> Signaux : ' + total,
+      '> Acceptés : ' + accepted + ' | Filtrés : ' + filtered,
+      '> Auteurs : ' + authorStr,
+    ];
+    try { await message.reply(lines.join('\n')); } catch(e) { console.error('[!stats]', e.message); }
+    return;
+  }
+  // ───────────────────────────────────────────────────────────────────────────
 
   // ── Filtre par auteur ──────────────────────────────────────────────────────
   if ((customFilters.blockedAuthors || []).includes(authorName)) {
@@ -2397,68 +3004,43 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // ── Message promotionnel Buffer / X (Twitter) ────────────────────────────
-  const prices = extractPrices(classifyContent);
-  const promoTicker = extractTicker(classifyContent);
-  let promoMessage = null;
-  if (promoTicker && prices.entry_price !== null && prices.target_price !== null) {
-    const t   = '$' + promoTicker;
-    const gain = prices.gain_pct !== null ? '+' + prices.gain_pct + '%' : null;
-    const range = prices.entry_price + ' → ' + prices.target_price;
-    const link = 'https://discord.gg/templeofboom';
-    const formats = gain ? [
-      // Format 1 — simple
-      t + ' ' + gain + ' with guidance\n\n' + link,
-      // Format 2 — fire
-      '🔥 ' + t + ' ' + gain + '\nAnother clean signal.\n\nJoin the community 👇\n' + link,
-      // Format 3 — entry/exit detail
-      'We called ' + t + '.\nEntry: ' + prices.entry_price + ' → Exit: ' + prices.target_price + '\n' + gain + ' 💰\n\n' + link,
-      // Format 4 — social proof
-      t + ' ' + gain + ' ✅\nSignals like this every day.\n' + link,
-      // Format 5 — community
-      t + ' just delivered ' + gain + ' 🎯\nTemple of Boom members were ready.\n\n' + link,
-      // Format 6 — proper alerts
-      t + ' ' + gain + ' with guidance.\n\nNo WW. No eyes emoji. No watch it.\n\nProper alerts only with guidance.\n\n' + link,
-      // Format 7 — about to give
-      t + ' about to give us ' + gain + '\n\n' + link,
-    ] : [
-      // Sans gain %
-      t + ' ' + range + ' with guidance\n\n' + link,
-      '🔥 ' + t + ' setup: ' + range + '\n\nJoin the community 👇\n' + link,
-      'We called ' + t + ' at ' + prices.entry_price + ' 🎯\nTarget: ' + prices.target_price + '\n\n' + link,
-      t + ' with guidance.\n\nNo WW. No eyes emoji. No watch it.\n\nProper alerts only with guidance.\n\n' + link,
-    ];
-    promoMessage = formats[Math.floor(Math.random() * formats.length)];
-    console.log('[PROMO] ' + promoMessage.split('\n')[0]);
+  if (!filterType && authorAllowed) {
+    // Filtré par le contenu MAIS auteur autorisé → on logue passed:false (stats honnêtes)
+    // mais on continue quand même pour envoyer le signal
+    console.log('[AUTHOR ALLOWED bypass] ' + authorName + ': ' + content.substring(0, 60));
+    logEvent(authorName, channelName, content, null, 'Auteur autorise (contenu filtre)', extraWithSignal);
+    // on ne return pas : on envoie quand même l'image/webhook
+  } else {
+    // Filtre passé normalement
+    logEvent(authorName, channelName, content, filterType, filterReason, extraWithSignal);
   }
-  // ──────────────────────────────────────────────────────────────────────────
+  const sendType = filterType || 'neutral';
+  console.log('[' + sendType.toUpperCase() + ']' + (isReply ? ' [REPLY]' : '') + ' ' + content);
 
-  // ── Génération image ──────────────────────────────────────────────────────
   let imageUrl = null;
-  let msgImageId = null;
   try {
-    const imgBuf = await generateImage(authorName, content, message.createdAt.toISOString(), parentAuthor, parentContent);
+    const imgBuf = await generateImage(message.author.username, content, message.createdAt.toISOString());
     lastImageBuffer = imgBuf;
     lastImageId = Date.now();
-    msgImageId = String(lastImageId);
-    storeImage(msgImageId, imgBuf);
-    imageUrl = RAILWAY_URL + '/image/cache/' + msgImageId;
+    imageUrl = RAILWAY_URL + '/image/latest?t=' + lastImageId;
     console.log('Image generated, URL: ' + imageUrl);
   } catch (err) {
     console.error('Image generation error:', err.message);
   }
-  // ──────────────────────────────────────────────────────────────────────────
 
-  const extraFull = Object.assign({}, extraWithSignal, { imageId: msgImageId, promoMessage });
-
-  if (!filterType && authorAllowed) {
-    console.log('[AUTHOR ALLOWED bypass] ' + authorName + ': ' + content.substring(0, 60));
-    logEvent(authorName, channelName, content, null, 'Auteur autorise (contenu filtre)', extraFull);
-  } else {
-    logEvent(authorName, channelName, content, filterType, filterReason, extraFull);
+  // Feature 8: Generate promo image for complete signals (has ticker + prices)
+  const pricesData = extractPrices(classifyContent);
+  let promoImageBase64 = null;
+  if (signalTicker && pricesData.entry_price != null && pricesData.target_price != null) {
+    try {
+      const promoBuf = await generatePromoImage(signalTicker, pricesData.gain_pct, pricesData.entry_price, pricesData.target_price);
+      lastPromoImageBuffer = promoBuf;
+      promoImageBase64 = promoBuf.toString('base64');
+      console.log('[promo] Promo image generated for $' + signalTicker);
+    } catch (err) {
+      console.error('[promo] Promo image error:', err.message);
+    }
   }
-  const sendType = filterType || 'neutral';
-  console.log('[' + sendType.toUpperCase() + ']' + (isReply ? ' [REPLY]' : '') + ' ' + content);
 
   try {
     const result = await fetch(MAKE_WEBHOOK_URL, {
@@ -2466,17 +3048,17 @@ client.on('messageCreate', async (message) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         content,
-        author: authorName,
+        author: message.author.username,
         channel: channelName,
         signal_type: sendType,
         timestamp: message.createdAt.toISOString(),
         image_url: imageUrl,
-        ticker: promoTicker,
+        ticker: extractTicker(classifyContent),
         is_reply: isReply,
         parent_content: parentContent,
         parent_author: parentAuthor,
-        promo_message: promoMessage,
-        ...prices
+        promo_image_base64: promoImageBase64,
+        ...pricesData
       }),
     });
     console.log('Sent to Make, status: ' + result.status);
@@ -2498,100 +3080,5 @@ function roundRect(ctx, x, y, width, height, radius) {
   ctx.quadraticCurveTo(x, y, x + radius, y);
   ctx.closePath();
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  📊 COMPTEUR DE PROFITS — Salon #profits (ID: PROFITS_CHANNEL_ID)
-// ═══════════════════════════════════════════════════════════════════════════
-
-function profitsPath(dateKey) {
-  return path.join(DATA_DIR, 'profits-' + dateKey + '.json');
-}
-
-function loadProfitsDay(dateKey) {
-  try {
-    const p = profitsPath(dateKey);
-    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'));
-  } catch(e) {}
-  return { count: 0, messages: [] };
-}
-
-function saveProfitsDay(dateKey, data) {
-  try {
-    fs.writeFileSync(profitsPath(dateKey), JSON.stringify(data, null, 2), 'utf8');
-  } catch(e) { console.error('[profits] save error:', e.message); }
-}
-
-// Compte le nombre de trades individuels dans un message
-// Chaque ligne avec un range de prix (ex: .34-.55, 1.23-3.21) = 1 profit
-function countProfitEntries(content) {
-  if (!content || !content.trim()) return 1; // image sans texte = 1 profit
-  const priceRange = /\.?\d+(?:\.\d+)?\s*[-–]\s*\.?\d+(?:\.\d+)?/;
-  const lines = content.split('\n').map(function(l) { return l.trim(); }).filter(function(l) { return l.length > 0; });
-  const count = lines.filter(function(l) { return priceRange.test(l); }).length;
-  return count > 0 ? count : 1; // au moins 1 si image présente
-}
-
-function addProfitMessage(author, content) {
-  const key     = todayKey();
-  const data    = loadProfitsDay(key);
-  const entries = countProfitEntries(content);
-  data.count   += entries;
-  data.messages.push({ ts: new Date().toISOString(), author: getDisplayName(author), content, entries });
-  saveProfitsDay(key, data);
-  console.log('[PROFITS] +' + entries + ' → total today: ' + data.count + ' (author: ' + getDisplayName(author) + ')');
-  return data.count;
-}
-
-// Écoute les messages du salon #profits — compte uniquement les messages avec image
-client.on('messageCreate', async (message) => {
-  if (message.author.bot) return;
-  if (message.channel.id !== PROFITS_CHANNEL_ID) return;
-  const hasImage = message.attachments.some(a => a.contentType && a.contentType.startsWith('image/'));
-  if (!hasImage) return;
-  addProfitMessage(message.author.username, message.content);
-});
-
-// Commande !bilan — réponse dans n'importe quel salon
-client.on('messageCreate', async (message) => {
-  if (message.author.bot) return;
-  if (!message.content.toLowerCase().startsWith('!bilan')) return;
-  const key  = todayKey();
-  const data = loadProfitsDay(key);
-  const now  = new Date().toLocaleString('fr-CA', { timeZone: 'America/New_York' });
-  try {
-    await message.reply(
-      '📊 **Bilan profits du jour** — ' + key + '\n' +
-      '> Posts de profit publiés : **' + data.count + '**\n' +
-      '> Heure EDT : ' + now
-    );
-  } catch(e) { console.error('[!bilan] reply error:', e.message); }
-});
-
-// Post automatique à 20h00 EDT
-let lastProfitSummaryDate = null;
-setInterval(function() {
-  const now = new Date();
-  const edtHour = parseInt(now.toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'America/New_York' }), 10);
-  const edtMin  = parseInt(now.toLocaleString('en-US', { minute: 'numeric', timeZone: 'America/New_York' }), 10);
-  const todayStr = todayKey();
-  if (edtHour === 20 && edtMin === 0 && lastProfitSummaryDate !== todayStr) {
-    lastProfitSummaryDate = todayStr;
-    const data = loadProfitsDay(todayStr);
-    const channel = client.channels.cache.get(PROFITS_CHANNEL_ID);
-    if (channel && channel.send) {
-      channel.send(
-        '📊 **Bilan profits du jour** — ' + todayStr + '\n' +
-        '> Nos membres ont partagé **' + data.count + '** post' + (data.count > 1 ? 's' : '') + ' de profit aujourd\'hui 🔥\n' +
-        '> Continuez comme ça ! 💰'
-      ).then(function() {
-        console.log('[profits] Bilan journalier posté — ' + data.count + ' profits');
-      }).catch(function(e) {
-        console.error('[profits] Erreur post bilan:', e.message);
-      });
-    } else {
-      console.warn('[profits] Channel introuvable pour le bilan journalier');
-    }
-  }
-}, 60000);
 
 client.login(DISCORD_TOKEN);

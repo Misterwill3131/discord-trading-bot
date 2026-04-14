@@ -2065,6 +2065,21 @@ function extractPrices(content) {
   // exit_price kept for backward compat
   return { entry_price: entry, target_price: target, stop_price: stop, exit_price: target, gain_pct };
 }
+
+// ─────────────────────────────────────────────────────────────────────
+//  cleanContent — Supprime les codes Discord bruts du contenu
+//  Ex: <@123456789> → ""   <:greatcall:140988...> → ""   <#channelid> → ""
+// ─────────────────────────────────────────────────────────────────────
+function cleanContent(text) {
+  if (!text) return '';
+  return text
+    .replace(/<a?:[a-zA-Z0-9_]+:[0-9]+>/g, '')   // emojis custom :nom:
+    .replace(/<@!?[0-9]+>/g, '')                   // mentions @user
+    .replace(/<#[0-9]+>/g, '')                     // mentions #channel
+    .replace(/<@&[0-9]+>/g, '')                    // mentions @role
+    .replace(/\s{2,}/g, ' ')                       // espaces multiples
+    .trim();
+}
 // ─────────────────────────────────────────────────────────────────────
 
 function extractTicker(content) {
@@ -2249,7 +2264,7 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  const content = message.content;
+  const content = cleanContent(message.content);
   const authorName = getDisplayName(message.author.username);
 
   // ── Filtre par auteur ──────────────────────────────────────────────────────

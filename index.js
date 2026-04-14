@@ -2213,23 +2213,16 @@ client.on('messageCreate', async (message) => {
     console.error('Image generation error:', err.message);
   }
 
-  // ── Message promotionnel Discord ──────────────────────────────────────────
+  // ── Message promotionnel Buffer / X (Twitter) ────────────────────────────
   const prices = extractPrices(classifyContent);
   const promoTicker = extractTicker(classifyContent);
   let promoMessage = null;
   if (promoTicker && prices.entry_price !== null && prices.target_price !== null) {
-    const gainStr = prices.gain_pct !== null
-      ? '\n💰 Potentiel : **+' + prices.gain_pct + '%**'
-      : '';
-    const stopStr = prices.stop_price !== null
-      ? '\n🛑 Stop : **' + prices.stop_price + '**'
-      : '';
-    promoMessage = [
-      '🔥 **Signal BOOM** — $' + promoTicker,
-      '📊 Entrée : **' + prices.entry_price + '** → Sortie : **' + prices.target_price + '**' + gainStr + stopStr,
-      '👤 Analyste : **' + message.author.username + '**',
-    ].join('\n');
-    console.log('[PROMO] Generated promo message for ' + promoTicker);
+    const gainLine = prices.gain_pct !== null
+      ? '$' + promoTicker + ' +' + prices.gain_pct + '% with guidance'
+      : '$' + promoTicker + ' ' + prices.entry_price + ' → ' + prices.target_price + ' with guidance';
+    promoMessage = gainLine + '\n\nhttps://discord.gg/templeofboom';
+    console.log('[PROMO] ' + gainLine);
   }
   // ──────────────────────────────────────────────────────────────────────────
 

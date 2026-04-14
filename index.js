@@ -63,7 +63,7 @@ function loadCustomFilters() {
   } catch (e) {
     console.error('[filters] Failed to load custom-filters.json:', e.message);
   }
-  return { blocked: [], allowed: [], blockedAuthors: [], allowedAuthors: [], falsePositiveCounts: {} };
+  return { blocked: [], allowed: [], blockedAuthors: [], allowedAuthors: [], falsePositiveCounts: {}, allowedChannels: ['trading-floor'] };
 }
 
 function saveCustomFilters() {
@@ -243,6 +243,21 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   </button>
   <div id="authors-body">
     <div id="authors-list"><span style="color:#80848e;font-size:12px;font-style:italic">Aucun auteur vu pour l&#39;instant</span></div>
+  </div>
+</div>
+
+<div id="channels-panel" style="margin:0 24px 12px;border:1px solid #3f4147;border-radius:6px;overflow:hidden">
+  <button id="channels-toggle" style="width:100%;background:#2b2d31;border:none;color:#dcddde;padding:10px 16px;text-align:left;cursor:pointer;font-size:13px;display:flex;justify-content:space-between;align-items:center;">
+    <span>Salons surveilles : <span id="channels-count">0</span></span>
+    <span id="channels-arrow">&#9658;</span>
+  </button>
+  <div id="channels-body" style="display:none;padding:12px 16px;background:#1e1f22;">
+    <div id="channels-list" style="margin-bottom:10px;display:flex;flex-wrap:wrap;gap:6px;"></div>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <input type="text" id="channel-input" placeholder="ex: trading-signals" style="flex:1;background:#2b2d31;border:1px solid #3f4147;border-radius:4px;color:#dcddde;padding:6px 10px;font-size:13px;outline:none;">
+      <button id="channel-add-btn" style="background:#5865f2;border:none;color:#fff;border-radius:4px;padding:6px 14px;font-size:13px;cursor:pointer;font-weight:600;">Ajouter</button>
+    </div>
+    <div style="font-size:11px;color:#80848e;margin-top:6px;">Entrez une partie du nom du salon (sans #). Le bot surveillera tout salon contenant ce texte.</div>
   </div>
 </div>
 
@@ -434,6 +449,52 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     var arrow=document.getElementById('authors-arrow');
     body.classList.toggle('open');
     arrow.textContent=body.classList.contains('open')?'▼':'▶';
+  });
+
+  // ── Gestion des salons ────────────────────────────────────────────────────
+  function renderChannels(channels){
+    var list=document.getElementById('channels-list');
+    var cnt=document.getElementById('channels-count');
+    channels=channels||[];
+    cnt.textContent=channels.length;
+    list.innerHTML='';
+    channels.forEach(function(ch){
+      var tag=document.createElement('div');
+      tag.style.cssText='display:inline-flex;align-items:center;gap:6px;background:#2b2d31;border:1px solid #3f4147;border-radius:4px;padding:3px 10px;font-size:13px;';
+      tag.innerHTML='<span style="color:#5865f2;font-weight:600;">#'+esc(ch)+'</span>'
+        +(channels.length>1?'<button data-ch="'+esc(ch)+'" style="background:none;border:none;color:#80848e;cursor:pointer;font-size:14px;line-height:1;padding:0;" title="Supprimer">&#215;</button>':'');
+      list.appendChild(tag);
+    });
+  }
+
+  fetch('/api/custom-filters').then(function(r){return r.json();}).then(function(cf){
+    renderChannels(cf.allowedChannels||['trading-floor']);
+  }).catch(function(){});
+
+  document.getElementById('channels-list').addEventListener('click', function(ev){
+    var btn=ev.target.closest('button[data-ch]');
+    if(!btn) return;
+    var ch=btn.getAttribute('data-ch');
+    fetch('/api/channel-filter',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:ch,action:'remove'})})
+      .then(function(r){return r.json();}).then(function(data){ if(data.ok) renderChannels(data.allowedChannels); })
+      .catch(function(){});
+  });
+
+  document.getElementById('channel-add-btn').addEventListener('click', function(){
+    var input=document.getElementById('channel-input');
+    var ch=input.value.trim().replace(/^#/,'').toLowerCase();
+    if(!ch) return;
+    fetch('/api/channel-filter',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:ch,action:'add'})})
+      .then(function(r){return r.json();}).then(function(data){ if(data.ok){ renderChannels(data.allowedChannels); input.value=''; } })
+      .catch(function(){});
+  });
+
+  document.getElementById('channels-toggle').addEventListener('click', function(){
+    var body=document.getElementById('channels-body');
+    var arrow=document.getElementById('channels-arrow');
+    var open=body.style.display==='block';
+    body.style.display=open?'none':'block';
+    arrow.innerHTML=open?'&#9658;':'&#9660;';
   });
 
   (function connect(){
@@ -756,6 +817,26 @@ app.post('/api/author-filter', requireAuth, (req, res) => {
   saveCustomFilters();
   console.log('[author-filter] action=' + action + ' user=' + u);
   res.json({ ok: true, customFilters });
+});
+
+app.post('/api/channel-filter', requireAuth, (req, res) => {
+  const { channel, action } = req.body || {};
+  if (!channel || !['add', 'remove'].includes(action)) {
+    return res.status(400).json({ error: 'Missing or invalid fields' });
+  }
+  if (!customFilters.allowedChannels) customFilters.allowedChannels = ['trading-floor'];
+  const ch = channel.trim().toLowerCase();
+  if (action === 'add') {
+    if (!customFilters.allowedChannels.includes(ch)) customFilters.allowedChannels.push(ch);
+  } else if (action === 'remove') {
+    if (customFilters.allowedChannels.length <= 1) {
+      return res.status(400).json({ error: 'Vous devez garder au moins un salon' });
+    }
+    customFilters.allowedChannels = customFilters.allowedChannels.filter(c => c !== ch);
+  }
+  saveCustomFilters();
+  console.log('[channel-filter] action=' + action + ' channel=' + ch);
+  res.json({ ok: true, allowedChannels: customFilters.allowedChannels });
 });
 
 app.get('/api/export-csv', requireAuth, (req, res) => {
@@ -2031,7 +2112,11 @@ client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   const channelName = message.channel.name || '';
   console.log('Message received - channel: "' + channelName + '", author: ' + message.author.username);
-  if (!channelName.includes(TRADING_CHANNEL)) return;
+  const allowedChannels = (customFilters.allowedChannels && customFilters.allowedChannels.length > 0)
+    ? customFilters.allowedChannels
+    : [TRADING_CHANNEL];
+  const channelAllowed = allowedChannels.some(ch => channelName.includes(ch));
+  if (!channelAllowed) return;
 
   const content = message.content;
   const authorName = message.author.username;

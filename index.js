@@ -3103,7 +3103,14 @@ async function pollFinancialJuice() {
         'Accept': 'application/rss+xml, application/xml, text/xml, */*',
       }
     });
-    if (!res.ok) { console.error('[news] RSS fetch failed:', res.status); return; }
+    if (!res.ok) {
+      if (res.status === 429) {
+        console.error('[news] Rate limited (429) — waiting for cooldown');
+      } else {
+        console.error('[news] RSS fetch failed:', res.status);
+      }
+      return;
+    }
     const xml = await res.text();
     const items = parseRssItems(xml);
 
@@ -3121,6 +3128,9 @@ async function pollFinancialJuice() {
       fjSeenGuids.add(i.guid); // Mark all as seen even if filtered
       return isNewsRelevant(i);
     });
+    if (newItems.length > 0) {
+      console.log('[news] ' + newItems.length + ' new — ' + relevantItems.length + ' relevant, ' + (newItems.length - relevantItems.length) + ' filtered out');
+    }
     if (!relevantItems.length) return;
 
     const channel = client.channels.cache.get(NEWS_CHANNEL_ID);

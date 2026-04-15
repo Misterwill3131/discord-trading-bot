@@ -1441,6 +1441,254 @@ app.get('/preview', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
+//  Proof Generator: /proof-generator + /api/find-alert + /api/proof-image
+// ─────────────────────────────────────────────────────────────────────
+
+// Find original entry alert for a ticker in message history (last 90 days)
+app.get('/api/find-alert', requireAuth, (req, res) => {
+  const ticker = (req.query.ticker || '').toUpperCase().replace('$', '');
+  const days = Math.min(parseInt(req.query.days || '30', 10), 90);
+  if (!ticker) return res.json({ alerts: [] });
+
+  const alerts = [];
+  for (let i = 0; i < days; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateKey = d.toISOString().slice(0, 10);
+    const msgs = i === 0
+      ? messageLog.filter(m => m.ts && m.ts.slice(0, 10) === dateKey)
+      : loadDailyFile(dateKey);
+    msgs.forEach(m => {
+      if (!m.passed || !m.ticker) return;
+      if (m.ticker.toUpperCase() !== ticker) return;
+      alerts.push({
+        id: m.id,
+        ts: m.ts,
+        author: m.author,
+        content: m.content || m.preview || '',
+        ticker: m.ticker,
+        type: m.type,
+      });
+    });
+  }
+  // Newest first
+  alerts.sort((a, b) => (b.ts || '') < (a.ts || '') ? -1 : 1);
+  res.json({ ticker, alerts: alerts.slice(0, 20) });
+});
+
+// Generate proof image
+app.get('/api/proof-image', requireAuth, async (req, res) => {
+  try {
+    const { alertAuthor, alertContent, alertTs, recapAuthor, recapContent, recapTs } = req.query;
+    if (!alertContent || !recapContent) return res.status(400).json({ error: 'Missing params' });
+    const buf = await generateProofImage(
+      alertAuthor || 'Unknown', alertContent, alertTs,
+      recapAuthor || 'Unknown', recapContent, recapTs
+    );
+    res.set('Content-Type', 'image/png');
+    res.set('Cache-Control', 'no-cache');
+    res.send(buf);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+const PROOF_GEN_HTML = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BOOM Proof Generator</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
+  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
+  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
+  .nav-link:hover { background: #3f4147; color: #dcddde; }
+  .nav-link.active { background: #5865f222; color: #5865f2; }
+  #wrap { padding: 24px; display: flex; gap: 24px; max-width: 1200px; flex-wrap: wrap; }
+  .panel { background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px; padding: 20px; flex: 1; min-width: 320px; }
+  .panel-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #80848e; margin-bottom: 14px; }
+  label { font-size: 12px; color: #b5bac1; display: block; margin-bottom: 5px; margin-top: 12px; }
+  input, textarea, select { width: 100%; background: #1e1f22; border: 1px solid #3f4147; border-radius: 4px; color: #dcddde; padding: 8px 10px; font-size: 13px; font-family: inherit; }
+  input:focus, textarea:focus { outline: none; border-color: #5865f2; }
+  textarea { resize: vertical; min-height: 70px; }
+  .btn { background: #5865f2; color: #fff; border: none; border-radius: 4px; padding: 10px 20px; cursor: pointer; font-size: 13px; font-weight: 600; width: 100%; margin-top: 16px; }
+  .btn:hover { background: #4752c4; }
+  .btn-sm { background: #3ba55d22; border: 1px solid #3ba55d44; color: #3ba55d; border-radius: 4px; padding: 5px 12px; cursor: pointer; font-size: 12px; font-weight: 600; width: auto; margin-top: 0; }
+  .btn-sm:hover { background: #3ba55d44; }
+  .alert-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; max-height: 300px; overflow-y: auto; }
+  .alert-item { background: #1e1f22; border: 1px solid #3f4147; border-radius: 4px; padding: 8px 10px; cursor: pointer; transition: border-color .15s; }
+  .alert-item:hover { border-color: #5865f2; }
+  .alert-item.selected { border-color: #3ba55d; background: #1a3a2a; }
+  .alert-author { font-weight: 700; color: #D649CC; font-size: 12px; }
+  .alert-content { font-size: 13px; color: #dcddde; margin-top: 3px; }
+  .alert-ts { font-size: 11px; color: #80848e; margin-top: 2px; }
+  .alert-type { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 3px; margin-left: 6px; }
+  .type-entry { background: #1a3a2a; color: #3ba55d; }
+  .type-neutral { background: #1a2a3a; color: #5865f2; }
+  #preview-wrap { background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px; padding: 20px; flex: 0 0 100%; }
+  #preview-wrap img { max-width: 100%; border-radius: 6px; display: block; margin: 0 auto; }
+  .search-row { display: flex; gap: 8px; align-items: flex-end; }
+  .search-row input { flex: 1; }
+  #status { font-size: 12px; color: #80848e; margin-top: 8px; min-height: 16px; }
+  .download-btn { background: #3ba55d; color: #fff; border: none; border-radius: 4px; padding: 8px 20px; cursor: pointer; font-size: 13px; font-weight: 600; margin-top: 12px; display: none; }
+  .download-btn:hover { background: #2d7d46; }
+</style>
+</head>
+<body>
+<header>
+  <h1>&#x1F525; BOOM</h1>
+  <a href="/dashboard" class="nav-link">Dashboard</a>
+  <a href="/image-generator" class="nav-link">Image Generator</a>
+  <a href="/proof-generator" class="nav-link active">Proof Generator</a>
+  <a href="/stats" class="nav-link">Stats</a>
+  <a href="/leaderboard" class="nav-link">Leaderboard</a>
+  <a href="/profits" class="nav-link">Profits</a>
+  <a href="/news" class="nav-link">News</a>
+  <a href="/config" class="nav-link">Config</a>
+</header>
+<div id="wrap">
+  <!-- Left: Alert search -->
+  <div class="panel">
+    <div class="panel-title">1. Trouver l'alerte originale</div>
+    <div class="search-row">
+      <div style="flex:1;">
+        <label>Ticker</label>
+        <input id="ticker-input" type="text" placeholder="TSLA" maxlength="10">
+      </div>
+      <button class="btn-sm" id="search-btn" style="margin-bottom:1px;">Chercher</button>
+    </div>
+    <div id="status"></div>
+    <div id="alert-list" class="alert-list"></div>
+    <div style="margin-top:14px;border-top:1px solid #3f4147;padding-top:14px;">
+      <div class="panel-title" style="margin-bottom:8px;">Alerte sélectionnée</div>
+      <label>Analyste</label>
+      <input id="alert-author" type="text" placeholder="AR">
+      <label>Message</label>
+      <textarea id="alert-content" placeholder="$TSLA 150.00 entry..."></textarea>
+      <label>Date/Heure</label>
+      <input id="alert-ts" type="datetime-local">
+    </div>
+  </div>
+
+  <!-- Right: Recap message -->
+  <div class="panel">
+    <div class="panel-title">2. Message recap (résultat)</div>
+    <label>Analyste</label>
+    <input id="recap-author" type="text" placeholder="Z">
+    <label>Message</label>
+    <textarea id="recap-content" placeholder="$TSLA 150.00-155.00 🔥"></textarea>
+    <label>Date/Heure</label>
+    <input id="recap-ts" type="datetime-local">
+    <button class="btn" id="generate-btn">🖼️ Générer l'image proof</button>
+  </div>
+
+  <!-- Preview -->
+  <div id="preview-wrap" style="display:none;">
+    <div class="panel-title">Aperçu</div>
+    <img id="preview-img" src="" alt="proof image">
+    <a id="download-link" style="display:none;"><button class="download-btn" id="dl-btn" style="display:block;">⬇️ Télécharger</button></a>
+  </div>
+</div>
+<script>
+(function(){
+  function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function fmtTs(ts){
+    if(!ts) return '';
+    var d = new Date(ts);
+    var pad = n => String(n).padStart(2,'0');
+    return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+  }
+
+  var selectedAlert = null;
+
+  document.getElementById('search-btn').addEventListener('click', function(){
+    var ticker = document.getElementById('ticker-input').value.trim().toUpperCase().replace('$','');
+    if(!ticker) return;
+    document.getElementById('status').textContent = 'Recherche...';
+    document.getElementById('alert-list').innerHTML = '';
+    fetch('/api/find-alert?ticker='+encodeURIComponent(ticker)+'&days=30')
+      .then(function(r){return r.json();})
+      .then(function(data){
+        var alerts = data.alerts || [];
+        document.getElementById('status').textContent = alerts.length + ' alerte(s) trouvée(s)';
+        if(!alerts.length){
+          document.getElementById('alert-list').innerHTML = '<div style="color:#80848e;font-size:12px;padding:8px;">Aucune alerte trouvée pour ' + esc(ticker) + '</div>';
+          return;
+        }
+        var html = '';
+        alerts.forEach(function(a, i){
+          var typeHtml = a.type ? '<span class="alert-type type-'+(a.type||'neutral')+'">'+esc(a.type)+'</span>' : '';
+          var d = new Date(a.ts);
+          var dateStr = d.toLocaleDateString('fr-CA') + ' ' + d.toLocaleTimeString('fr-CA',{hour:'2-digit',minute:'2-digit'});
+          html += '<div class="alert-item" data-idx="'+i+'">'
+            + '<div class="alert-author">'+esc(a.author)+typeHtml+'</div>'
+            + '<div class="alert-content">'+esc(a.content)+'</div>'
+            + '<div class="alert-ts">'+dateStr+'</div>'
+            + '</div>';
+        });
+        document.getElementById('alert-list').innerHTML = html;
+        // Store alerts for click
+        window._alerts = alerts;
+        document.querySelectorAll('.alert-item').forEach(function(el){
+          el.addEventListener('click', function(){
+            document.querySelectorAll('.alert-item').forEach(function(e){e.classList.remove('selected');});
+            el.classList.add('selected');
+            var idx = parseInt(el.getAttribute('data-idx'));
+            var a = window._alerts[idx];
+            document.getElementById('alert-author').value = a.author || '';
+            document.getElementById('alert-content').value = a.content || '';
+            document.getElementById('alert-ts').value = fmtTs(a.ts);
+          });
+        });
+      })
+      .catch(function(){ document.getElementById('status').textContent = 'Erreur de recherche'; });
+  });
+
+  document.getElementById('ticker-input').addEventListener('keydown', function(e){
+    if(e.key === 'Enter') document.getElementById('search-btn').click();
+  });
+
+  document.getElementById('generate-btn').addEventListener('click', function(){
+    var alertAuthor = document.getElementById('alert-author').value.trim();
+    var alertContent = document.getElementById('alert-content').value.trim();
+    var alertTs = document.getElementById('alert-ts').value;
+    var recapAuthor = document.getElementById('recap-author').value.trim();
+    var recapContent = document.getElementById('recap-content').value.trim();
+    var recapTs = document.getElementById('recap-ts').value;
+
+    if(!alertContent || !recapContent){ alert('Remplis les deux messages.'); return; }
+
+    var params = new URLSearchParams({
+      alertAuthor, alertContent, recapAuthor, recapContent,
+      alertTs: alertTs ? new Date(alertTs).toISOString() : new Date().toISOString(),
+      recapTs: recapTs ? new Date(recapTs).toISOString() : new Date().toISOString(),
+    });
+    var url = '/api/proof-image?' + params.toString();
+    var img = document.getElementById('preview-img');
+    img.src = url;
+    img.onload = function(){
+      document.getElementById('preview-wrap').style.display = '';
+      var link = document.getElementById('download-link');
+      link.href = url;
+      link.download = 'proof-' + (recapAuthor||'boom') + '.png';
+      link.style.display = '';
+    };
+    img.onerror = function(){ alert('Erreur génération image'); };
+  });
+})();
+</script>
+</body>
+</html>`;
+
+app.get('/proof-generator', requireAuth, (req, res) => {
+  res.set('Content-Type', 'text/html');
+  res.send(PROOF_GEN_HTML);
+});
+
+// ─────────────────────────────────────────────────────────────────────
 //  Page Statistiques /stats
 // ─────────────────────────────────────────────────────────────────────
 const STATS_HTML = `<!DOCTYPE html>
@@ -3010,6 +3258,217 @@ function wrapText(ctx, text, maxWidth) {
   }
   if (current) lines.push(current);
   return lines.length ? lines : [''];
+}
+
+// ─────────────────────────────────────────────────────────────────────
+//  generateProofImage — composite: original alert + recap proof
+// ─────────────────────────────────────────────────────────────────────
+async function drawMessageBlock(ctx, author, content, timestamp, yStart, W, label, labelColor) {
+  const PADDING_V = 14;
+  const PADDING_L = 16;
+  const AVATAR_D = 40;
+  const AVATAR_X = PADDING_L;
+  const CONTENT_X = PADDING_L + AVATAR_D + 16;
+  const MAX_TW = W - CONTENT_X - PADDING_L;
+  const LINE_H = 22;
+  const NAME_H = 20;
+  const FONT = 'gg sans, Segoe UI, Arial, sans-serif';
+
+  // Label badge (ORIGINAL ALERT or RESULT)
+  const labelH = 22;
+  ctx.fillStyle = labelColor + '22';
+  const labelW = ctx.measureText(label).width + 24;
+  ctx.beginPath();
+  ctx.roundRect(PADDING_L, yStart + 4, labelW, labelH, 4);
+  ctx.fill();
+  ctx.fillStyle = labelColor;
+  ctx.font = 'bold 11px ' + FONT;
+  ctx.textAlign = 'left';
+  ctx.fillText(label, PADDING_L + 12, yStart + 4 + labelH / 2 + 4);
+
+  const blockY = yStart + labelH + 10;
+
+  // Avatar
+  const avatarCX = AVATAR_X + AVATAR_D / 2;
+  const avatarCY = blockY + PADDING_V + NAME_H / 2 + 2;
+  const avatarR = AVATAR_D / 2;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(avatarCX, avatarCY, avatarR, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.clip();
+  const customAvatarUrl = CUSTOM_AVATARS[author];
+  if (customAvatarUrl) {
+    try {
+      const img = await loadImage(customAvatarUrl);
+      const size = AVATAR_D;
+      const imgRatio = img.width / img.height;
+      let drawW = size, drawH = size;
+      let drawX = avatarCX - avatarR, drawY = avatarCY - avatarR;
+      if (imgRatio > 1) { drawW = size * imgRatio; drawX = avatarCX - drawW / 2; }
+      else { drawH = size / imgRatio; drawY = avatarCY - drawH / 2; }
+      ctx.drawImage(img, drawX, drawY, drawW, drawH);
+    } catch (e) {
+      ctx.fillStyle = '#5865f2';
+      ctx.fillRect(avatarCX - avatarR, avatarCY - avatarR, AVATAR_D, AVATAR_D);
+    }
+  } else {
+    ctx.fillStyle = '#5865f2';
+    ctx.fillRect(avatarCX - avatarR, avatarCY - avatarR, AVATAR_D, AVATAR_D);
+  }
+  ctx.restore();
+
+  if (!customAvatarUrl) {
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 14px ' + FONT;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText((author || '?').slice(0, 2).toUpperCase(), avatarCX, avatarCY);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+  }
+
+  const nameY = blockY + PADDING_V + NAME_H - 3;
+  ctx.font = 'bold 16px ' + FONT;
+  const nameW = ctx.measureText(author || '?').width;
+  if (author === 'Legacy Trading') {
+    ctx.fillStyle = '#e84040';
+  } else {
+    const nameGrad = ctx.createLinearGradient(CONTENT_X, 0, CONTENT_X + nameW, 0);
+    nameGrad.addColorStop(0, '#ff79f2');
+    nameGrad.addColorStop(1, '#d649cc');
+    ctx.fillStyle = nameGrad;
+  }
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(author || '?', CONTENT_X, nameY);
+
+  // Time
+  const d = timestamp ? new Date(timestamp) : new Date();
+  const timeStr = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
+  ctx.fillStyle = '#72767d';
+  ctx.font = '12px ' + FONT;
+  ctx.fillText(timeStr, CONTENT_X + nameW + 10, nameY - 1);
+
+  // Content
+  const tmpC = createCanvas(W, 400);
+  const tmpCtx = tmpC.getContext('2d');
+  tmpCtx.font = '16px ' + FONT;
+  const lines = wrapText(tmpCtx, content, MAX_TW);
+  ctx.fillStyle = '#dcddde';
+  ctx.font = '16px ' + FONT;
+  let ty = nameY + LINE_H;
+  for (const line of lines) {
+    ctx.fillText(line, CONTENT_X, ty);
+    ty += LINE_H;
+  }
+
+  const blockHeight = labelH + 10 + PADDING_V + NAME_H + lines.length * LINE_H + PADDING_V;
+  return blockHeight;
+}
+
+async function generateProofImage(alertAuthor, alertContent, alertTimestamp, recapAuthor, recapContent, recapTimestamp) {
+  alertAuthor = getDisplayName(alertAuthor);
+  recapAuthor = getDisplayName(recapAuthor);
+
+  const W = 740;
+  const FONT = 'gg sans, Segoe UI, Arial, sans-serif';
+
+  // Measure heights
+  const tmpC = createCanvas(W, 1000);
+  const tmpCtx = tmpC.getContext('2d');
+  tmpCtx.font = '16px ' + FONT;
+  const CONTENT_X = 16 + 40 + 16;
+  const MAX_TW = W - CONTENT_X - 16;
+  const LINE_H = 22;
+  const LABEL_H = 32;
+  const PADDING_V = 14;
+  const NAME_H = 20;
+
+  const alertLines = wrapText(tmpCtx, alertContent, MAX_TW);
+  const recapLines = wrapText(tmpCtx, recapContent, MAX_TW);
+
+  const blockH = (lines) => LABEL_H + PADDING_V + NAME_H + lines.length * LINE_H + PADDING_V;
+  const alertH = blockH(alertLines);
+  const recapH = blockH(recapLines);
+  const DIVIDER_H = 44;
+  const HEADER_H = 52;
+  const FOOTER_H = 50;
+
+  const H = HEADER_H + alertH + DIVIDER_H + recapH + FOOTER_H;
+  const canvas = createCanvas(W, H);
+  const ctx = canvas.getContext('2d');
+
+  // Background
+  ctx.fillStyle = '#1e1f22';
+  ctx.fillRect(0, 0, W, H);
+
+  // Header gradient
+  const headerGrad = ctx.createLinearGradient(0, 0, W, 0);
+  headerGrad.addColorStop(0, '#2a1e3a');
+  headerGrad.addColorStop(1, '#1a2a3a');
+  ctx.fillStyle = headerGrad;
+  ctx.fillRect(0, 0, W, HEADER_H);
+
+  // Header: BOOM branding
+  try {
+    const logoImg = await loadImage(path.join(__dirname, 'logo_boom.png'));
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(26, HEADER_H / 2, 18, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+    ctx.drawImage(logoImg, 8, HEADER_H / 2 - 18, 36, 36);
+    ctx.restore();
+  } catch (e) {}
+  ctx.fillStyle = '#D649CC';
+  ctx.font = 'bold 20px ' + FONT;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('BOOM', 52, HEADER_H / 2);
+  ctx.fillStyle = '#80848e';
+  ctx.font = '13px ' + FONT;
+  ctx.fillText('Trade Proof  •  discord.gg/templeofboom', 52 + ctx.measureText('BOOM').width + 14, HEADER_H / 2);
+  ctx.textBaseline = 'alphabetic';
+
+  // Alert block
+  let y = HEADER_H + 8;
+  await drawMessageBlock(ctx, alertAuthor, alertContent, alertTimestamp, y, W, '📣  ORIGINAL ALERT', '#3ba55d');
+
+  // Divider with arrow
+  y += alertH;
+  ctx.strokeStyle = '#3f4147';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(40, y + DIVIDER_H / 2);
+  ctx.lineTo(W - 40, y + DIVIDER_H / 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#3ba55d';
+  ctx.font = 'bold 22px ' + FONT;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('↓', W / 2, y + DIVIDER_H / 2);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+
+  // Recap block
+  y += DIVIDER_H;
+  await drawMessageBlock(ctx, recapAuthor, recapContent, recapTimestamp, y, W, '✅  RESULT', '#faa61a');
+
+  // Footer
+  y = H - FOOTER_H;
+  ctx.fillStyle = '#2b2d31';
+  ctx.fillRect(0, y, W, FOOTER_H);
+  ctx.fillStyle = '#4f545c';
+  ctx.font = '13px ' + FONT;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('discord.gg/templeofboom', W / 2, y + FOOTER_H / 2);
+
+  return canvas.toBuffer('image/png');
 }
 
 // ─────────────────────────────────────────────────────────────────────

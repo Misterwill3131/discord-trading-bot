@@ -327,6 +327,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <a href="/dashboard" class="nav-link active">Dashboard</a>
   <a href="/raw-messages" class="nav-link">Messages bruts</a>
   <a href="/image-generator" class="nav-link">Image Generator</a>
+  <a href="/proof-generator" class="nav-link">Proof Generator</a>
   <a href="/stats" class="nav-link">Stats</a>
   <a href="/leaderboard" class="nav-link">Leaderboard</a>
   <a href="/profits" class="nav-link">Profits</a>
@@ -1271,6 +1272,7 @@ const RAW_MESSAGES_HTML = `<!DOCTYPE html>
   <a href="/dashboard" class="nav-link">Dashboard</a>
   <a href="/raw-messages" class="nav-link active">Messages bruts</a>
   <a href="/image-generator" class="nav-link">Image Generator</a>
+  <a href="/proof-generator" class="nav-link">Proof Generator</a>
   <a href="/stats" class="nav-link">Stats</a>
   <a href="/leaderboard" class="nav-link">Leaderboard</a>
   <a href="/profits" class="nav-link">Profits</a>
@@ -2317,6 +2319,7 @@ const PROFITS_PAGE_HTML = `<!DOCTYPE html>
   <a href="/dashboard" class="nav-link">Dashboard</a>
   <a href="/raw-messages" class="nav-link">Messages bruts</a>
   <a href="/image-generator" class="nav-link">Image Generator</a>
+  <a href="/proof-generator" class="nav-link">Proof Generator</a>
   <a href="/stats" class="nav-link">Stats</a>
   <a href="/leaderboard" class="nav-link">Leaderboard</a>
   <a href="/profits" class="nav-link active">Profits</a>
@@ -2531,6 +2534,7 @@ const NEWS_PAGE_HTML = `<!DOCTYPE html>
   <a href="/dashboard" class="nav-link">Dashboard</a>
   <a href="/raw-messages" class="nav-link">Messages bruts</a>
   <a href="/image-generator" class="nav-link">Image Generator</a>
+  <a href="/proof-generator" class="nav-link">Proof Generator</a>
   <a href="/stats" class="nav-link">Stats</a>
   <a href="/leaderboard" class="nav-link">Leaderboard</a>
   <a href="/profits" class="nav-link">Profits</a>
@@ -2722,6 +2726,7 @@ const LEADERBOARD_HTML = `<!DOCTYPE html>
   <a href="/dashboard" class="nav-link">Dashboard</a>
   <a href="/raw-messages" class="nav-link">Messages bruts</a>
   <a href="/image-generator" class="nav-link">Image Generator</a>
+  <a href="/proof-generator" class="nav-link">Proof Generator</a>
   <a href="/stats" class="nav-link">Stats</a>
   <a href="/leaderboard" class="nav-link active">Leaderboard</a>
   <a href="/profits" class="nav-link">Profits</a>
@@ -3008,6 +3013,7 @@ app.get('/config', requireAuth, (req, res) => {
   <a href="/dashboard" class="nav-link">Dashboard</a>
   <a href="/raw-messages" class="nav-link">Messages bruts</a>
   <a href="/image-generator" class="nav-link">Image Generator</a>
+  <a href="/proof-generator" class="nav-link">Proof Generator</a>
   <a href="/stats" class="nav-link">Stats</a>
   <a href="/leaderboard" class="nav-link">Leaderboard</a>
   <a href="/profits" class="nav-link">Profits</a>

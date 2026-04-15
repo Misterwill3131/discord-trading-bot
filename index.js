@@ -3543,10 +3543,25 @@ client.on('messageCreate', async (message) => {
   if (message.channel.id !== PROFITS_CHANNEL_ID) return;
 
   const hasImage = message.attachments.some(a => a.contentType && a.contentType.startsWith('image/'));
-  if (!hasImage) return;
+  const content = message.content || '';
 
-  console.log('[profits] Image detected in #profits from ' + message.author.username);
-  await addProfitMessage(message.content);
+  if (hasImage) {
+    // Image = always 1 profit
+    console.log('[profits] Image in #profits from ' + message.author.username + ' → 1 profit');
+    await addProfitMessage('');
+    return;
+  }
+
+  // Text only — check for price ranges (e.g. .34-.55, 1.23-3.45)
+  const profitCount = countProfitEntries(content);
+  const priceRange = /\.?\d+(?:\.\d+)?\s*[-–]\s*\.?\d+(?:\.\d+)?/;
+  if (!priceRange.test(content)) {
+    // No price range found — not a profit post, ignore
+    return;
+  }
+
+  console.log('[profits] Text in #profits from ' + message.author.username + ' → ' + profitCount + ' profit(s)');
+  await addProfitMessage(content);
 });
 
 client.on('messageCreate', async (message) => {

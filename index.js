@@ -3053,7 +3053,9 @@ client.once('ready', () => {
 // ─────────────────────────────────────────────────────────────────────
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
-  if (message.content.trim() !== '!profits') return;
+  const cmd = message.content.trim().toLowerCase();
+  if (cmd !== '!profits' && cmd !== '!bilan') return;
+  console.log('[!profits] Command received from ' + message.author.username + ' in #' + (message.channel.name || message.channel.id));
 
   const dateKey = todayKey();
   const data = loadProfitData(dateKey);

@@ -3049,6 +3049,28 @@ client.once('ready', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
+//  !profits command — fonctionne dans tous les salons
+// ─────────────────────────────────────────────────────────────────────
+client.on('messageCreate', async (message) => {
+  if (message.author.bot) return;
+  if (message.content.trim() !== '!profits') return;
+
+  const dateKey = todayKey();
+  const data = loadProfitData(dateKey);
+  const count = data.count || 0;
+  const dateStr = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York', year: 'numeric', month: 'long', day: 'numeric' });
+
+  try {
+    await message.reply(
+      '📊 **Profits du jour — ' + dateStr + '**\n'
+      + '> 🔥 **' + count + '** profit' + (count !== 1 ? 's' : '') + ' posté' + (count !== 1 ? 's' : '') + ' aujourd\'hui'
+    );
+  } catch (e) {
+    console.error('[!profits]', e.message);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────
 //  Profit counter — écoute #profits pour les messages avec images
 // ─────────────────────────────────────────────────────────────────────
 client.on('messageCreate', async (message) => {

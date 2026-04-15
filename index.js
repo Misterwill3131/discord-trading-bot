@@ -3082,15 +3082,12 @@ const NEWS_BLOCKED = [
 
 function isNewsRelevant(item) {
   const text = (item.title + ' ' + item.description).toLowerCase();
-  // Block first
+  // Block sports & celebrities
   for (const b of NEWS_BLOCKED) {
     if (text.includes(b)) return false;
   }
-  // Must match at least one keyword
-  for (const kw of NEWS_KEYWORDS) {
-    if (text.includes(kw)) return true;
-  }
-  return false;
+  // Let everything else through — FinancialJuice is already financial news
+  return true;
 }
 
 async function pollFinancialJuice() {

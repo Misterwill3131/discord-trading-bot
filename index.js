@@ -1799,7 +1799,7 @@ async function addProfitMessage(content) {
         try {
           const ch = client.channels.cache.get(PROFITS_CHANNEL_ID);
           if (ch && ch.send) {
-            await ch.send('🎯 Milestone atteint — **' + milestone + ' profits aujourd\'hui !** 🔥');
+            await ch.send('🎯 Milestone reached — **' + milestone + ' profits today!** 🔥');
             console.log('[profits] Milestone ' + milestone + ' posted to #profits');
           }
         } catch (e) {
@@ -2955,16 +2955,16 @@ function sendDailySummary() {
   const topAuthors = Object.keys(authorMap).map(function(k) { return [k, authorMap[k]]; })
     .sort(function(a, b) { return b[1] - a[1]; }).slice(0, 3);
 
-  const tickersStr = topTickers.length ? topTickers.map(function(t) { return t[0] + ' (' + t[1] + ')'; }).join(', ') : 'Aucun';
-  const authorsStr = topAuthors.length ? topAuthors.map(function(a) { return a[0] + ' (' + a[1] + ')'; }).join(', ') : 'Aucun';
+  const tickersStr = topTickers.length ? topTickers.map(function(t) { return t[0] + ' (' + t[1] + ')'; }).join(', ') : 'None';
+  const authorsStr = topAuthors.length ? topAuthors.map(function(a) { return a[0] + ' (' + a[1] + ')'; }).join(', ') : 'None';
 
   const summaryText = [
-    '**Resume journalier BOOM** — ' + todayStr,
-    '> Messages totaux : **' + total + '**',
-    '> Acceptes : **' + accepted + '** | Filtres : **' + filtered + '**',
-    '> Taux acceptation : **' + rate + '%**',
-    '> Top tickers : ' + tickersStr,
-    '> Top auteurs : ' + authorsStr,
+    '**BOOM Daily Summary** — ' + todayStr,
+    '> Total messages: **' + total + '**',
+    '> Accepted: **' + accepted + '** | Filtered: **' + filtered + '**',
+    '> Acceptance rate: **' + rate + '%**',
+    '> Top tickers: ' + tickersStr,
+    '> Top analysts: ' + authorsStr,
   ].join('\n');
 
   try {
@@ -3064,8 +3064,8 @@ client.on('messageCreate', async (message) => {
 
   try {
     await message.reply(
-      '📊 **Profits du jour — ' + dateStr + '**\n'
-      + '> 🔥 **' + count + '** profit' + (count !== 1 ? 's' : '') + ' posté' + (count !== 1 ? 's' : '') + ' aujourd\'hui'
+      '📊 **Daily Profits — ' + dateStr + '**\n'
+      + '> 🔥 **' + count + '** profit' + (count !== 1 ? 's' : '') + ' posted today'
     );
   } catch (e) {
     console.error('[!profits]', e.message);
@@ -3109,9 +3109,9 @@ client.on('messageCreate', async (message) => {
       .sort(function(a, b) { return b[1] - a[1]; }).slice(0, 3);
     const dateStr = new Date().toISOString().slice(0, 10);
     const medals = ['1.', '2.', '3.'];
-    const lines = ['**🏆 Top analystes du jour — ' + dateStr + '**'];
+    const lines = ['**🏆 Top Analysts — ' + dateStr + '**'];
     if (!top.length) {
-      lines.push('> Aucun signal accepte aujourd\'hui');
+      lines.push('> No accepted signals today');
     } else {
       top.forEach(function(t, i) {
         lines.push('> ' + medals[i] + ' **' + t[0] + '** — ' + t[1] + ' signal' + (t[1] > 1 ? 's' : ''));

@@ -3086,7 +3086,7 @@ async function pollFinancialJuice() {
       const desc = item.description && item.description.length > 0
         ? '\n> ' + item.description.substring(0, 300)
         : '';
-      const msg = '📰 **' + item.title + '**' + desc + '\n🔗 ' + item.link;
+      const msg = '📰 **' + item.title + '**' + desc + '\n-# [source](<' + item.link + '>)';
       try {
         await channel.send(msg);
         console.log('[news] Posted: ' + item.title.substring(0, 60));

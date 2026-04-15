@@ -656,8 +656,9 @@ function logEvent(author, channel, content, signalType, reason, extra) {
     passed:  signalType !== null,
     type:    signalType,
     reason,
-    confidence: extra?.confidence != null ? extra.confidence : null,
-    ticker:     extra?.ticker     != null ? extra.ticker     : null,
+    confidence:  extra?.confidence  != null ? extra.confidence  : null,
+    ticker:      extra?.ticker      != null ? extra.ticker      : null,
+    entry_price: extra?.entry_price != null ? extra.entry_price : null,
     isReply:       extra?.isReply || false,
     parentPreview: extra?.parentPreview || null,
     parentAuthor:  extra?.parentAuthor || null,
@@ -1942,25 +1943,37 @@ const STATS_HTML = `<!DOCTYPE html>
   function renderTickerSuccess(msgs) {
     var wrap = document.getElementById('ticker-success-wrap');
     var tickerStats = {};
-    msgs.forEach(function(m) {
+    // Sort messages by time ascending so we capture the earliest alert first
+    var sorted = msgs.slice().sort(function(a, b) { return new Date(a.ts) - new Date(b.ts); });
+    sorted.forEach(function(m) {
       if (!m.ticker) return;
-      if (!tickerStats[m.ticker]) tickerStats[m.ticker] = { total: 0, accepted: 0 };
+      if (!tickerStats[m.ticker]) tickerStats[m.ticker] = { total: 0, accepted: 0, firstEntry: null };
       tickerStats[m.ticker].total++;
-      if (m.passed) tickerStats[m.ticker].accepted++;
+      if (m.passed) {
+        tickerStats[m.ticker].accepted++;
+        // Record entry price from the first accepted alert for this ticker
+        if (tickerStats[m.ticker].firstEntry === null && m.entry_price != null) {
+          tickerStats[m.ticker].firstEntry = m.entry_price;
+        }
+      }
     });
     var rows = Object.keys(tickerStats).map(function(t) { return [t, tickerStats[t]]; })
       .sort(function(a, b) { return b[1].total - a[1].total; }).slice(0, 10);
     if (!rows.length) { wrap.innerHTML = '<span style="color:#80848e;font-size:12px;">Aucune donnee</span>'; return; }
     var html = '<table class="perf-table"><thead><tr>'
-      + '<th>#</th><th>Ticker</th><th>Total</th><th>Acceptes</th><th>Filtres</th><th>Taux succes</th>'
+      + '<th>#</th><th>Ticker</th><th>Prix entree</th><th>Total</th><th>Acceptes</th><th>Filtres</th><th>Taux succes</th>'
       + '</tr></thead><tbody>';
     rows.forEach(function(row, i) {
       var t = row[0], s = row[1];
       var rate = s.total ? Math.round(s.accepted / s.total * 100) : 0;
       var barColor = rate >= 50 ? '#3ba55d' : rate >= 25 ? '#faa61a' : '#ed4245';
+      var entryCell = s.firstEntry != null
+        ? '<span style="color:#faa61a;font-weight:700;">$' + s.firstEntry + '</span>'
+        : '<span style="color:#4f5660;">—</span>';
       html += '<tr>'
         + '<td style="color:#80848e;">' + (i + 1) + '</td>'
         + '<td class="perf-ticker" style="font-weight:700;font-size:13px;">$' + esc(t) + '</td>'
+        + '<td>' + entryCell + '</td>'
         + '<td>' + s.total + '</td>'
         + '<td class="perf-acc">' + s.accepted + '</td>'
         + '<td class="perf-flt">' + (s.total - s.accepted) + '</td>'
@@ -4237,7 +4250,12 @@ client.on('messageCreate', async (message) => {
   const signalConfidence = result.confidence;
   const signalTicker   = result.ticker;
 
-  const extraWithSignal = Object.assign({}, extra, { confidence: signalConfidence, ticker: signalTicker });
+  const pricesForLog = extractPrices(classifyContent);
+  const extraWithSignal = Object.assign({}, extra, {
+    confidence: signalConfidence,
+    ticker: signalTicker,
+    entry_price: pricesForLog.entry_price != null ? pricesForLog.entry_price : null,
+  });
 
   if (!filterType && !authorAllowed) {
     // Filtré ET auteur non autorisé → bloqué

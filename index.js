@@ -3024,7 +3024,7 @@ function runGitBackup() {
 //  Polls RSS every 2 minutes, posts new headlines to NEWS_CHANNEL_ID
 // ─────────────────────────────────────────────────────────────────────
 const FJ_RSS_URL = 'https://www.financialjuice.com/feed.ashx?xy=rss';
-const FJ_POLL_INTERVAL = 60 * 1000; // 60 seconds
+const FJ_POLL_INTERVAL = 2 * 60 * 1000; // 2 minutes
 const fjSeenGuids = new Set();
 let fjInitialized = false;
 

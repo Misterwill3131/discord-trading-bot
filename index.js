@@ -325,6 +325,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <a href="/stats" class="nav-link">Stats</a>
   <a href="/leaderboard" class="nav-link">Leaderboard</a>
   <a href="/profits" class="nav-link">Profits</a>
+  <a href="/news" class="nav-link">News</a>
   <a href="/config" class="nav-link">Config</a>
   <span id="dot"></span>
   <span id="lbl">Connecting…</span>
@@ -961,6 +962,7 @@ const IMAGE_GEN_HTML = `<!DOCTYPE html>
   <a href="/stats" class="nav-link">Stats</a>
   <a href="/leaderboard" class="nav-link">Leaderboard</a>
   <a href="/profits" class="nav-link">Profits</a>
+  <a href="/news" class="nav-link">News</a>
   <a href="/config" class="nav-link">Config</a>
 </header>
 
@@ -1267,6 +1269,7 @@ const RAW_MESSAGES_HTML = `<!DOCTYPE html>
   <a href="/stats" class="nav-link">Stats</a>
   <a href="/leaderboard" class="nav-link">Leaderboard</a>
   <a href="/profits" class="nav-link">Profits</a>
+  <a href="/news" class="nav-link">News</a>
   <a href="/config" class="nav-link">Config</a>
   <span id="dot"></span>
   <span id="lbl">Connecting…</span>
@@ -1501,6 +1504,7 @@ const STATS_HTML = `<!DOCTYPE html>
   <a href="/stats" class="nav-link active">Stats</a>
   <a href="/leaderboard" class="nav-link">Leaderboard</a>
   <a href="/profits" class="nav-link">Profits</a>
+  <a href="/news" class="nav-link">News</a>
   <a href="/config" class="nav-link">Config</a>
   <div class="period-btns">
     <button class="btn-period active" id="btn-today" data-period="today">Aujourd&#39;hui</button>
@@ -1544,6 +1548,10 @@ const STATS_HTML = `<!DOCTYPE html>
   <div class="card card-full">
     <div class="card-title" id="vol-chart-title">Volume par heure (24h)</div>
     <div class="hour-chart" id="hour-chart"></div>
+  </div>
+  <div class="card card-full">
+    <div class="card-title">Analyst Performance — 30 jours</div>
+    <div id="perf-chart"><span style="color:#80848e;font-size:12px;">Chargement...</span></div>
   </div>
 </div>
 <script>
@@ -1768,6 +1776,60 @@ const STATS_HTML = `<!DOCTYPE html>
 
   loadStats();
   document.getElementById('btn-refresh').addEventListener('click', loadStats);
+
+  // ── Analyst Performance Chart ──
+  fetch('/api/analyst-performance?days=30')
+    .then(function(r){ return r.json(); })
+    .then(function(data) {
+      var wrap = document.getElementById('perf-chart');
+      if (!data.datasets || !data.datasets.length) {
+        wrap.innerHTML = '<span style="color:#80848e;font-size:12px;">Aucune donnee</span>';
+        return;
+      }
+      var labels = data.labels || [];
+      var datasets = data.datasets;
+      var maxVal = 1;
+      datasets.forEach(function(ds){ ds.data.forEach(function(v){ if(v>maxVal) maxVal=v; }); });
+
+      var W = 760, H = 220, PAD_L = 30, PAD_B = 24, PAD_T = 10, PAD_R = 10;
+      var chartW = W - PAD_L - PAD_R, chartH = H - PAD_T - PAD_B;
+      var stepX = labels.length > 1 ? chartW / (labels.length - 1) : chartW;
+
+      var svg = '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;height:auto;">';
+      // Grid lines
+      for (var g = 0; g <= 4; g++) {
+        var gy = PAD_T + chartH - (g/4)*chartH;
+        svg += '<line x1="'+PAD_L+'" y1="'+gy+'" x2="'+(W-PAD_R)+'" y2="'+gy+'" stroke="#3f4147" stroke-width="0.5"/>';
+        svg += '<text x="'+(PAD_L-4)+'" y="'+(gy+3)+'" fill="#80848e" font-size="9" text-anchor="end">'+Math.round(maxVal*g/4)+'</text>';
+      }
+      // Lines
+      datasets.forEach(function(ds) {
+        var pts = [];
+        ds.data.forEach(function(v, i){
+          var x = PAD_L + i * stepX;
+          var y = PAD_T + chartH - (v / maxVal) * chartH;
+          pts.push(x+','+y);
+        });
+        svg += '<polyline points="'+pts.join(' ')+'" fill="none" stroke="'+ds.color+'" stroke-width="2" stroke-linejoin="round"/>';
+        // Dots
+        ds.data.forEach(function(v, i){
+          if (v > 0) {
+            var x = PAD_L + i * stepX;
+            var y = PAD_T + chartH - (v / maxVal) * chartH;
+            svg += '<circle cx="'+x+'" cy="'+y+'" r="2.5" fill="'+ds.color+'"/>';
+          }
+        });
+      });
+      svg += '</svg>';
+
+      // Legend
+      var legend = '<div style="display:flex;gap:16px;margin-top:10px;flex-wrap:wrap;">';
+      datasets.forEach(function(ds){
+        legend += '<div style="display:flex;align-items:center;gap:5px;font-size:12px;"><span style="width:10px;height:10px;border-radius:2px;background:'+ds.color+';display:inline-block;"></span><span style="color:#dcddde;">'+ds.author+'</span></div>';
+      });
+      legend += '</div>';
+      wrap.innerHTML = svg + legend;
+    });
 })();
 </script>
 </body>
@@ -2072,6 +2134,172 @@ app.get('/profits', requireAuth, (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
+//  News Dashboard: /news + /api/recent-news + /api/news-events (SSE)
+// ─────────────────────────────────────────────────────────────────────
+app.get('/api/recent-news', requireAuth, (req, res) => {
+  res.json(recentNews);
+});
+
+app.get('/api/news-events', requireAuth, (req, res) => {
+  res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no' });
+  res.flushHeaders();
+  const client = { res };
+  newsSSEClients.push(client);
+  const hb = setInterval(() => { try { res.write(': heartbeat\n\n'); } catch (_) {} }, 25000);
+  req.on('close', () => {
+    clearInterval(hb);
+    const idx = newsSSEClients.indexOf(client);
+    if (idx >= 0) newsSSEClients.splice(idx, 1);
+  });
+});
+
+const NEWS_PAGE_HTML = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BOOM News</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
+  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
+  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
+  .nav-link:hover { background: #3f4147; color: #dcddde; }
+  .nav-link.active { background: #5865f222; color: #5865f2; }
+  #dot { width: 8px; height: 8px; border-radius: 50%; background: #ed4245; margin-left: auto; }
+  #dot.ok { background: #3ba55d; }
+  #lbl { font-size: 11px; color: #80848e; }
+  #wrap { padding: 24px; max-width: 800px; }
+  .news-card {
+    background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px;
+    padding: 14px 18px; margin-bottom: 10px; transition: background .2s;
+    animation: fadeIn .4s ease;
+  }
+  .news-card:hover { background: #32353b; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+  .news-emoji { font-size: 18px; margin-right: 8px; }
+  .news-title { font-weight: 600; color: #fff; font-size: 14px; }
+  .news-meta { display: flex; gap: 10px; margin-top: 6px; font-size: 11px; color: #80848e; }
+  .news-source { background: #1e1f22; padding: 1px 8px; border-radius: 3px; font-weight: 600; }
+  .news-empty { text-align: center; padding: 60px; color: #80848e; }
+  .count-badge { font-size: 11px; color: #80848e; margin-left: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>&#x1F525; BOOM</h1>
+  <a href="/dashboard" class="nav-link">Dashboard</a>
+  <a href="/raw-messages" class="nav-link">Messages bruts</a>
+  <a href="/image-generator" class="nav-link">Image Generator</a>
+  <a href="/stats" class="nav-link">Stats</a>
+  <a href="/leaderboard" class="nav-link">Leaderboard</a>
+  <a href="/profits" class="nav-link">Profits</a>
+  <a href="/news" class="nav-link active">News</a>
+  <a href="/config" class="nav-link">Config</a>
+  <span id="dot"></span>
+  <span id="lbl">Connecting...</span>
+</header>
+<div id="wrap">
+  <h2 style="color:#fff;font-size:15px;margin-bottom:16px;">&#x1F4F0; Live News Feed <span class="count-badge" id="count-badge"></span></h2>
+  <div id="news-list"><div class="news-empty">Chargement...</div></div>
+</div>
+<script>
+(function(){
+  function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function fmtTime(ts){
+    if(!ts) return '';
+    var d=new Date(ts);
+    return d.toLocaleTimeString('fr-CA',{hour:'2-digit',minute:'2-digit'}) + ' — ' + d.toLocaleDateString('fr-CA');
+  }
+  function renderCard(n){
+    return '<div class="news-card">'
+      + '<span class="news-emoji">' + esc(n.emoji) + '</span>'
+      + '<span class="news-title">' + esc(n.title) + '</span>'
+      + '<div class="news-meta">'
+      + '<span class="news-source">' + esc(n.source) + '</span>'
+      + '<span>' + fmtTime(n.ts) + '</span>'
+      + '</div></div>';
+  }
+  var list = document.getElementById('news-list');
+  var badge = document.getElementById('count-badge');
+  var allNews = [];
+
+  function renderAll(){
+    if(!allNews.length){ list.innerHTML='<div class="news-empty">Aucune actualite pour le moment</div>'; badge.textContent=''; return; }
+    badge.textContent = '(' + allNews.length + ')';
+    list.innerHTML = allNews.map(renderCard).join('');
+  }
+
+  fetch('/api/recent-news').then(function(r){return r.json();}).then(function(data){
+    allNews = data || [];
+    renderAll();
+  });
+
+  var es = new EventSource('/api/news-events');
+  es.onopen = function(){ document.getElementById('dot').className='ok'; document.getElementById('lbl').textContent='Live'; };
+  es.onerror = function(){ document.getElementById('dot').className=''; document.getElementById('lbl').textContent='Reconnecting...'; };
+  es.onmessage = function(e){
+    try {
+      var n = JSON.parse(e.data);
+      allNews.unshift(n);
+      if(allNews.length > 50) allNews.pop();
+      renderAll();
+    } catch(_){}
+  };
+})();
+</script>
+</body>
+</html>`;
+
+app.get('/news', requireAuth, (req, res) => {
+  res.set('Content-Type', 'text/html');
+  res.send(NEWS_PAGE_HTML);
+});
+
+// ─────────────────────────────────────────────────────────────────────
+//  Analyst Performance API: /api/analyst-performance?days=30
+// ─────────────────────────────────────────────────────────────────────
+app.get('/api/analyst-performance', requireAuth, (req, res) => {
+  const days = Math.min(parseInt(req.query.days || '30', 10), 90);
+  const dateLabels = [];
+  const authorDayMap = {}; // { author: { 'YYYY-MM-DD': count } }
+
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateKey = d.toISOString().slice(0, 10);
+    dateLabels.push(dateKey);
+    const msgs = i === 0
+      ? messageLog.filter(function(m) { return m.ts && m.ts.slice(0, 10) === dateKey; })
+      : loadDailyFile(dateKey);
+    msgs.forEach(function(m) {
+      if (!m.passed || !m.author) return;
+      if (!authorDayMap[m.author]) authorDayMap[m.author] = {};
+      authorDayMap[m.author][dateKey] = (authorDayMap[m.author][dateKey] || 0) + 1;
+    });
+  }
+
+  // Top 5 by total signals
+  const totals = Object.keys(authorDayMap).map(function(a) {
+    let total = 0;
+    Object.values(authorDayMap[a]).forEach(function(v) { total += v; });
+    return { author: a, total };
+  }).sort(function(a, b) { return b.total - a.total; }).slice(0, 5);
+
+  const colors = ['#5865f2', '#3ba55d', '#faa61a', '#ed4245', '#D649CC'];
+  const datasets = totals.map(function(t, i) {
+    return {
+      author: t.author,
+      color: colors[i % colors.length],
+      data: dateLabels.map(function(d) { return (authorDayMap[t.author] || {})[d] || 0; }),
+    };
+  });
+
+  res.json({ labels: dateLabels, datasets });
+});
+
+// ─────────────────────────────────────────────────────────────────────
 //  Feature 3: GET /leaderboard — 30-day leaderboard
 // ─────────────────────────────────────────────────────────────────────
 const LEADERBOARD_HTML = `<!DOCTYPE html>
@@ -2158,6 +2386,7 @@ const LEADERBOARD_HTML = `<!DOCTYPE html>
   <a href="/stats" class="nav-link">Stats</a>
   <a href="/leaderboard" class="nav-link active">Leaderboard</a>
   <a href="/profits" class="nav-link">Profits</a>
+  <a href="/news" class="nav-link">News</a>
   <a href="/config" class="nav-link">Config</a>
 </header>
 
@@ -3020,15 +3249,26 @@ function runGitBackup() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-//  FinancialJuice News Feed → Discord
-//  Polls RSS every 2 minutes, posts new headlines to NEWS_CHANNEL_ID
+//  Multi-source News Feed → Discord
+//  Polls RSS feeds every 2 minutes, posts new headlines to NEWS_CHANNEL_ID
 // ─────────────────────────────────────────────────────────────────────
-const FJ_RSS_URL = 'https://www.financialjuice.com/feed.ashx?xy=rss';
-const FJ_POLL_INTERVAL = 2 * 60 * 1000; // 2 minutes
-const fjSeenGuids = new Set();
-let fjInitialized = false;
+const NEWS_FEEDS = [
+  { name: 'FJ', url: 'https://www.financialjuice.com/feed.ashx?xy=rss', cleanTitle: t => t.replace(/^FinancialJuice:\s*/i, '') },
+  { name: 'Reuters', url: 'https://www.reutersagency.com/feed/?best-topics=business-finance&post_type=best', cleanTitle: t => t },
+  { name: 'MW', url: 'https://feeds.marketwatch.com/marketwatch/topstories/', cleanTitle: t => t },
+];
+const NEWS_POLL_INTERVAL = 2 * 60 * 1000; // 2 minutes
+const newsSeenGuids = new Set();
+const recentNews = []; // last 50 items for !news command + dashboard
+const newsSSEClients = [];
+let newsInitialized = {};
 
-function parseRssItems(xml) {
+const RSS_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+};
+
+function parseRssItems(xml, feed) {
   const items = [];
   const itemRegex = /<item>([\s\S]*?)<\/item>/g;
   let match;
@@ -3038,41 +3278,34 @@ function parseRssItems(xml) {
       const m = block.match(new RegExp('<' + tag + '[^>]*>([\\s\\S]*?)</' + tag + '>'));
       return m ? m[1].trim() : '';
     };
+    const decode = s => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&quot;/g, '"');
+    const rawTitle = decode(get('title'));
     items.push({
-      title: get('title').replace(/^FinancialJuice:\s*/i, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&quot;/g, '"'),
+      title: feed.cleanTitle(rawTitle),
       link: get('link'),
       pubDate: get('pubDate'),
-      guid: get('guid'),
-      description: get('description').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&quot;/g, '"').trim(),
+      guid: get('guid') || get('link') || rawTitle.substring(0, 60),
+      description: decode(get('description').replace(/<[^>]+>/g, '')).trim(),
+      source: feed.name,
     });
   }
   return items;
 }
 
-// ── News filter: only keep market-relevant headlines ──
-const NEWS_KEYWORDS = [
-  // Macro / Economy
-  'fed', 'fomc', 'powell', 'inflation', 'cpi', 'ppi', 'gdp', 'jobs', 'nonfarm', 'payroll',
-  'unemployment', 'jobless', 'interest rate', 'rate cut', 'rate hike', 'central bank',
-  'ecb', 'boj', 'boe', 'rba', 'treasury', 'yield', 'bond', 'recession', 'deficit',
-  'pmi', 'ism', 'retail sales', 'consumer confidence', 'housing', 'durable goods',
-  // Markets / Stocks
-  'stock', 'equity', 'equities', 's&p', 'spx', 'nasdaq', 'dow', 'russell', 'nyse',
-  'earnings', 'revenue', 'profit', 'ipo', 'buyback', 'dividend', 'market', 'rally',
-  'sell-off', 'selloff', 'correction', 'bear', 'bull', 'volatility', 'vix',
-  'tesla', 'apple', 'nvidia', 'amazon', 'google', 'meta', 'microsoft',
-  // Commodities
-  'oil', 'crude', 'wti', 'brent', 'opec', 'gold', 'silver', 'copper',
-  'natural gas', 'lng', 'commodity', 'commodities',
-  // Crypto
-  'bitcoin', 'btc', 'ethereum', 'eth', 'crypto', 'blockchain',
-  // Forex
-  'dollar', 'usd', 'eur', 'gbp', 'jpy', 'forex', 'fx', 'currency', 'dxy',
-  // Geopolitics impacting markets
-  'tariff', 'sanction', 'trade deal', 'trade war', 'embargo', 'export ban',
-  'import duty', 'chip ban', 'trade deficit', 'trade surplus',
-];
+// ── Emoji categories ──
+function getNewsEmoji(title) {
+  const t = title.toLowerCase();
+  if (/\b(oil|crude|wti|brent|opec|lng|natural gas|energy|petroleum)\b/.test(t)) return '🛢️';
+  if (/\b(fed|fomc|powell|ecb|boj|boe|central bank|interest rate|rate cut|rate hike|treasury|treasuries)\b/.test(t)) return '🏦';
+  if (/\b(bitcoin|btc|ethereum|eth|crypto|blockchain|coinbase|binance)\b/.test(t)) return '₿';
+  if (/\b(gold|silver|copper|commodit)/i.test(t)) return '🥇';
+  if (/\b(forex|dollar|usd|eur\/|gbp|jpy|dxy|currency|currencies)\b/.test(t)) return '💵';
+  if (/\b(tariff|sanction|trade deal|embargo|geopolitic|war|military|missile|troops)\b/.test(t)) return '🌍';
+  if (/\b(stock|s&p|spx|nasdaq|dow|earning|ipo|rally|market|index|nyse|sell.?off|bull|bear)\b/.test(t)) return '📈';
+  return '📰';
+}
 
+// ── News filter ──
 const NEWS_BLOCKED = [
   'sport', 'football', 'soccer', 'basketball', 'nba', 'nfl', 'mlb', 'tennis',
   'olympic', 'fifa', 'world cup', 'celebrity', 'kardashian', 'hollywood',
@@ -3082,129 +3315,139 @@ const NEWS_BLOCKED = [
 
 function isNewsRelevant(item) {
   const text = (item.title + ' ' + item.description).toLowerCase();
-  // Block sports & celebrities
   for (const b of NEWS_BLOCKED) {
     if (text.includes(b)) return false;
   }
-  // Let everything else through — FinancialJuice is already financial news
   return true;
 }
 
-async function pollFinancialJuice() {
-  if (!NEWS_CHANNEL_ID) return;
+function extractSource(title) {
+  const m = title.match(/^([^:]{3,50}):\s/);
+  return m ? m[1].trim() : null;
+}
+
+function addToRecentNews(item) {
+  const entry = {
+    id: Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+    ts: item.pubDate ? new Date(item.pubDate).toISOString() : new Date().toISOString(),
+    title: item.title,
+    emoji: getNewsEmoji(item.title),
+    source: item.source || 'FJ',
+    link: item.link,
+  };
+  recentNews.unshift(entry);
+  if (recentNews.length > 50) recentNews.pop();
+  // Broadcast to SSE clients
+  const payload = 'data: ' + JSON.stringify(entry) + '\n\n';
+  newsSSEClients.forEach((c, i) => { try { c.res.write(payload); } catch (_) { newsSSEClients.splice(i, 1); } });
+}
+
+async function pollNewsFeed(feed) {
+  if (!NEWS_CHANNEL_ID) return [];
   try {
-    const res = await fetch(FJ_RSS_URL, {
-      timeout: 15000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-        'Accept': 'application/rss+xml, application/xml, text/xml, */*',
-      }
-    });
+    const res = await fetch(feed.url, { timeout: 15000, headers: RSS_HEADERS });
     if (!res.ok) {
-      if (res.status === 429) {
-        console.error('[news] Rate limited (429) — waiting for cooldown');
-      } else {
-        console.error('[news] RSS fetch failed:', res.status);
-      }
-      return;
+      if (res.status === 429) console.error('[news][' + feed.name + '] Rate limited (429)');
+      else console.error('[news][' + feed.name + '] Fetch failed:', res.status);
+      return [];
     }
     const xml = await res.text();
-    const items = parseRssItems(xml);
+    const items = parseRssItems(xml, feed);
 
-    if (!fjInitialized) {
-      // First run: mark all existing items as seen (don't spam channel)
-      items.forEach(i => fjSeenGuids.add(i.guid));
-      fjInitialized = true;
-      console.log('[news] Initialized — ' + items.length + ' existing headlines marked as seen');
-      return;
-    }
-
-    // Find new items, filter for relevance (newest first in RSS, we want oldest-first for posting)
-    const newItems = items.filter(i => i.guid && !fjSeenGuids.has(i.guid)).reverse();
-    const relevantItems = newItems.filter(i => {
-      fjSeenGuids.add(i.guid); // Mark all as seen even if filtered
-      return isNewsRelevant(i);
-    });
-    if (newItems.length > 0) {
-      console.log('[news] ' + newItems.length + ' new — ' + relevantItems.length + ' relevant, ' + (newItems.length - relevantItems.length) + ' filtered out');
-    }
-    if (!relevantItems.length) return;
-
-    const channel = client.channels.cache.get(NEWS_CHANNEL_ID);
-    if (!channel || !channel.send) {
-      console.error('[news] Channel not found:', NEWS_CHANNEL_ID);
-      return;
+    if (!newsInitialized[feed.name]) {
+      items.forEach(i => newsSeenGuids.add(feed.name + ':' + i.guid));
+      newsInitialized[feed.name] = true;
+      console.log('[news][' + feed.name + '] Initialized — ' + items.length + ' headlines marked as seen');
+      return [];
     }
 
-    // Group consecutive headlines by source, then format
-    function extractSource(title) {
-      // Match patterns like "WH Press Sec. Leavitt:", "Fed's Powell:", "ECB's Lagarde:", etc.
-      const m = title.match(/^([^:]{3,50}):\s/);
-      return m ? m[1].trim() : null;
-    }
+    const newItems = items.filter(i => {
+      const key = feed.name + ':' + i.guid;
+      if (newsSeenGuids.has(key)) return false;
+      newsSeenGuids.add(key);
+      return true;
+    }).reverse();
 
-    const groups = [];
-    for (const item of relevantItems) {
-      const src = extractSource(item.title);
-      const last = groups.length ? groups[groups.length - 1] : null;
-      if (src && last && last.source === src) {
-        // Same source as previous — group together
-        last.items.push(item);
-      } else {
-        groups.push({ source: src, items: [item] });
-      }
-    }
-
-    const lines = [];
-    for (const g of groups) {
-      if (g.source && g.items.length > 1) {
-        // Condensed: one header + bullet points
-        lines.push('📰 **' + g.source + ':**');
-        for (const item of g.items) {
-          const text = item.title.replace(g.source + ': ', '').replace(g.source + ':', '').trim();
-          lines.push('> • ' + text);
-        }
-      } else {
-        for (const item of g.items) {
-          lines.push('📰 **' + item.title + '**');
-        }
-      }
-    }
-    const combined = lines.join('\n');
-    // Discord max is 2000 chars — split if needed
-    const chunks = [];
-    if (combined.length <= 2000) {
-      chunks.push(combined);
-    } else {
-      let current = '';
-      for (const line of lines) {
-        if (current.length + line.length + 1 > 2000) {
-          chunks.push(current);
-          current = line;
-        } else {
-          current += (current ? '\n' : '') + line;
-        }
-      }
-      if (current) chunks.push(current);
-    }
-    for (const chunk of chunks) {
-      try {
-        await channel.send(chunk);
-      } catch (e) {
-        console.error('[news] Failed to send:', e.message);
-      }
-    }
-    console.log('[news] Posted ' + relevantItems.length + ' headline(s) in ' + chunks.length + ' message(s)');
-
-    // Keep set from growing too large
-    if (fjSeenGuids.size > 500) {
-      const arr = Array.from(fjSeenGuids);
-      arr.splice(0, arr.length - 300);
-      fjSeenGuids.clear();
-      arr.forEach(g => fjSeenGuids.add(g));
-    }
+    return newItems.filter(i => isNewsRelevant(i));
   } catch (e) {
-    console.error('[news] Poll error:', e.message);
+    console.error('[news][' + feed.name + '] Error:', e.message);
+    return [];
+  }
+}
+
+async function pollAllNewsFeeds() {
+  if (!NEWS_CHANNEL_ID) return;
+  let allRelevant = [];
+  for (const feed of NEWS_FEEDS) {
+    const items = await pollNewsFeed(feed);
+    allRelevant = allRelevant.concat(items);
+  }
+
+  if (!allRelevant.length) return;
+
+  // Add to recent news + SSE
+  allRelevant.forEach(i => addToRecentNews(i));
+
+  const channel = client.channels.cache.get(NEWS_CHANNEL_ID);
+  if (!channel || !channel.send) {
+    console.error('[news] Channel not found:', NEWS_CHANNEL_ID);
+    return;
+  }
+
+  // Group consecutive headlines by source person
+  const groups = [];
+  for (const item of allRelevant) {
+    const src = extractSource(item.title);
+    const last = groups.length ? groups[groups.length - 1] : null;
+    if (src && last && last.source === src) {
+      last.items.push(item);
+    } else {
+      groups.push({ source: src, items: [item] });
+    }
+  }
+
+  const lines = [];
+  for (const g of groups) {
+    if (g.source && g.items.length > 1) {
+      const emoji = getNewsEmoji(g.items[0].title);
+      lines.push(emoji + ' **' + g.source + ':**');
+      for (const item of g.items) {
+        const text = item.title.replace(g.source + ': ', '').replace(g.source + ':', '').trim();
+        lines.push('> • ' + text);
+      }
+    } else {
+      for (const item of g.items) {
+        lines.push(getNewsEmoji(item.title) + ' **' + item.title + '**');
+      }
+    }
+  }
+  const combined = lines.join('\n');
+  const chunks = [];
+  if (combined.length <= 2000) {
+    chunks.push(combined);
+  } else {
+    let current = '';
+    for (const line of lines) {
+      if (current.length + line.length + 1 > 2000) {
+        chunks.push(current);
+        current = line;
+      } else {
+        current += (current ? '\n' : '') + line;
+      }
+    }
+    if (current) chunks.push(current);
+  }
+  for (const chunk of chunks) {
+    try { await channel.send(chunk); } catch (e) { console.error('[news] Send error:', e.message); }
+  }
+  console.log('[news] Posted ' + allRelevant.length + ' headline(s) in ' + chunks.length + ' message(s)');
+
+  // Keep seen set manageable
+  if (newsSeenGuids.size > 1000) {
+    const arr = Array.from(newsSeenGuids);
+    arr.splice(0, arr.length - 500);
+    newsSeenGuids.clear();
+    arr.forEach(g => newsSeenGuids.add(g));
   }
 }
 
@@ -3212,13 +3455,14 @@ client.once('ready', () => {
   console.log('Bot connected as ' + client.user.tag);
   console.log('Listening for channels containing: ' + TRADING_CHANNEL);
 
-  // Start FinancialJuice news feed
+  // Start multi-source news feed
   if (NEWS_CHANNEL_ID) {
-    console.log('[news] FinancialJuice feed active — posting to channel ' + NEWS_CHANNEL_ID);
-    pollFinancialJuice();
-    setInterval(pollFinancialJuice, FJ_POLL_INTERVAL);
+    console.log('[news] News feeds active — posting to channel ' + NEWS_CHANNEL_ID);
+    console.log('[news] Sources: ' + NEWS_FEEDS.map(f => f.name).join(', '));
+    pollAllNewsFeeds();
+    setInterval(pollAllNewsFeeds, NEWS_POLL_INTERVAL);
   } else {
-    console.log('[news] NEWS_CHANNEL_ID not set — FinancialJuice feed disabled');
+    console.log('[news] NEWS_CHANNEL_ID not set — news feeds disabled');
   }
 
   // Verification toutes les minutes pour le resume a 18h00 et backup midnight EDT
@@ -3269,6 +3513,25 @@ client.on('messageCreate', async (message) => {
   } catch (e) {
     console.error('[!profits]', e.message);
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+//  !news command — last 5 headlines in any channel
+// ─────────────────────────────────────────────────────────────────────
+client.on('messageCreate', async (message) => {
+  if (message.author.bot) return;
+  if (message.content.trim().toLowerCase() !== '!news') return;
+
+  if (!recentNews.length) {
+    try { await message.reply('📰 No recent news available.'); } catch (_) {}
+    return;
+  }
+  const top5 = recentNews.slice(0, 5);
+  const lines = ['📰 **Latest News**'];
+  top5.forEach((n, i) => {
+    lines.push('> ' + (i + 1) + '. ' + n.emoji + ' ' + n.title);
+  });
+  try { await message.reply(lines.join('\n')); } catch (e) { console.error('[!news]', e.message); }
 });
 
 // ─────────────────────────────────────────────────────────────────────

@@ -2136,11 +2136,12 @@ app.get('/api/leaderboard', requireAuth, (req, res) => {
       : dailyMsgs;
     msgs.forEach(function(m) {
       if (!m.passed || !m.author) return;
+      if (!m.ticker) return;
+      const prices = extractPrices(m.content || '');
+      if (prices.entry_price === null || prices.target_price === null) return;
       if (!authorStats[m.author]) authorStats[m.author] = { signals: 0, tickers: {} };
       authorStats[m.author].signals++;
-      if (m.ticker) {
-        authorStats[m.author].tickers[m.ticker] = (authorStats[m.author].tickers[m.ticker] || 0) + 1;
-      }
+      authorStats[m.author].tickers[m.ticker] = (authorStats[m.author].tickers[m.ticker] || 0) + 1;
     });
   }
   const rows = Object.keys(authorStats).map(function(author) {

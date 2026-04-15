@@ -3823,8 +3823,6 @@ function runGitBackup() {
 // ─────────────────────────────────────────────────────────────────────
 const NEWS_FEEDS = [
   { name: 'FJ', url: 'https://www.financialjuice.com/feed.ashx?xy=rss', cleanTitle: t => t.replace(/^FinancialJuice:\s*/i, '') },
-  { name: 'Reuters', url: 'https://www.reutersagency.com/feed/?best-topics=business-finance&post_type=best', cleanTitle: t => t },
-  { name: 'MW', url: 'https://feeds.marketwatch.com/marketwatch/topstories/', cleanTitle: t => t },
 ];
 const NEWS_POLL_INTERVAL = 2 * 60 * 1000; // 2 minutes
 const newsSeenGuids = new Set();

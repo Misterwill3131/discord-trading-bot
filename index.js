@@ -3136,18 +3136,33 @@ async function pollFinancialJuice() {
       return;
     }
 
-    for (const item of relevantItems) {
-      const desc = item.description && item.description.length > 0
-        ? '\n> ' + item.description.substring(0, 300)
-        : '';
-      const msg = '📰 **' + item.title + '**' + desc + '\n-# [source](<' + item.link + '>)';
+    // Combine all headlines into one message
+    const lines = relevantItems.map(item => '📰 **' + item.title + '**');
+    const combined = lines.join('\n');
+    // Discord max is 2000 chars — split if needed
+    const chunks = [];
+    if (combined.length <= 2000) {
+      chunks.push(combined);
+    } else {
+      let current = '';
+      for (const line of lines) {
+        if (current.length + line.length + 1 > 2000) {
+          chunks.push(current);
+          current = line;
+        } else {
+          current += (current ? '\n' : '') + line;
+        }
+      }
+      if (current) chunks.push(current);
+    }
+    for (const chunk of chunks) {
       try {
-        await channel.send(msg);
-        console.log('[news] Posted: ' + item.title.substring(0, 60));
+        await channel.send(chunk);
       } catch (e) {
         console.error('[news] Failed to send:', e.message);
       }
     }
+    console.log('[news] Posted ' + relevantItems.length + ' headline(s) in ' + chunks.length + ' message(s)');
 
     // Keep set from growing too large
     if (fjSeenGuids.size > 500) {

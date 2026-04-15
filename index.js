@@ -11,6 +11,7 @@ const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL;
 const TRADING_CHANNEL = process.env.TRADING_CHANNEL || 'trading-floor';
 const PROFITS_CHANNEL_ID = process.env.PROFITS_CHANNEL_ID || '';
+const NEWS_CHANNEL_ID = process.env.NEWS_CHANNEL_ID || '';
 const PORT = process.env.PORT || 3000;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
@@ -3018,9 +3019,100 @@ function runGitBackup() {
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────
+//  FinancialJuice News Feed → Discord
+//  Polls RSS every 2 minutes, posts new headlines to NEWS_CHANNEL_ID
+// ─────────────────────────────────────────────────────────────────────
+const FJ_RSS_URL = 'https://www.financialjuice.com/feed.ashx?xy=rss';
+const FJ_POLL_INTERVAL = 2 * 60 * 1000; // 2 minutes
+const fjSeenGuids = new Set();
+let fjInitialized = false;
+
+function parseRssItems(xml) {
+  const items = [];
+  const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+  let match;
+  while ((match = itemRegex.exec(xml)) !== null) {
+    const block = match[1];
+    const get = (tag) => {
+      const m = block.match(new RegExp('<' + tag + '[^>]*>([\\s\\S]*?)</' + tag + '>'));
+      return m ? m[1].trim() : '';
+    };
+    items.push({
+      title: get('title').replace(/^FinancialJuice:\s*/i, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&quot;/g, '"'),
+      link: get('link'),
+      pubDate: get('pubDate'),
+      guid: get('guid'),
+      description: get('description').replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&quot;/g, '"').trim(),
+    });
+  }
+  return items;
+}
+
+async function pollFinancialJuice() {
+  if (!NEWS_CHANNEL_ID) return;
+  try {
+    const res = await fetch(FJ_RSS_URL, { timeout: 15000 });
+    if (!res.ok) { console.error('[news] RSS fetch failed:', res.status); return; }
+    const xml = await res.text();
+    const items = parseRssItems(xml);
+
+    if (!fjInitialized) {
+      // First run: mark all existing items as seen (don't spam channel)
+      items.forEach(i => fjSeenGuids.add(i.guid));
+      fjInitialized = true;
+      console.log('[news] Initialized — ' + items.length + ' existing headlines marked as seen');
+      return;
+    }
+
+    // Find new items (newest first in RSS, we want oldest-first for posting)
+    const newItems = items.filter(i => i.guid && !fjSeenGuids.has(i.guid)).reverse();
+    if (!newItems.length) return;
+
+    const channel = client.channels.cache.get(NEWS_CHANNEL_ID);
+    if (!channel || !channel.send) {
+      console.error('[news] Channel not found:', NEWS_CHANNEL_ID);
+      return;
+    }
+
+    for (const item of newItems) {
+      fjSeenGuids.add(item.guid);
+      const desc = item.description && item.description.length > 0
+        ? '\n> ' + item.description.substring(0, 300)
+        : '';
+      const msg = '📰 **' + item.title + '**' + desc + '\n🔗 ' + item.link;
+      try {
+        await channel.send(msg);
+        console.log('[news] Posted: ' + item.title.substring(0, 60));
+      } catch (e) {
+        console.error('[news] Failed to send:', e.message);
+      }
+    }
+
+    // Keep set from growing too large
+    if (fjSeenGuids.size > 500) {
+      const arr = Array.from(fjSeenGuids);
+      arr.splice(0, arr.length - 300);
+      fjSeenGuids.clear();
+      arr.forEach(g => fjSeenGuids.add(g));
+    }
+  } catch (e) {
+    console.error('[news] Poll error:', e.message);
+  }
+}
+
 client.once('ready', () => {
   console.log('Bot connected as ' + client.user.tag);
   console.log('Listening for channels containing: ' + TRADING_CHANNEL);
+
+  // Start FinancialJuice news feed
+  if (NEWS_CHANNEL_ID) {
+    console.log('[news] FinancialJuice feed active — posting to channel ' + NEWS_CHANNEL_ID);
+    pollFinancialJuice();
+    setInterval(pollFinancialJuice, FJ_POLL_INTERVAL);
+  } else {
+    console.log('[news] NEWS_CHANNEL_ID not set — FinancialJuice feed disabled');
+  }
 
   // Verification toutes les minutes pour le resume a 18h00 et backup midnight EDT
   setInterval(function() {

@@ -3136,8 +3136,40 @@ async function pollFinancialJuice() {
       return;
     }
 
-    // Combine all headlines into one message
-    const lines = relevantItems.map(item => '📰 **' + item.title + '**');
+    // Group consecutive headlines by source, then format
+    function extractSource(title) {
+      // Match patterns like "WH Press Sec. Leavitt:", "Fed's Powell:", "ECB's Lagarde:", etc.
+      const m = title.match(/^([^:]{3,50}):\s/);
+      return m ? m[1].trim() : null;
+    }
+
+    const groups = [];
+    for (const item of relevantItems) {
+      const src = extractSource(item.title);
+      const last = groups.length ? groups[groups.length - 1] : null;
+      if (src && last && last.source === src) {
+        // Same source as previous — group together
+        last.items.push(item);
+      } else {
+        groups.push({ source: src, items: [item] });
+      }
+    }
+
+    const lines = [];
+    for (const g of groups) {
+      if (g.source && g.items.length > 1) {
+        // Condensed: one header + bullet points
+        lines.push('📰 **' + g.source + ':**');
+        for (const item of g.items) {
+          const text = item.title.replace(g.source + ': ', '').replace(g.source + ':', '').trim();
+          lines.push('> • ' + text);
+        }
+      } else {
+        for (const item of g.items) {
+          lines.push('📰 **' + item.title + '**');
+        }
+      }
+    }
     const combined = lines.join('\n');
     // Discord max is 2000 chars — split if needed
     const chunks = [];

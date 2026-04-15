@@ -105,14 +105,19 @@ function saveProfitData(dateKey, data) {
 
 // ─────────────────────────────────────────────────────────────────────
 //  countProfitEntries — compte le nombre de profits dans un message
-//  Chaque ligne avec un range de prix (ex: .34-.55) = 1 profit
+//  Reconnait: .34-.55, 1.20 to 4.00, .97 -- 3.05, 18.60–19.90
+//  Sépare par ligne OU par point+espace (multi-profits sur une ligne)
 // ─────────────────────────────────────────────────────────────────────
+const PROFIT_PATTERN = /\.?\d+(?:\.\d+)?\s*(?:[-–]+|to)\s*\.?\d+(?:\.\d+)?/gi;
+
 function countProfitEntries(content) {
-  if (!content || !content.trim()) return 1;
-  const priceRange = /\.?\d+(?:\.\d+)?\s*[-–]\s*\.?\d+(?:\.\d+)?/;
-  const lines = content.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  const count = lines.filter(l => priceRange.test(l)).length;
-  return count > 0 ? count : 1;
+  if (!content || !content.trim()) return 0;
+  const matches = content.match(PROFIT_PATTERN);
+  return matches ? matches.length : 0;
+}
+
+function hasProfitPattern(content) {
+  return PROFIT_PATTERN.test(content);
 }
 
 // Last generated promo image
@@ -3552,13 +3557,9 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // Text only — check for price ranges (e.g. .34-.55, 1.23-3.45)
+  // Text only — check for price ranges (e.g. .34-.55, 1.20 to 4.00, .97 -- 3.05)
   const profitCount = countProfitEntries(content);
-  const priceRange = /\.?\d+(?:\.\d+)?\s*[-–]\s*\.?\d+(?:\.\d+)?/;
-  if (!priceRange.test(content)) {
-    // No price range found — not a profit post, ignore
-    return;
-  }
+  if (profitCount === 0) return;
 
   console.log('[profits] Text in #profits from ' + message.author.username + ' → ' + profitCount + ' profit(s)');
   await addProfitMessage(content);

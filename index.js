@@ -4270,6 +4270,67 @@ client.on('messageCreate', async (message) => {
     console.error('Image generation error:', err.message);
   }
 
+  // ── Auto Proof Image — détecte recap + alerte originale ──────────────────
+  const recapPrices = extractPrices(classifyContent);
+  const isRecap = signalTicker
+    && recapPrices.entry_price !== null
+    && recapPrices.target_price !== null
+    && recapPrices.target_price > recapPrices.entry_price; // exit > entry = profit confirmé
+
+  if (isRecap) {
+    try {
+      // Chercher l'alerte originale dans l'historique (30 derniers jours)
+      let originalAlert = null;
+
+      // 1. Si c'est une réponse Discord, utiliser le message parent directement
+      if (isReply && parentContent && parentAuthor) {
+        originalAlert = { author: parentAuthor, content: parentContent, ts: null };
+      }
+
+      // 2. Sinon chercher dans l'historique le dernier signal d'entrée pour ce ticker
+      if (!originalAlert) {
+        for (let i = 0; i < 30 && !originalAlert; i++) {
+          const d = new Date();
+          d.setDate(d.getDate() - i);
+          const dk = d.toISOString().slice(0, 10);
+          const msgs = i === 0
+            ? messageLog.filter(m => m.ts && m.ts.slice(0, 10) === dk)
+            : loadDailyFile(dk);
+          const found = msgs.find(m =>
+            m.passed &&
+            m.ticker && m.ticker.toUpperCase() === signalTicker.toUpperCase() &&
+            m.id !== undefined && // not the current message
+            new Date(m.ts) < message.createdAt // must be BEFORE the recap
+          );
+          if (found) {
+            originalAlert = { author: found.author, content: found.content || found.preview || '', ts: found.ts };
+          }
+        }
+      }
+
+      if (originalAlert) {
+        console.log('[proof] Generating proof image for $' + signalTicker + ' — original by ' + originalAlert.author);
+        const proofBuf = await generateProofImage(
+          originalAlert.author,
+          originalAlert.content,
+          originalAlert.ts,
+          message.author.username,
+          content,
+          message.createdAt.toISOString()
+        );
+        // Post the proof image directly in the channel
+        await message.channel.send({
+          files: [{ attachment: proofBuf, name: 'proof-' + signalTicker.toLowerCase() + '.png' }]
+        });
+        console.log('[proof] Proof image posted for $' + signalTicker);
+      } else {
+        console.log('[proof] No original alert found for $' + signalTicker);
+      }
+    } catch (err) {
+      console.error('[proof] Error generating proof image:', err.message);
+    }
+  }
+
   // Feature 8: Generate promo image for complete signals (has ticker + prices)
   const pricesData = extractPrices(classifyContent);
   let promoImageBase64 = null;

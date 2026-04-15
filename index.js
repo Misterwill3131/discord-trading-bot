@@ -102,6 +102,18 @@ function saveProfitData(dateKey, data) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+//  countProfitEntries — compte le nombre de profits dans un message
+//  Chaque ligne avec un range de prix (ex: .34-.55) = 1 profit
+// ─────────────────────────────────────────────────────────────────────
+function countProfitEntries(content) {
+  if (!content || !content.trim()) return 1;
+  const priceRange = /\.?\d+(?:\.\d+)?\s*[-–]\s*\.?\d+(?:\.\d+)?/;
+  const lines = content.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  const count = lines.filter(l => priceRange.test(l)).length;
+  return count > 0 ? count : 1;
+}
+
 // Last generated promo image
 let lastPromoImageBuffer = null;
 
@@ -1768,12 +1780,14 @@ app.get('/stats', requireAuth, (req, res) => {
 // ─────────────────────────────────────────────────────────────────────
 //  Feature 2: addProfitMessage — profit counter with milestone alerts
 // ─────────────────────────────────────────────────────────────────────
-async function addProfitMessage() {
+async function addProfitMessage(content) {
   const dateKey = todayKey();
   const data = loadProfitData(dateKey);
   if (!data.milestones) data.milestones = [];
-  data.count = (data.count || 0) + 1;
+  const entries = countProfitEntries(content);
+  data.count = (data.count || 0) + entries;
   saveProfitData(dateKey, data);
+  console.log('[profits] +' + entries + ' profit(s) — total: ' + data.count);
 
   // Check milestones
   for (const milestone of PROFIT_MILESTONES) {
@@ -1816,9 +1830,43 @@ app.get('/api/profits-history', requireAuth, (req, res) => {
 // Expose profit count increment via API (called externally or via Make.com)
 app.post('/api/add-profit', requireAuth, async (req, res) => {
   try {
-    const count = await addProfitMessage();
+    const count = await addProfitMessage(req.body?.content || '');
     res.json({ ok: true, count });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+//  Webhook endpoint pour Discord → profits (pas d'auth requise)
+//  Configure le webhook Discord du salon #profits vers cette URL
+// ─────────────────────────────────────────────────────────────────────
+app.post('/api/webhook/profits', async (req, res) => {
+  try {
+    const body = req.body || {};
+    // Discord webhook envoie les messages avec content + attachments
+    const content = body.content || '';
+    const attachments = body.attachments || body.embeds || [];
+    const hasImage = Array.isArray(attachments) && attachments.some(a =>
+      (a.content_type && a.content_type.startsWith('image/')) ||
+      (a.url && /\.(png|jpg|jpeg|gif|webp)/i.test(a.url)) ||
+      (a.image)
+    );
+
+    // Si pas d'image, vérifier dans embeds
+    const embeds = body.embeds || [];
+    const hasEmbedImage = Array.isArray(embeds) && embeds.some(e => e.image || e.thumbnail);
+
+    if (!hasImage && !hasEmbedImage && attachments.length === 0) {
+      console.log('[webhook/profits] Message sans image — ignoré');
+      return res.json({ ok: true, skipped: true, reason: 'no image' });
+    }
+
+    const count = await addProfitMessage(content);
+    console.log('[webhook/profits] Profit enregistré — total: ' + count);
+    res.json({ ok: true, count });
+  } catch (e) {
+    console.error('[webhook/profits] Error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -2998,6 +3046,21 @@ client.once('ready', () => {
       runGitBackup();
     }
   }, 60000);
+});
+
+// ─────────────────────────────────────────────────────────────────────
+//  Profit counter — écoute #profits pour les messages avec images
+// ─────────────────────────────────────────────────────────────────────
+client.on('messageCreate', async (message) => {
+  if (message.author.bot) return;
+  if (!PROFITS_CHANNEL_ID) return;
+  if (message.channel.id !== PROFITS_CHANNEL_ID) return;
+
+  const hasImage = message.attachments.some(a => a.contentType && a.contentType.startsWith('image/'));
+  if (!hasImage) return;
+
+  console.log('[profits] Image detected in #profits from ' + message.author.username);
+  await addProfitMessage(message.content);
 });
 
 client.on('messageCreate', async (message) => {

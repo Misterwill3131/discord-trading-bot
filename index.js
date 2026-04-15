@@ -1880,6 +1880,92 @@ async function addProfitMessage(content) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+//  Daily profit summary — posted at 20:00 EDT to #profits
+//  Tracks all-time record to encourage members
+// ─────────────────────────────────────────────────────────────────────
+function getProfitRecord() {
+  // Scan last 90 days to find the all-time record
+  let recordCount = 0;
+  let recordDate = null;
+  for (let i = 0; i < 90; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateKey = d.toISOString().slice(0, 10);
+    const data = loadProfitData(dateKey);
+    if ((data.count || 0) > recordCount) {
+      recordCount = data.count;
+      recordDate = dateKey;
+    }
+  }
+  return { count: recordCount, date: recordDate };
+}
+
+let lastProfitSummaryDate = null;
+
+async function sendDailyProfitSummary() {
+  if (!PROFITS_CHANNEL_ID || !client) return;
+  try {
+    const ch = client.channels.cache.get(PROFITS_CHANNEL_ID);
+    if (!ch || !ch.send) return;
+
+    const dateKey = todayKey();
+    const data = loadProfitData(dateKey);
+    const todayCount = data.count || 0;
+    const record = getProfitRecord();
+
+    // Build last 7 days bar chart (text-based)
+    const days7 = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dk = d.toISOString().slice(0, 10);
+      const pd = loadProfitData(dk);
+      days7.push({ date: dk, count: pd.count || 0 });
+    }
+    const max7 = Math.max.apply(null, days7.map(d => d.count)) || 1;
+    const chart = days7.map(d => {
+      const bars = Math.round((d.count / max7) * 8);
+      const bar = '█'.repeat(bars) + '░'.repeat(8 - bars);
+      const label = d.date.slice(5); // MM-DD
+      const isToday = d.date === dateKey;
+      return (isToday ? '**' : '') + '`' + label + '` ' + bar + ' ' + d.count + (isToday ? ' ← today**' : '');
+    }).join('\n');
+
+    // Check if today is a new record
+    const isNewRecord = todayCount > 0 && todayCount >= record.count && dateKey === record.date;
+    const recordLine = isNewRecord
+      ? '\n\n🏆 **NEW ALL-TIME RECORD! ' + todayCount + ' profits!** 🏆'
+      : '\n\n📊 All-time record: **' + record.count + '** profits (' + record.date + ')';
+
+    // Compare to yesterday
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayData = loadProfitData(yesterday.toISOString().slice(0, 10));
+    const yesterdayCount = yesterdayData.count || 0;
+    let comparison = '';
+    if (yesterdayCount > 0) {
+      const diff = todayCount - yesterdayCount;
+      if (diff > 0) comparison = ' (📈 +' + diff + ' vs yesterday)';
+      else if (diff < 0) comparison = ' (📉 ' + diff + ' vs yesterday)';
+      else comparison = ' (➡️ same as yesterday)';
+    }
+
+    const msg = '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+      + '📊 **Daily Profit Report**\n'
+      + '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'
+      + '🔥 **' + todayCount + '** profits posted today' + comparison + '\n\n'
+      + '**Last 7 days:**\n' + chart
+      + recordLine + '\n\n'
+      + '-# Keep posting your wins! Every profit counts 💪';
+
+    await ch.send(msg);
+    console.log('[profits] Daily summary posted — ' + todayCount + ' profits today');
+  } catch (e) {
+    console.error('[profits] Summary error:', e.message);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
 //  Feature 4a: GET /api/profits-history?days=7
 // ─────────────────────────────────────────────────────────────────────
 app.get('/api/profits-history', requireAuth, (req, res) => {
@@ -3483,11 +3569,19 @@ client.once('ready', () => {
       }
     }
 
+    // Daily profit summary at 20:00 EDT
+    // 20:00 EDT = 00:00 UTC (summer) or 01:00 UTC (winter)
+    const utcH = now.getUTCHours();
+    const utcM = now.getUTCMinutes();
+    const is20hEDT = (utcH === 0 || utcH === 1) && utcM === 0;
+    if (is20hEDT && lastProfitSummaryDate !== todayStr) {
+      lastProfitSummaryDate = todayStr;
+      sendDailyProfitSummary();
+    }
+
     // Backup a minuit EDT (UTC-4 en ete, UTC-5 en hiver)
     // Minuit EDT = 04:00 UTC en ete, 05:00 UTC en hiver
     // On essaie les deux: 04:00 et 05:00 UTC
-    const utcH = now.getUTCHours();
-    const utcM = now.getUTCMinutes();
     const isMidnightEDT = (utcH === 4 || utcH === 5) && utcM === 0;
     if (isMidnightEDT && lastBackupDate !== todayStr) {
       lastBackupDate = todayStr;
@@ -3510,10 +3604,16 @@ client.on('messageCreate', async (message) => {
   const count = data.count || 0;
   const dateStr = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York', year: 'numeric', month: 'long', day: 'numeric' });
 
+  const record = getProfitRecord();
+  const recordLine = (count > 0 && count >= record.count)
+    ? '\n> 🏆 **NEW RECORD!**'
+    : '\n> 📊 Record: **' + record.count + '** (' + record.date + ')';
+
   try {
     await message.reply(
       '📊 **Daily Profits — ' + dateStr + '**\n'
       + '> 🔥 **' + count + '** profit' + (count !== 1 ? 's' : '') + ' posted today'
+      + recordLine
     );
   } catch (e) {
     console.error('[!profits]', e.message);

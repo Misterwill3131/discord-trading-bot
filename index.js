@@ -3049,6 +3049,50 @@ function parseRssItems(xml) {
   return items;
 }
 
+// ── News filter: only keep market-relevant headlines ──
+const NEWS_KEYWORDS = [
+  // Macro / Economy
+  'fed', 'fomc', 'powell', 'inflation', 'cpi', 'ppi', 'gdp', 'jobs', 'nonfarm', 'payroll',
+  'unemployment', 'jobless', 'interest rate', 'rate cut', 'rate hike', 'central bank',
+  'ecb', 'boj', 'boe', 'rba', 'treasury', 'yield', 'bond', 'recession', 'deficit',
+  'pmi', 'ism', 'retail sales', 'consumer confidence', 'housing', 'durable goods',
+  // Markets / Stocks
+  'stock', 'equity', 'equities', 's&p', 'spx', 'nasdaq', 'dow', 'russell', 'nyse',
+  'earnings', 'revenue', 'profit', 'ipo', 'buyback', 'dividend', 'market', 'rally',
+  'sell-off', 'selloff', 'correction', 'bear', 'bull', 'volatility', 'vix',
+  'tesla', 'apple', 'nvidia', 'amazon', 'google', 'meta', 'microsoft',
+  // Commodities
+  'oil', 'crude', 'wti', 'brent', 'opec', 'gold', 'silver', 'copper',
+  'natural gas', 'lng', 'commodity', 'commodities',
+  // Crypto
+  'bitcoin', 'btc', 'ethereum', 'eth', 'crypto', 'blockchain',
+  // Forex
+  'dollar', 'usd', 'eur', 'gbp', 'jpy', 'forex', 'fx', 'currency', 'dxy',
+  // Geopolitics impacting markets
+  'tariff', 'sanction', 'trade deal', 'trade war', 'embargo', 'export ban',
+  'import duty', 'chip ban', 'trade deficit', 'trade surplus',
+];
+
+const NEWS_BLOCKED = [
+  'sport', 'football', 'soccer', 'basketball', 'nba', 'nfl', 'mlb', 'tennis',
+  'olympic', 'fifa', 'world cup', 'celebrity', 'kardashian', 'hollywood',
+  'movie', 'film', 'actor', 'actress', 'grammy', 'oscar', 'emmy',
+  'entertainment', 'reality tv', 'concert', 'album',
+];
+
+function isNewsRelevant(item) {
+  const text = (item.title + ' ' + item.description).toLowerCase();
+  // Block first
+  for (const b of NEWS_BLOCKED) {
+    if (text.includes(b)) return false;
+  }
+  // Must match at least one keyword
+  for (const kw of NEWS_KEYWORDS) {
+    if (text.includes(kw)) return true;
+  }
+  return false;
+}
+
 async function pollFinancialJuice() {
   if (!NEWS_CHANNEL_ID) return;
   try {
@@ -3071,9 +3115,13 @@ async function pollFinancialJuice() {
       return;
     }
 
-    // Find new items (newest first in RSS, we want oldest-first for posting)
+    // Find new items, filter for relevance (newest first in RSS, we want oldest-first for posting)
     const newItems = items.filter(i => i.guid && !fjSeenGuids.has(i.guid)).reverse();
-    if (!newItems.length) return;
+    const relevantItems = newItems.filter(i => {
+      fjSeenGuids.add(i.guid); // Mark all as seen even if filtered
+      return isNewsRelevant(i);
+    });
+    if (!relevantItems.length) return;
 
     const channel = client.channels.cache.get(NEWS_CHANNEL_ID);
     if (!channel || !channel.send) {
@@ -3081,8 +3129,7 @@ async function pollFinancialJuice() {
       return;
     }
 
-    for (const item of newItems) {
-      fjSeenGuids.add(item.guid);
+    for (const item of relevantItems) {
       const desc = item.description && item.description.length > 0
         ? '\n> ' + item.description.substring(0, 300)
         : '';

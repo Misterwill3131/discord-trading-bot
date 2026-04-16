@@ -2148,7 +2148,7 @@ async function addProfitMessage(content) {
 // ─────────────────────────────────────────────────────────────────────
 function getProfitRecord() {
   // Scan last 90 days to find the all-time record
-  let recordCount = 0;
+  let recordCount = 109;
   let recordDate = null;
   for (let i = 0; i < 90; i++) {
     const d = new Date();
@@ -4037,8 +4037,8 @@ client.once('ready', () => {
     const now = new Date();
     const todayStr = now.toISOString().slice(0, 10);
 
-    // Resume journalier a 18h00 heure locale
-    if (now.getHours() === 18 && now.getMinutes() === 0) {
+    // Resume journalier a 21h00 heure locale
+    if (now.getHours() === 21 && now.getMinutes() === 0) {
       if (lastSummaryDate !== todayStr) {
         lastSummaryDate = todayStr;
         sendDailySummary();

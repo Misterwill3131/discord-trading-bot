@@ -2500,6 +2500,46 @@ const PROFITS_PAGE_HTML = `<!DOCTYPE html>
   .stat-box { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 16px 20px; flex: 1; min-width: 120px; }
   .stat-box .num { font-size: 30px; font-weight: 800; color: #fafafa; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
   .stat-box .lbl { font-size: 11px; color: #a0a0b0; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+  /* Review panel */
+  #review-panel { margin-top: 24px; background: rgba(255,255,255,0.03); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; overflow: hidden; }
+  #review-toggle { width: 100%; background: transparent; border: none; color: #fafafa; padding: 14px 20px; text-align: left; cursor: pointer; font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+  #review-toggle:hover { background: rgba(255,255,255,0.03); }
+  #review-body { display: none; padding: 16px 20px; background: rgba(0,0,0,0.2); border-top: 1px solid rgba(255,255,255,0.06); }
+  #review-body.open { display: block; }
+  .review-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+  .review-controls label { font-size: 12px; color: #a0a0b0; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+  .review-controls input[type=date] { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); color: #fafafa; border-radius: 8px; padding: 6px 10px; font-size: 13px; font-family: inherit; }
+  .review-filter { display: flex; gap: 4px; }
+  .rf-btn { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); color: #a0a0b0; border-radius: 8px; padding: 5px 12px; cursor: pointer; font-size: 12px; font-weight: 600; }
+  .rf-btn:hover { background: rgba(255,255,255,0.06); color: #fafafa; }
+  .rf-btn.active { background: rgba(139,92,246,0.15); border-color: rgba(139,92,246,0.4); color: #c4b5fd; }
+  .review-list { display: flex; flex-direction: column; gap: 8px; }
+  .review-msg { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 12px 14px; font-size: 13px; }
+  .review-msg.has-feedback { opacity: 0.5; }
+  .rm-header { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 6px; }
+  .rm-ts { color: #a0a0b0; font-size: 11px; font-variant-numeric: tabular-nums; }
+  .rm-author { color: #D649CC; font-weight: 700; }
+  .rm-status { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; }
+  .rm-counted { background: rgba(16,185,129,0.1); color: #10b981; border: 1px solid rgba(16,185,129,0.3); }
+  .rm-ignored { background: rgba(160,160,176,0.1); color: #a0a0b0; border: 1px solid rgba(160,160,176,0.3); }
+  .rm-feedback-good { background: rgba(16,185,129,0.1); color: #10b981; border: 1px solid rgba(16,185,129,0.3); }
+  .rm-feedback-bad  { background: rgba(239,68,68,0.1); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+  .rm-reason { color: #a0a0b0; font-size: 11px; }
+  .rm-content { color: #fafafa; white-space: pre-wrap; word-break: break-word; margin-top: 4px; margin-bottom: 8px; }
+  .rm-action { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); color: #fafafa; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; font-weight: 600; }
+  .rm-action-bad { border-color: rgba(239,68,68,0.3); color: #f87171; }
+  .rm-action-bad:hover { background: rgba(239,68,68,0.1); }
+  .rm-action-good { border-color: rgba(16,185,129,0.3); color: #10b981; }
+  .rm-action-good:hover { background: rgba(16,185,129,0.1); }
+  .review-pager { display: flex; gap: 10px; align-items: center; justify-content: center; margin-top: 12px; }
+  .review-pager button { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); color: #fafafa; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 12px; }
+  .review-pager button:disabled { opacity: 0.3; cursor: default; }
+  .review-pager span { font-size: 12px; color: #a0a0b0; font-variant-numeric: tabular-nums; }
+  .review-phrases { margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.06); }
+  .review-phrases h4 { font-size: 11px; color: #a0a0b0; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+  .phrase-tag { display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 3px 10px; font-size: 12px; margin: 3px; max-width: 420px; word-break: break-all; color: #fafafa; }
+  .phrase-tag button { background: none; border: none; color: #a0a0b0; cursor: pointer; font-size: 14px; line-height: 1; padding: 0; }
+  .phrase-tag button:hover { color: #f87171; }
 </style>
 </head>
 <body>
@@ -2558,6 +2598,38 @@ ${sidebarHTML('/profits')}
       </div>
     </label>
   </div>
+<div id="review-panel">
+  <button id="review-toggle">
+    <span>📨 Messages #profits (revue & apprentissage)</span>
+    <span id="review-arrow">▶</span>
+  </button>
+  <div id="review-body">
+    <div class="review-controls">
+      <label for="review-date">Date :</label>
+      <input type="date" id="review-date">
+      <div class="review-filter">
+        <button class="rf-btn active" data-filter="all">Tous</button>
+        <button class="rf-btn" data-filter="counted">Comptés</button>
+        <button class="rf-btn" data-filter="ignored">Ignorés</button>
+        <button class="rf-btn" data-filter="flagged">Marqués</button>
+      </div>
+    </div>
+    <div id="review-list" class="review-list">
+      <div style="color:#a0a0b0;font-size:12px;">Chargement...</div>
+    </div>
+    <div id="review-pager" class="review-pager" style="display:none;">
+      <button id="review-prev">← Précédent</button>
+      <span id="review-page-info">Page 1/1</span>
+      <button id="review-next">Suivant →</button>
+    </div>
+    <div class="review-phrases">
+      <h4>Phrases apprises — bloquées (<span id="pf-blocked-count">0</span>)</h4>
+      <div id="pf-blocked">Aucune</div>
+      <h4 style="margin-top:14px;">Phrases apprises — autorisées (<span id="pf-allowed-count">0</span>)</h4>
+      <div id="pf-allowed">Aucune</div>
+    </div>
+  </div>
+</div>
 </div>
 <script>
 (function(){
@@ -2725,6 +2797,173 @@ ${sidebarHTML('/profits')}
   });
 
   loadData(7);
+})();
+(function(){
+  var toggle = document.getElementById('review-toggle');
+  var body = document.getElementById('review-body');
+  var arrow = document.getElementById('review-arrow');
+  var dateInput = document.getElementById('review-date');
+  var listEl = document.getElementById('review-list');
+  var pager = document.getElementById('review-pager');
+  var pageInfo = document.getElementById('review-page-info');
+  var prevBtn = document.getElementById('review-prev');
+  var nextBtn = document.getElementById('review-next');
+
+  var currentFilter = 'all';
+  var currentPage = 1;
+  var totalPages = 1;
+  var loaded = false;
+
+  function today() {
+    var d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  }
+  dateInput.value = today();
+
+  function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function fmtTime(iso){
+    if (!iso) return '';
+    var d = new Date(iso);
+    if (isNaN(d)) return '';
+    return d.toLocaleTimeString('fr-CA',{hour:'2-digit',minute:'2-digit'});
+  }
+
+  function renderMessages(data){
+    var msgs = data.messages || [];
+    if (!msgs.length) {
+      listEl.innerHTML = '<div style="color:#a0a0b0;font-size:12px;padding:20px;text-align:center;">Aucun message</div>';
+      pager.style.display = 'none';
+      return;
+    }
+    listEl.innerHTML = msgs.map(function(m){
+      var statusHtml = m.counted
+        ? '<span class="rm-status rm-counted">✅ Compté</span>'
+        : '<span class="rm-status rm-ignored">⚪ Ignoré</span>';
+      var reasonHtml = '<span class="rm-reason">(' + esc(m.reason || '') + ')</span>';
+      var feedbackHtml = '';
+      if (m.feedback === 'good') feedbackHtml = '<span class="rm-status rm-feedback-good">feedback: ✅</span>';
+      else if (m.feedback === 'bad') feedbackHtml = '<span class="rm-status rm-feedback-bad">feedback: ❌</span>';
+
+      var actionHtml = '';
+      if (m.feedback == null) {
+        if (m.counted) {
+          actionHtml = '<button class="rm-action rm-action-bad" data-id="' + esc(m.id) + '" data-content="' + esc(m.content || '') + '" data-action="block">❌ Pas un profit</button>';
+        } else {
+          actionHtml = '<button class="rm-action rm-action-good" data-id="' + esc(m.id) + '" data-content="' + esc(m.content || '') + '" data-action="allow">✅ C\'est un profit</button>';
+        }
+      }
+
+      return '<div class="review-msg' + (m.feedback ? ' has-feedback' : '') + '" data-msg-id="' + esc(m.id) + '">'
+        + '<div class="rm-header">'
+        +   '<span class="rm-ts">' + fmtTime(m.ts) + '</span>'
+        +   '<span class="rm-author">' + esc(m.author || '') + '</span>'
+        +   statusHtml + ' ' + reasonHtml + ' ' + feedbackHtml
+        + '</div>'
+        + '<div class="rm-content">' + esc(m.preview || m.content || '') + '</div>'
+        + actionHtml
+        + '</div>';
+    }).join('');
+
+    totalPages = Math.max(1, Math.ceil((data.total || 0) / (data.pageSize || 50)));
+    pager.style.display = totalPages > 1 ? 'flex' : 'none';
+    pageInfo.textContent = 'Page ' + currentPage + '/' + totalPages + ' (' + data.total + ' messages)';
+    prevBtn.disabled = currentPage <= 1;
+    nextBtn.disabled = currentPage >= totalPages;
+  }
+
+  function loadMessages(){
+    listEl.innerHTML = '<div style="color:#a0a0b0;font-size:12px;">Chargement...</div>';
+    var url = '/api/profit-messages?date=' + encodeURIComponent(dateInput.value)
+      + '&filter=' + encodeURIComponent(currentFilter)
+      + '&page=' + currentPage;
+    fetch(url).then(function(r){ return r.json(); }).then(renderMessages).catch(function(){
+      listEl.innerHTML = '<div style="color:#f87171;font-size:12px;">Erreur de chargement</div>';
+    });
+  }
+
+  function renderFilters(pf){
+    var blocked = pf.blocked || [];
+    var allowed = pf.allowed || [];
+    document.getElementById('pf-blocked-count').textContent = blocked.length;
+    document.getElementById('pf-allowed-count').textContent = allowed.length;
+    var bl = document.getElementById('pf-blocked');
+    var al = document.getElementById('pf-allowed');
+    bl.innerHTML = blocked.length
+      ? blocked.map(function(p){ return '<span class="phrase-tag">' + esc(p) + '<button data-phrase="' + esc(p) + '" data-list="blocked" title="Supprimer">✕</button></span>'; }).join('')
+      : '<span style="color:#a0a0b0;font-size:12px;">Aucune</span>';
+    al.innerHTML = allowed.length
+      ? allowed.map(function(p){ return '<span class="phrase-tag">' + esc(p) + '<button data-phrase="' + esc(p) + '" data-list="allowed" title="Supprimer">✕</button></span>'; }).join('')
+      : '<span style="color:#a0a0b0;font-size:12px;">Aucune</span>';
+  }
+
+  function loadFilters(){
+    fetch('/api/profit-filters').then(function(r){ return r.json(); }).then(renderFilters).catch(function(){});
+  }
+
+  toggle.addEventListener('click', function(){
+    var open = body.classList.toggle('open');
+    arrow.textContent = open ? '▼' : '▶';
+    if (open && !loaded) {
+      loaded = true;
+      loadMessages();
+      loadFilters();
+    }
+  });
+
+  dateInput.addEventListener('change', function(){ currentPage = 1; loadMessages(); });
+
+  document.querySelectorAll('.rf-btn').forEach(function(b){
+    b.addEventListener('click', function(){
+      document.querySelectorAll('.rf-btn').forEach(function(x){ x.classList.remove('active'); });
+      b.classList.add('active');
+      currentFilter = b.getAttribute('data-filter');
+      currentPage = 1;
+      loadMessages();
+    });
+  });
+
+  prevBtn.addEventListener('click', function(){ if (currentPage > 1) { currentPage--; loadMessages(); } });
+  nextBtn.addEventListener('click', function(){ if (currentPage < totalPages) { currentPage++; loadMessages(); } });
+
+  listEl.addEventListener('click', function(ev){
+    var btn = ev.target.closest('.rm-action');
+    if (!btn) return;
+    var id = btn.getAttribute('data-id');
+    var content = btn.getAttribute('data-content');
+    var action = btn.getAttribute('data-action');
+    btn.disabled = true; btn.textContent = '…';
+    fetch('/api/profit-feedback', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ id: id, content: content, action: action })
+    }).then(function(r){ return r.json(); }).then(function(data){
+      if (data.ok) {
+        renderFilters(data.profitFilters);
+        loadMessages();
+      } else {
+        btn.disabled = false;
+        btn.textContent = action === 'block' ? '❌ Pas un profit' : '✅ C\'est un profit';
+      }
+    }).catch(function(){
+      btn.disabled = false;
+      btn.textContent = action === 'block' ? '❌ Pas un profit' : '✅ C\'est un profit';
+    });
+  });
+
+  var phrasesContainer = document.querySelector('.review-phrases');
+  phrasesContainer.addEventListener('click', function(ev){
+    var btn = ev.target.closest('button[data-phrase]');
+    if (!btn) return;
+    var phrase = btn.getAttribute('data-phrase');
+    var list = btn.getAttribute('data-list');
+    fetch('/api/profit-feedback', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ content: phrase, action: 'unblock-' + list })
+    }).then(function(r){ return r.json(); }).then(function(data){
+      if (data.ok) renderFilters(data.profitFilters);
+    });
+  });
 })();
 </script>
 </div>

@@ -123,7 +123,7 @@ function hasProfitPattern(content) {
 // ─────────────────────────────────────────────────────────────────────
 //  Profits review — per-message storage + learning filters
 // ─────────────────────────────────────────────────────────────────────
-const PROFIT_FILTERS_PATH = path.join(__dirname, 'profit-filters.json');
+const PROFIT_FILTERS_PATH = path.join(DATA_DIR, 'profit-filters.json');
 const PROFIT_PHRASE_MAX = 120;
 
 function loadProfitMessages(dateKey) {

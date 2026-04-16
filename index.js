@@ -2847,9 +2847,9 @@ ${sidebarHTML('/profits')}
       var actionHtml = '';
       if (m.feedback == null) {
         if (m.counted) {
-          actionHtml = '<button class="rm-action rm-action-bad" data-id="' + esc(m.id) + '" data-content="' + esc(m.content || '') + '" data-action="block">❌ Pas un profit</button>';
+          actionHtml = '<button class="rm-action rm-action-bad" data-id="' + esc(m.id) + '" data-content="' + esc((m.content || '').slice(0, 120)) + '" data-action="block">❌ Pas un profit</button>';
         } else {
-          actionHtml = '<button class="rm-action rm-action-good" data-id="' + esc(m.id) + '" data-content="' + esc(m.content || '') + '" data-action="allow">✅ C\'est un profit</button>';
+          actionHtml = '<button class="rm-action rm-action-good" data-id="' + esc(m.id) + '" data-content="' + esc((m.content || '').slice(0, 120)) + '" data-action="allow">✅ C\'est un profit</button>';
         }
       }
 
@@ -2864,7 +2864,7 @@ ${sidebarHTML('/profits')}
         + '</div>';
     }).join('');
 
-    totalPages = Math.max(1, Math.ceil((data.total || 0) / (data.pageSize || 50)));
+    totalPages = data.totalPages || Math.max(1, Math.ceil((data.total || 0) / (data.pageSize || 50)));
     pager.style.display = totalPages > 1 ? 'flex' : 'none';
     pageInfo.textContent = 'Page ' + currentPage + '/' + totalPages + ' (' + data.total + ' messages)';
     prevBtn.disabled = currentPage <= 1;
@@ -2910,7 +2910,7 @@ ${sidebarHTML('/profits')}
     }
   });
 
-  dateInput.addEventListener('change', function(){ currentPage = 1; loadMessages(); });
+  dateInput.addEventListener('change', function(){ if (!loaded) return; currentPage = 1; loadMessages(); });
 
   document.querySelectorAll('.rf-btn').forEach(function(b){
     b.addEventListener('click', function(){
@@ -2962,7 +2962,7 @@ ${sidebarHTML('/profits')}
       body: JSON.stringify({ content: phrase, action: 'unblock-' + list })
     }).then(function(r){ return r.json(); }).then(function(data){
       if (data.ok) renderFilters(data.profitFilters);
-    });
+    }).catch(function(){});
   });
 })();
 </script>

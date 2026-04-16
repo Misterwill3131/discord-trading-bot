@@ -328,27 +328,27 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   #dot { width: 9px; height: 9px; border-radius: 50%; background: #aaa; flex-shrink: 0; transition: background .3s; }
   #dot.on  { background: #3ba55d; box-shadow: 0 0 6px #3ba55d; }
   #dot.off { background: #ed4245; }
-  #lbl { font-size: 12px; color: #80848e; }
-  #cnt { margin-left: auto; font-size: 12px; color: #80848e; }
+  #lbl { font-size: 12px; color: #a0a0b0; }
+  #cnt { margin-left: auto; font-size: 12px; color: #a0a0b0; }
   #wrap { padding: 16px 24px; }
   table { width: 100%; border-collapse: collapse; }
   thead th { text-align: left; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #a0a0b0; padding: 0 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.08); white-space: nowrap; }
   tbody tr { border-bottom: 1px solid rgba(255,255,255,0.04); transition: background .15s; }
   tbody tr:hover { background: rgba(255,255,255,0.03); }
   td { padding: 9px 10px; vertical-align: middle; line-height: 1.45; }
-  .ts   { color: #80848e; font-size: 12px; white-space: nowrap; }
+  .ts   { color: #a0a0b0; font-size: 12px; white-space: nowrap; }
   .auth { font-weight: 600; color: #D649CC; white-space: nowrap; }
-  .chan { color: #80848e; white-space: nowrap; }
+  .chan { color: #a0a0b0; white-space: nowrap; }
   .prev { max-width: 380px; word-break: break-word; }
   .badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
   .b-entry   { background: #1e3a2f; color: #3ba55d; border: 1px solid #3ba55d44; }
   .b-exit    { background: #3a1e1e; color: #ed4245; border: 1px solid #ed424544; }
   .b-neutral { background: #2a2e3d; color: #5865f2; border: 1px solid #5865f244; }
   .b-filter  { background: #3a2e1e; color: #faa61a; border: 1px solid #faa61a44; }
-  .b-convo   { background: #2e2e2e; color: #80848e; border: 1px solid #80848e44; }
+  .b-convo   { background: #2e2e2e; color: #a0a0b0; border: 1px solid #a0a0b044; }
   .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
-  .dg { background: #3ba55d; } .dr { background: #ed4245; } .do { background: #faa61a; } .dz { background: #80848e; }
-  #empty { padding: 60px 24px; text-align: center; color: #80848e; }
+  .dg { background: #3ba55d; } .dr { background: #ed4245; } .do { background: #faa61a; } .dz { background: #a0a0b0; }
+  #empty { padding: 60px 24px; text-align: center; color: #a0a0b0; }
   @keyframes flash { from { background: #2a3040; } to { background: transparent; } }
   tr.new { animation: flash .8s ease-out; }
   tr.learned { opacity: 0.45; }
@@ -363,13 +363,13 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   #filters-body { display:none; padding:16px 20px; background:rgba(0,0,0,0.2); border-top: 1px solid rgba(255,255,255,0.06); }
   #filters-body.open { display:block; }
   .filter-section { margin-bottom:12px; }
-  .filter-section h3 { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:#80848e; margin-bottom:8px; }
+  .filter-section h3 { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:#a0a0b0; margin-bottom:8px; }
   .filter-tag { display:inline-flex; align-items:center; gap:6px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:3px 8px; font-size:12px; margin:3px; max-width:420px; word-break:break-all; }
-  .filter-tag button { background:none; border:none; color:#80848e; cursor:pointer; font-size:14px; line-height:1; padding:0; }
+  .filter-tag button { background:none; border:none; color:#a0a0b0; cursor:pointer; font-size:14px; line-height:1; padding:0; }
   .filter-tag button:hover { color:#ed4245; }
-  .reply-badge { display:inline-block; font-size:10px; background:#2b2d31; border:1px solid #3f4147; color:#80848e; border-radius:3px; padding:1px 5px; margin-right:5px; vertical-align:middle; white-space:nowrap; }
+  .reply-badge { display:inline-block; font-size:10px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); color:#a0a0b0; border-radius:4px; padding:2px 6px; margin-right:5px; vertical-align:middle; white-space:nowrap; }
   .reply-badge span { color:#D649CC; font-weight:600; }
-  .reply-parent { display:block; font-size:11px; color:#80848e; margin-top:2px; font-style:italic; border-left:2px solid #3f4147; padding-left:6px; }
+  .reply-parent { display:block; font-size:11px; color:#a0a0b0; margin-top:2px; font-style:italic; border-left:2px solid rgba(255,255,255,0.1); padding-left:6px; }
   #authors-panel { margin:0 24px 16px; background: rgba(255,255,255,0.03); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border:1px solid rgba(255,255,255,0.08); border-radius:12px; overflow:hidden; }
   #authors-toggle { width:100%; background:transparent; border:none; color:#fafafa; padding:14px 20px; text-align:left; cursor:pointer; font-size:13px; font-weight: 600; display:flex; justify-content:space-between; align-items:center; }
   #authors-toggle:hover { background:rgba(255,255,255,0.03); }
@@ -378,7 +378,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .author-row { display:flex; align-items:center; justify-content:space-between; padding:8px 10px; border-radius:6px; margin-bottom:4px; background:rgba(255,255,255,0.03); }
   .author-row:hover { background:rgba(255,255,255,0.06); }
   .author-name { font-weight:600; color:#D649CC; font-size:13px; flex:1; }
-  .author-status { font-size:11px; color:#80848e; margin:0 10px; white-space:nowrap; }
+  .author-status { font-size:11px; color:#a0a0b0; margin:0 10px; white-space:nowrap; }
   .author-status.blocked  { color:#ed4245; }
   .author-status.allowed  { color:#3ba55d; }
   .author-actions { display:flex; gap:5px; }
@@ -386,8 +386,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .btn-allow-author:hover { background:#3ba55d22; }
   .btn-block-author { background:none; border:1px solid #ed424588; color:#ed4245; border-radius:4px; font-size:11px; padding:2px 8px; cursor:pointer; }
   .btn-block-author:hover { background:#ed424522; }
-  .btn-reset-author { background:none; border:1px solid #80848e55; color:#80848e; border-radius:4px; font-size:11px; padding:2px 8px; cursor:pointer; }
-  .btn-reset-author:hover { background:#80848e22; }
+  .btn-reset-author { background:none; border:1px solid rgba(160,160,176,0.3); color:#a0a0b0; border-radius:6px; font-size:11px; padding:3px 10px; cursor:pointer; }
+  .btn-reset-author:hover { background:rgba(160,160,176,0.12); color:#fafafa; }
 </style>
 </head>
 <body>

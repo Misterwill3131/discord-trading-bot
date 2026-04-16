@@ -370,6 +370,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .reply-badge { display:inline-block; font-size:10px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); color:#a0a0b0; border-radius:4px; padding:2px 6px; margin-right:5px; vertical-align:middle; white-space:nowrap; }
   .reply-badge span { color:#D649CC; font-weight:600; }
   .reply-parent { display:block; font-size:11px; color:#a0a0b0; margin-top:2px; font-style:italic; border-left:2px solid rgba(255,255,255,0.1); padding-left:6px; }
+  .ticker-link { color:#a78bfa; text-decoration:none; font-weight:700; background:rgba(139,92,246,0.12); border-radius:4px; padding:1px 5px; transition:background 150ms, color 150ms; }
+  .ticker-link:hover { background:rgba(139,92,246,0.25); color:#fafafa; }
   #authors-panel { margin:0 24px 16px; background: rgba(255,255,255,0.03); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border:1px solid rgba(255,255,255,0.08); border-radius:12px; overflow:hidden; }
   #authors-toggle { width:100%; background:transparent; border:none; color:#fafafa; padding:14px 20px; text-align:left; cursor:pointer; font-size:13px; font-weight: 600; display:flex; justify-content:space-between; align-items:center; }
   #authors-toggle:hover { background:rgba(255,255,255,0.03); }
@@ -441,6 +443,7 @@ ${sidebarHTML('/dashboard')}
 
   function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
   function fmt(iso){ var d=new Date(iso); return d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'}); }
+  function linkifyTickers(html){ return String(html||'').replace(/\\$([A-Z]{1,5})\\b/g, function(_, s){ return '<a href="/ticker/' + s + '" class="ticker-link">$' + s + '</a>'; }); }
 
   function badge(e){
     var btn='';
@@ -464,9 +467,9 @@ ${sidebarHTML('/dashboard')}
       var who=e.parentAuthor?'<span>'+esc(e.parentAuthor)+'</span>':'';
       previewHtml+='<span class="reply-badge">↩ réponse à '+who+'</span>';
     }
-    previewHtml+=esc(e.preview);
+    previewHtml+=linkifyTickers(esc(e.preview));
     if(e.isReply && e.parentPreview){
-      previewHtml+='<span class="reply-parent">'+esc(e.parentPreview)+'</span>';
+      previewHtml+='<span class="reply-parent">'+linkifyTickers(esc(e.parentPreview))+'</span>';
     }
     tr.innerHTML='<td class="ts">'+fmt(e.ts)+'</td><td class="auth">'+esc(e.author)+'</td>'
       +'<td class="chan">#'+esc(e.channel)+'</td><td class="prev">'+previewHtml+'</td>'
@@ -1302,6 +1305,8 @@ const RAW_MESSAGES_HTML = `<!DOCTYPE html>
   .msg-channel { font-size: 12px; color: #a0a0b0; }
   .msg-time { font-size: 12px; color: #a0a0b0; margin-left: auto; }
   .msg-body { font-size: 14px; color: #fafafa; white-space: pre-wrap; word-break: break-word; margin-top: 2px; }
+  .ticker-link { color:#a78bfa; text-decoration:none; font-weight:700; background:rgba(139,92,246,0.12); border-radius:4px; padding:1px 5px; transition:background 150ms, color 150ms; }
+  .ticker-link:hover { background:rgba(139,92,246,0.25); color:#fafafa; }
   .msg-reply { font-size: 12px; color: #a0a0b0; border-left: 2px solid rgba(255,255,255,0.08); padding-left: 8px; margin-bottom: 4px; font-style: italic; }
   .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
   .b-entry   { background: rgba(16,185,129,0.1); color: #10b981; border: 1px solid rgba(16,185,129,0.3); }
@@ -1364,6 +1369,7 @@ ${sidebarHTML('/raw-messages')}
   function escHtml(s) {
     return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
+  function linkifyTickers(html){ return String(html||'').replace(/\$([A-Z]{1,5})\b/g, function(_, s){ return '<a href="/ticker/' + s + '" class="ticker-link">$' + s + '</a>'; }); }
 
   function buildCard(e, isNew) {
     var card = document.createElement('div');
@@ -1381,10 +1387,10 @@ ${sidebarHTML('/raw-messages')}
 
     var reply = '';
     if (e.isReply && e.parentPreview) {
-      reply = '<div class="msg-reply">Reponse a <strong>' + escHtml(e.parentAuthor || '?') + '</strong> : ' + escHtml(e.parentPreview) + '</div>';
+      reply = '<div class="msg-reply">Reponse a <strong>' + escHtml(e.parentAuthor || '?') + '</strong> : ' + linkifyTickers(escHtml(e.parentPreview)) + '</div>';
     }
 
-    var body = '<div class="msg-body">' + escHtml(e.content || '') + '</div>';
+    var body = '<div class="msg-body">' + linkifyTickers(escHtml(e.content || '')) + '</div>';
 
     card.innerHTML = header + reply + body;
     return card;
@@ -3098,7 +3104,8 @@ const LEADERBOARD_HTML = `<!DOCTYPE html>
   .author-name { font-weight: 700; color: #D649CC; font-size: 14px; }
   .author-name span { border-bottom: 1px dashed #D649CC55; }
   .signals-count { font-weight: 700; color: #3ba55d; font-size: 16px; }
-  .ticker-badge { display: inline-block; background: #2a2e3d; border: 1px solid #5865f244; color: #5865f2; border-radius: 4px; padding: 2px 8px; font-size: 12px; font-weight: 600; }
+  .ticker-badge { display: inline-block; background: rgba(139,92,246,0.12); border: 1px solid rgba(139,92,246,0.3); color: #a78bfa; border-radius: 6px; padding: 3px 10px; font-size: 12px; font-weight: 700; text-decoration: none; transition: background 150ms, color 150ms, border-color 150ms; }
+  .ticker-badge:hover { background: rgba(139,92,246,0.25); color: #fafafa; border-color: rgba(139,92,246,0.5); }
   .bar-wrap { width: 120px; height: 8px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 6px; }
   .bar-fill { height: 100%; border-radius: 4px; background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); }
   .period-note { font-size: 12px; color: #a0a0b0; margin-bottom: 16px; }
@@ -3132,7 +3139,8 @@ const LEADERBOARD_HTML = `<!DOCTYPE html>
   .signal-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
   .signal-date { font-size: 11px; color: #a0a0b0; }
   .signal-channel { font-size: 11px; color: #a0a0b0; background: rgba(255,255,255,0.04); padding: 1px 6px; border-radius: 3px; }
-  .signal-ticker { display: inline-block; background: #2a2e3d; border: 1px solid #5865f244; color: #5865f2; border-radius: 4px; padding: 1px 7px; font-size: 12px; font-weight: 700; }
+  .signal-ticker { display: inline-block; background: rgba(139,92,246,0.12); border: 1px solid rgba(139,92,246,0.3); color: #a78bfa; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; text-decoration: none; transition: background 150ms, color 150ms, border-color 150ms; }
+  .signal-ticker:hover { background: rgba(139,92,246,0.25); color: #fafafa; border-color: rgba(139,92,246,0.5); }
   .signal-prices { display: flex; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
   .price-pill { font-size: 12px; padding: 2px 10px; border-radius: 12px; font-weight: 600; }
   .price-entry { background: #1a3a2a; color: #3ba55d; border: 1px solid #3ba55d44; }
@@ -3230,7 +3238,7 @@ ${sidebarHTML('/leaderboard')}
             prices += '<span class="price-pill price-stop">Stop ' + s.stop_price + '</span>';
           html += '<div class="signal-card">'
             + '<div class="signal-meta">'
-            + '<span class="signal-ticker">$' + esc(s.ticker) + '</span>'
+            + '<a href="/ticker/' + encodeURIComponent(s.ticker || '') + '" class="signal-ticker">$' + esc(s.ticker) + '</a>'
             + '<span class="signal-date">' + fmtDate(s.ts) + '</span>'
             + (s.channel ? '<span class="signal-channel">#' + esc(s.channel) + '</span>' : '')
             + '</div>'
@@ -3267,7 +3275,7 @@ ${sidebarHTML('/leaderboard')}
           + '<td class="rank ' + rankCls + '">' + medal + '</td>'
           + '<td class="author-name"><span>' + esc(row.author) + '</span></td>'
           + '<td class="signals-count">' + row.signals + '</td>'
-          + '<td>' + (row.topTicker ? '<span class="ticker-badge">$' + esc(row.topTicker) + '</span>' : '—') + '</td>'
+          + '<td>' + (row.topTicker ? '<a href="/ticker/' + encodeURIComponent(row.topTicker) + '" class="ticker-badge">$' + esc(row.topTicker) + '</a>' : '—') + '</td>'
           + '<td><span class="bar-wrap"><span class="bar-fill" style="width:' + pct + '%;"></span></span>' + pct + '%</td>'
           + '</tr>';
       });

@@ -2126,7 +2126,7 @@ async function addProfitMessage(content) {
       data.milestones.push(milestone);
       saveProfitData(dateKey, data);
       // Post to profits channel
-      if (PROFITS_CHANNEL_ID && client) {
+      if (PROFITS_CHANNEL_ID && client && !profitsBotSilent) {
         try {
           const ch = client.channels.cache.get(PROFITS_CHANNEL_ID);
           if (ch && ch.send) {
@@ -2166,7 +2166,7 @@ function getProfitRecord() {
 let lastProfitSummaryDate = null;
 
 async function sendDailyProfitSummary() {
-  if (!PROFITS_CHANNEL_ID || !client) return;
+  if (!PROFITS_CHANNEL_ID || !client || profitsBotSilent) return;
   try {
     const ch = client.channels.cache.get(PROFITS_CHANNEL_ID);
     if (!ch || !ch.send) return;
@@ -2252,6 +2252,35 @@ app.post('/api/add-profit', requireAuth, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// Modifier manuellement le count de profits du jour
+app.post('/api/set-profit-count', requireAuth, (req, res) => {
+  try {
+    const newCount = parseInt(req.body?.count, 10);
+    if (isNaN(newCount) || newCount < 0) return res.status(400).json({ error: 'Valeur invalide' });
+    const dateKey = todayKey();
+    const data = loadProfitData(dateKey);
+    data.count = newCount;
+    saveProfitData(dateKey, data);
+    console.log('[profits] Count manually set to ' + newCount);
+    res.json({ ok: true, count: newCount });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Lire / modifier le paramètre "bot silencieux dans #profits"
+let profitsBotSilent = false;
+
+app.get('/api/profits-bot-silent', requireAuth, (req, res) => {
+  res.json({ silent: profitsBotSilent });
+});
+
+app.post('/api/profits-bot-silent', requireAuth, (req, res) => {
+  profitsBotSilent = !!req.body?.silent;
+  console.log('[profits] Bot messages in #profits: ' + (profitsBotSilent ? 'DISABLED' : 'ENABLED'));
+  res.json({ ok: true, silent: profitsBotSilent });
 });
 
 // ─────────────────────────────────────────────────────────────────────
@@ -2357,10 +2386,31 @@ const PROFITS_PAGE_HTML = `<!DOCTYPE html>
       <div class="stat-box"><div class="num" id="stat-best">—</div><div class="lbl">Meilleur jour</div></div>
     </div>
   </div>
-  <div class="card" style="display:flex;align-items:center;gap:16px;">
-    <div style="flex:1;color:#80848e;font-size:13px;">Enregistrer manuellement un profit aujourd'hui</div>
-    <button class="btn-add" id="btn-add-profit">+ Ajouter profit</button>
+  <!-- Modifier le count du jour -->
+  <div class="card" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <div style="flex:1;min-width:160px;">
+      <div style="color:#dcddde;font-size:13px;font-weight:600;margin-bottom:4px;">Modifier les profits d'aujourd'hui</div>
+      <div style="color:#80848e;font-size:12px;">Définir manuellement le compteur du jour</div>
+    </div>
+    <input type="number" id="input-set-count" min="0" step="1" placeholder="Nouveau total"
+      style="width:120px;background:#2b2d31;border:1px solid #3f4147;color:#dcddde;border-radius:4px;padding:7px 10px;font-size:14px;" />
+    <button class="btn-add" id="btn-set-count">Modifier</button>
+    <button class="btn-add" id="btn-add-profit" style="background:#4f545c;">+ Ajouter 1</button>
     <span id="add-msg" style="font-size:13px;color:#3ba55d;display:none;"></span>
+  </div>
+
+  <!-- Toggle messages bot dans #profits -->
+  <div class="card" style="display:flex;align-items:center;gap:16px;">
+    <div style="flex:1;">
+      <div style="color:#dcddde;font-size:13px;font-weight:600;margin-bottom:4px;">Messages du bot dans #profits</div>
+      <div style="color:#80848e;font-size:12px;">Milestones et résumé quotidien</div>
+    </div>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+      <span id="silent-label" style="font-size:13px;color:#80848e;">Activés</span>
+      <div id="toggle-silent" style="position:relative;width:42px;height:22px;background:#3ba55d;border-radius:11px;cursor:pointer;transition:background .2s;">
+        <div id="toggle-thumb" style="position:absolute;top:3px;left:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:left .2s;"></div>
+      </div>
+    </label>
   </div>
 </div>
 <script>
@@ -2461,20 +2511,71 @@ const PROFITS_PAGE_HTML = `<!DOCTYPE html>
     loadData(30);
   });
 
+  // Bouton +1
   document.getElementById('btn-add-profit').addEventListener('click', function(){
     var btn = this;
     btn.disabled = true;
     fetch('/api/add-profit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
       .then(function(r){ return r.json(); })
       .then(function(data){
-        var msg = document.getElementById('add-msg');
-        msg.textContent = 'Profit #' + data.count + ' enregistre !';
-        msg.style.display = '';
-        setTimeout(function(){ msg.style.display = 'none'; }, 4000);
+        showMsg('Profit #' + data.count + ' enregistre !', '#3ba55d');
         loadData(currentDays);
         btn.disabled = false;
       })
       .catch(function(){ btn.disabled = false; });
+  });
+
+  // Bouton Modifier (set count)
+  document.getElementById('btn-set-count').addEventListener('click', function(){
+    var input = document.getElementById('input-set-count');
+    var val = parseInt(input.value, 10);
+    if (isNaN(val) || val < 0) { showMsg('Valeur invalide', '#ed4245'); return; }
+    var btn = this;
+    btn.disabled = true;
+    fetch('/api/set-profit-count', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count: val }) })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        showMsg('Compteur mis à jour : ' + data.count, '#3ba55d');
+        input.value = '';
+        loadData(currentDays);
+        btn.disabled = false;
+      })
+      .catch(function(){ btn.disabled = false; });
+  });
+
+  function showMsg(text, color) {
+    var msg = document.getElementById('add-msg');
+    msg.textContent = text;
+    msg.style.color = color || '#3ba55d';
+    msg.style.display = '';
+    setTimeout(function(){ msg.style.display = 'none'; }, 4000);
+  }
+
+  // Toggle bot silent
+  var silentToggle = document.getElementById('toggle-silent');
+  var silentThumb  = document.getElementById('toggle-thumb');
+  var silentLabel  = document.getElementById('silent-label');
+  var isSilent = false;
+
+  function applySilentUI(silent) {
+    isSilent = silent;
+    silentToggle.style.background = silent ? '#ed4245' : '#3ba55d';
+    silentThumb.style.left = silent ? '23px' : '3px';
+    silentLabel.textContent = silent ? 'Désactivés' : 'Activés';
+    silentLabel.style.color = silent ? '#ed4245' : '#3ba55d';
+  }
+
+  fetch('/api/profits-bot-silent')
+    .then(function(r){ return r.json(); })
+    .then(function(d){ applySilentUI(d.silent); })
+    .catch(function(){});
+
+  silentToggle.addEventListener('click', function(){
+    var newVal = !isSilent;
+    fetch('/api/profits-bot-silent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ silent: newVal }) })
+      .then(function(r){ return r.json(); })
+      .then(function(d){ applySilentUI(d.silent); })
+      .catch(function(){});
   });
 
   loadData(7);

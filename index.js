@@ -2368,7 +2368,8 @@ app.get('/api/profit-messages', requireAuth, (req, res) => {
   const date = String(req.query.date || todayKey());
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'invalid date' });
   const filter = String(req.query.filter || 'all');
-  const page = Math.max(1, parseInt(req.query.page || '1', 10));
+  const rawPage = parseInt(req.query.page || '1', 10);
+  const page = isNaN(rawPage) || rawPage < 1 ? 1 : rawPage;
   const pageSize = 50;
 
   let msgs = loadProfitMessages(date);
@@ -2382,7 +2383,8 @@ app.get('/api/profit-messages', requireAuth, (req, res) => {
   const start = (page - 1) * pageSize;
   const pageMsgs = msgs.slice(start, start + pageSize);
 
-  res.json({ date, total, page, pageSize, messages: pageMsgs });
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  res.json({ date, total, page, pageSize, totalPages, messages: pageMsgs });
 });
 
 app.post('/api/profit-feedback', requireAuth, (req, res) => {
@@ -2390,13 +2392,18 @@ app.post('/api/profit-feedback', requireAuth, (req, res) => {
   const content = String(req.body?.content || '');
   const action = String(req.body?.action || '');
 
+  const validActions = ['block', 'allow', 'unblock-blocked', 'unblock-allowed'];
+  if (!validActions.includes(action)) return res.status(400).json({ error: 'invalid action' });
+
   if (action === 'unblock-blocked') {
-    profitFilters.blocked = (profitFilters.blocked || []).filter(p => p !== content);
+    const phrase = truncatePhrase(content);
+    profitFilters.blocked = (profitFilters.blocked || []).filter(p => p !== phrase);
     saveProfitFilters();
     return res.json({ ok: true, profitFilters });
   }
   if (action === 'unblock-allowed') {
-    profitFilters.allowed = (profitFilters.allowed || []).filter(p => p !== content);
+    const phrase = truncatePhrase(content);
+    profitFilters.allowed = (profitFilters.allowed || []).filter(p => p !== phrase);
     saveProfitFilters();
     return res.json({ ok: true, profitFilters });
   }
@@ -2408,10 +2415,9 @@ app.post('/api/profit-feedback', requireAuth, (req, res) => {
     if (!profitFilters.blocked.includes(phrase)) profitFilters.blocked.push(phrase);
   } else if (action === 'allow') {
     if (!profitFilters.allowed.includes(phrase)) profitFilters.allowed.push(phrase);
-  } else {
-    return res.status(400).json({ error: 'invalid action' });
   }
   saveProfitFilters();
+  console.log('[profit-feedback] action=' + action + ' phrase=' + phrase.substring(0, 60) + (id ? ' id=' + id : ''));
 
   // Update feedback on the stored message (search today + last 30 days)
   if (id) {

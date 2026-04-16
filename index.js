@@ -4186,19 +4186,15 @@ client.on('messageCreate', async (message) => {
     (a.name && IMAGE_EXT.test(a.name))
   );
   const content = message.content || '';
+  const textCount = countProfitEntries(content);
 
-  if (hasImage) {
-    // Image = always 1 profit
-    console.log('[profits] Image in #profits from ' + message.author.username + ' → 1 profit');
-    await addProfitMessage('');
-    return;
-  }
+  if (!hasImage && textCount === 0) return;
 
-  // Text only — check for price ranges (e.g. .34-.55, 1.20 to 4.00, .97 -- 3.05)
-  const profitCount = countProfitEntries(content);
-  if (profitCount === 0) return;
+  // Si le texte contient des price ranges, on les compte (image ou pas)
+  // Si image seule sans texte → 1 profit
+  const profitCount = textCount > 0 ? textCount : 1;
 
-  console.log('[profits] Text in #profits from ' + message.author.username + ' → ' + profitCount + ' profit(s)');
+  console.log('[profits] ' + (hasImage ? 'Image' : 'Text') + ' in #profits from ' + message.author.username + ' → ' + profitCount + ' profit(s)');
   await addProfitMessage(content);
 });
 

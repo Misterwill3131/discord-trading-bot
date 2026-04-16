@@ -4651,16 +4651,52 @@ client.on('messageCreate', async (message) => {
   const textCount = countProfitEntries(content);
   const hasTicker = !!detectTicker(content);
 
-  // Ignorer si aucun signal détecté (ni image, ni price range, ni ticker)
-  if (!hasImage && textCount === 0 && !hasTicker) return;
+  // Decide whether to count, consulting learned filters first
+  let counted;
+  let reason;
+  if (profitFiltersMatch(profitFilters.blocked, content)) {
+    counted = false;
+    reason = 'learned-blocked';
+  } else if (profitFiltersMatch(profitFilters.allowed, content)) {
+    counted = true;
+    reason = 'learned-allowed';
+  } else if (hasImage) {
+    counted = true;
+    reason = 'image';
+  } else if (textCount > 0) {
+    counted = true;
+    reason = 'price range(s)';
+  } else if (hasTicker) {
+    counted = true;
+    reason = 'ticker';
+  } else {
+    counted = false;
+    reason = 'ignored';
+  }
 
-  // Priorité : price ranges > image/ticker seul
-  // Ticker seul ou image seule → 1 profit
-  const profitCount = textCount > 0 ? textCount : 1;
+  // Always store the message, even ignored ones
+  const dateKey = todayKey();
+  const msgs = loadProfitMessages(dateKey);
+  msgs.push({
+    id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
+    ts: new Date().toISOString(),
+    author: message.author.username,
+    content,
+    preview: content.length > PROFIT_PHRASE_MAX ? content.slice(0, PROFIT_PHRASE_MAX) + '…' : content,
+    hasImage,
+    hasTicker,
+    textCount,
+    counted,
+    reason,
+    feedback: null,
+  });
+  saveProfitMessages(dateKey, msgs);
 
-  const reason = hasImage ? 'image' : (textCount > 0 ? 'price range(s)' : 'ticker');
-  console.log('[profits] ' + reason + ' in #profits from ' + message.author.username + ' → ' + profitCount + ' profit(s)');
-  await addProfitMessage(content);
+  console.log('[profits] ' + reason + ' in #profits from ' + message.author.username + ' → counted=' + counted);
+
+  if (counted) {
+    await addProfitMessage(content);
+  }
 });
 
 client.on('messageCreate', async (message) => {

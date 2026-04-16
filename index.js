@@ -242,6 +242,39 @@ const CONFIG = {
 // ═══════════════════════════════════════════════════════════════════════════
 const FONT = CONFIG.FONT; // alias de compatibilité
 
+const COMMON_CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1e1f22; color: #f2f3f5; font-family: 'Inter', system-ui, sans-serif; font-size: 14px; display: flex; min-height: 100vh; }
+  .nav-sidebar { width: 220px; min-width: 220px; background: #1a1b1e; border-right: 1px solid #2e3035; display: flex; flex-direction: column; height: 100vh; position: sticky; top: 0; overflow-y: auto; z-index: 20; flex-shrink: 0; }
+  .nav-sidebar-logo { padding: 20px 16px 14px; font-size: 17px; font-weight: 700; color: #fff; border-bottom: 1px solid #2e3035; margin-bottom: 8px; }
+  .nav-sidebar a { display: flex; align-items: center; gap: 10px; padding: 9px 16px; font-size: 13px; font-weight: 500; color: #80848e; text-decoration: none; border-left: 3px solid transparent; transition: background .15s, color .15s; }
+  .nav-sidebar a:hover { background: #25262a; color: #f2f3f5; }
+  .nav-sidebar a.active { background: rgba(88,101,242,0.12); color: #5865f2; border-left-color: #5865f2; font-weight: 600; }
+  .nav-sidebar-icon { font-size: 15px; min-width: 20px; text-align: center; }
+  .page-content { flex: 1; min-width: 0; overflow-y: auto; }
+  .page-header { display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-bottom: 1px solid #3f4147; background: #1e1f22; position: sticky; top: 0; z-index: 10; }
+  .page-title { font-size: 15px; font-weight: 700; color: #fff; flex-shrink: 0; }
+`;
+
+function sidebarHTML(active) {
+  const links = [
+    { href: '/dashboard',       icon: '📡', label: 'Dashboard' },
+    { href: '/stats',           icon: '📊', label: 'Stats' },
+    { href: '/profits',         icon: '💰', label: 'Profits' },
+    { href: '/news',            icon: '📰', label: 'News' },
+    { href: '/leaderboard',     icon: '🏆', label: 'Leaderboard' },
+    { href: '/image-generator', icon: '🖼️', label: 'Image Generator' },
+    { href: '/proof-generator', icon: '🔍', label: 'Proof Generator' },
+    { href: '/raw-messages',    icon: '📋', label: 'Raw Messages' },
+    { href: '/config',          icon: '⚙️', label: 'Config' },
+  ];
+  return `<nav class="nav-sidebar">
+  <div class="nav-sidebar-logo">🔥 BOOM</div>
+  ${links.map(l => `<a href="${l.href}"${active === l.href ? ' class="active"' : ''}><span class="nav-sidebar-icon">${l.icon}</span>${l.label}</a>`).join('\n  ')}
+</nav>`;
+}
+
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -249,18 +282,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BOOM Signal Monitor</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
-  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
-  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
+  ${COMMON_CSS}
   #dot { width: 9px; height: 9px; border-radius: 50%; background: #aaa; flex-shrink: 0; transition: background .3s; }
   #dot.on  { background: #3ba55d; box-shadow: 0 0 6px #3ba55d; }
   #dot.off { background: #ed4245; }
   #lbl { font-size: 12px; color: #80848e; }
   #cnt { margin-left: auto; font-size: 12px; color: #80848e; }
-  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
-  .nav-link:hover { background: #3f4147; color: #dcddde; }
-  .nav-link.active { background: #5865f222; color: #5865f2; }
   #wrap { padding: 16px 24px; }
   table { width: 100%; border-collapse: collapse; }
   thead th { text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #80848e; padding: 0 10px 10px; border-bottom: 1px solid #3f4147; white-space: nowrap; }
@@ -322,21 +349,14 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 </style>
 </head>
 <body>
-<header>
-  <h1>🔥 BOOM</h1>
-  <a href="/dashboard" class="nav-link active">Dashboard</a>
-  <a href="/raw-messages" class="nav-link">Messages bruts</a>
-  <a href="/image-generator" class="nav-link">Image Generator</a>
-  <a href="/proof-generator" class="nav-link">Proof Generator</a>
-  <a href="/stats" class="nav-link">Stats</a>
-  <a href="/leaderboard" class="nav-link">Leaderboard</a>
-  <a href="/profits" class="nav-link">Profits</a>
-  <a href="/news" class="nav-link">News</a>
-  <a href="/config" class="nav-link">Config</a>
+${sidebarHTML('/dashboard')}
+<div class="page-content">
+<div class="page-header">
+  <h1 class="page-title">Dashboard</h1>
   <span id="dot"></span>
   <span id="lbl">Connecting…</span>
   <span id="cnt"></span>
-</header>
+</div>
 <div id="wrap">
   <table>
     <thead><tr><th>Time</th><th>Author</th><th>Channel</th><th>Preview</th><th>Result</th></tr></thead>
@@ -559,6 +579,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   })();
 })();
 </script>
+</div>
 </body>
 </html>`;
 
@@ -906,14 +927,9 @@ const IMAGE_GEN_HTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BOOM Image Generator</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; min-height: 100vh; }
-  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 16px; }
-  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
-  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
-  .nav-link:hover { background: #3f4147; color: #dcddde; }
-  .nav-link.active { background: #5865f222; color: #5865f2; }
-  .main { display: grid; grid-template-columns: 360px 1fr; gap: 0; height: calc(100vh - 53px); }
+  ${COMMON_CSS}
+  .page-content { overflow: hidden; }
+  .main { display: grid; grid-template-columns: 360px 1fr; gap: 0; height: 100vh; }
   .sidebar { background: #2b2d31; border-right: 1px solid #3f4147; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
   .content { padding: 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
   .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #80848e; margin-bottom: 10px; }
@@ -961,18 +977,8 @@ const IMAGE_GEN_HTML = `<!DOCTYPE html>
 </style>
 </head>
 <body>
-<header>
-  <h1>🔥 BOOM</h1>
-  <a href="/dashboard" class="nav-link">Dashboard</a>
-  <a href="/raw-messages" class="nav-link">Messages bruts</a>
-  <a href="/image-generator" class="nav-link active">Image Generator</a>
-  <a href="/stats" class="nav-link">Stats</a>
-  <a href="/leaderboard" class="nav-link">Leaderboard</a>
-  <a href="/profits" class="nav-link">Profits</a>
-  <a href="/news" class="nav-link">News</a>
-  <a href="/config" class="nav-link">Config</a>
-</header>
-
+${sidebarHTML('/image-generator')}
+<div class="page-content">
 <div class="main">
   <!-- Panneau gauche : formulaire -->
   <div class="sidebar">
@@ -1216,6 +1222,7 @@ const IMAGE_GEN_HTML = `<!DOCTYPE html>
     });
 })();
 </script>
+</div>
 </body>
 </html>`;
 
@@ -1229,13 +1236,7 @@ const RAW_MESSAGES_HTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BOOM Messages Bruts</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
-  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
-  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
-  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
-  .nav-link:hover { background: #3f4147; color: #dcddde; }
-  .nav-link.active { background: #5865f222; color: #5865f2; }
+  ${COMMON_CSS}
   #dot { width: 9px; height: 9px; border-radius: 50%; background: #aaa; flex-shrink: 0; transition: background .3s; }
   #dot.on { background: #3ba55d; box-shadow: 0 0 6px #3ba55d; }
   #dot.off { background: #ed4245; }
@@ -1264,25 +1265,17 @@ const RAW_MESSAGES_HTML = `<!DOCTYPE html>
   .b-convo   { background: #2e2e2e; color: #80848e; border: 1px solid #80848e44; }
   #empty { padding: 60px 24px; text-align: center; color: #80848e; }
   @keyframes flash { from { background: #2a3040; } to { background: #2b2d31; } }
-  ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #3f4147; border-radius: 3px; }
 </style>
 </head>
 <body>
-<header>
-  <h1>🔥 BOOM</h1>
-  <a href="/dashboard" class="nav-link">Dashboard</a>
-  <a href="/raw-messages" class="nav-link active">Messages bruts</a>
-  <a href="/image-generator" class="nav-link">Image Generator</a>
-  <a href="/proof-generator" class="nav-link">Proof Generator</a>
-  <a href="/stats" class="nav-link">Stats</a>
-  <a href="/leaderboard" class="nav-link">Leaderboard</a>
-  <a href="/profits" class="nav-link">Profits</a>
-  <a href="/news" class="nav-link">News</a>
-  <a href="/config" class="nav-link">Config</a>
+${sidebarHTML('/raw-messages')}
+<div class="page-content">
+<div class="page-header">
+  <h1 class="page-title">Raw Messages</h1>
   <span id="dot"></span>
   <span id="lbl">Connecting…</span>
   <span id="cnt"></span>
-</header>
+</div>
 <div id="wrap">
   <div id="search-bar">
     <input type="text" id="search-input" placeholder="Rechercher dans les messages...">
@@ -1415,6 +1408,7 @@ const RAW_MESSAGES_HTML = `<!DOCTYPE html>
   filterAuthor.addEventListener('change', applyFilters);
 })();
 </script>
+</div>
 </body>
 </html>`;
 
@@ -1503,13 +1497,7 @@ const PROOF_GEN_HTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BOOM Proof Generator</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
-  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
-  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
-  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
-  .nav-link:hover { background: #3f4147; color: #dcddde; }
-  .nav-link.active { background: #5865f222; color: #5865f2; }
+  ${COMMON_CSS}
   #wrap { padding: 24px; display: flex; gap: 24px; max-width: 1200px; flex-wrap: wrap; }
   .panel { background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px; padding: 20px; flex: 1; min-width: 320px; }
   .panel-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #80848e; margin-bottom: 14px; }
@@ -1541,17 +1529,9 @@ const PROOF_GEN_HTML = `<!DOCTYPE html>
 </style>
 </head>
 <body>
-<header>
-  <h1>&#x1F525; BOOM</h1>
-  <a href="/dashboard" class="nav-link">Dashboard</a>
-  <a href="/image-generator" class="nav-link">Image Generator</a>
-  <a href="/proof-generator" class="nav-link active">Proof Generator</a>
-  <a href="/stats" class="nav-link">Stats</a>
-  <a href="/leaderboard" class="nav-link">Leaderboard</a>
-  <a href="/profits" class="nav-link">Profits</a>
-  <a href="/news" class="nav-link">News</a>
-  <a href="/config" class="nav-link">Config</a>
-</header>
+${sidebarHTML('/proof-generator')}
+<div class="page-content">
+<div class="page-header"><h1 class="page-title">Proof Generator</h1></div>
 <div id="wrap">
   <!-- Left: Alert search -->
   <div class="panel">
@@ -1683,6 +1663,7 @@ const PROOF_GEN_HTML = `<!DOCTYPE html>
   });
 })();
 </script>
+</div>
 </body>
 </html>`;
 
@@ -1701,13 +1682,7 @@ const STATS_HTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BOOM Stats</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
-  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
-  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
-  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
-  .nav-link:hover { background: #3f4147; color: #dcddde; }
-  .nav-link.active { background: #5865f222; color: #5865f2; }
+  ${COMMON_CSS}
   #wrap { padding: 24px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
   .card { background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px; padding: 20px; }
   .card-full { grid-column: 1 / -1; }
@@ -1752,23 +1727,17 @@ const STATS_HTML = `<!DOCTYPE html>
 </style>
 </head>
 <body>
-<header>
-  <h1>&#x1F525; BOOM</h1>
-  <a href="/dashboard" class="nav-link">Dashboard</a>
-  <a href="/raw-messages" class="nav-link">Messages bruts</a>
-  <a href="/image-generator" class="nav-link">Image Generator</a>
-  <a href="/stats" class="nav-link active">Stats</a>
-  <a href="/leaderboard" class="nav-link">Leaderboard</a>
-  <a href="/profits" class="nav-link">Profits</a>
-  <a href="/news" class="nav-link">News</a>
-  <a href="/config" class="nav-link">Config</a>
+${sidebarHTML('/stats')}
+<div class="page-content">
+<div class="page-header">
+  <h1 class="page-title">Stats</h1>
   <div class="period-btns">
     <button class="btn-period active" id="btn-today" data-period="today">Aujourd&#39;hui</button>
     <button class="btn-period" id="btn-7d" data-period="7d">7 jours</button>
     <button class="btn-period" id="btn-30d" data-period="30d">30 jours</button>
   </div>
   <button class="btn-refresh" id="btn-refresh">Actualiser</button>
-</header>
+</div>
 <div id="wrap">
   <div class="card">
     <div class="card-title">Taux acceptation</div>
@@ -2100,6 +2069,7 @@ const STATS_HTML = `<!DOCTYPE html>
     });
 })();
 </script>
+</div>
 </body>
 </html>`;
 
@@ -2327,13 +2297,7 @@ const PROFITS_PAGE_HTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BOOM Profits</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
-  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
-  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
-  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
-  .nav-link:hover { background: #3f4147; color: #dcddde; }
-  .nav-link.active { background: #5865f222; color: #5865f2; }
+  ${COMMON_CSS}
   #wrap { padding: 24px; display: flex; flex-direction: column; gap: 28px; }
   .card { background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px; padding: 20px; }
   .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #80848e; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; }
@@ -2356,17 +2320,9 @@ const PROFITS_PAGE_HTML = `<!DOCTYPE html>
 </style>
 </head>
 <body>
-<header>
-  <h1>&#x1F525; BOOM</h1>
-  <a href="/dashboard" class="nav-link">Dashboard</a>
-  <a href="/raw-messages" class="nav-link">Messages bruts</a>
-  <a href="/image-generator" class="nav-link">Image Generator</a>
-  <a href="/proof-generator" class="nav-link">Proof Generator</a>
-  <a href="/stats" class="nav-link">Stats</a>
-  <a href="/leaderboard" class="nav-link">Leaderboard</a>
-  <a href="/profits" class="nav-link active">Profits</a>
-  <a href="/config" class="nav-link">Config</a>
-</header>
+${sidebarHTML('/profits')}
+<div class="page-content">
+<div class="page-header"><h1 class="page-title">Profits</h1></div>
 <div id="wrap">
   <div class="card">
     <div class="card-title">
@@ -2581,6 +2537,7 @@ const PROFITS_PAGE_HTML = `<!DOCTYPE html>
   loadData(7);
 })();
 </script>
+</div>
 </body>
 </html>`;
 
@@ -2616,13 +2573,7 @@ const NEWS_PAGE_HTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BOOM News</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
-  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
-  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
-  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
-  .nav-link:hover { background: #3f4147; color: #dcddde; }
-  .nav-link.active { background: #5865f222; color: #5865f2; }
+  ${COMMON_CSS}
   #dot { width: 8px; height: 8px; border-radius: 50%; background: #ed4245; margin-left: auto; }
   #dot.ok { background: #3ba55d; }
   #lbl { font-size: 11px; color: #80848e; }
@@ -2643,20 +2594,13 @@ const NEWS_PAGE_HTML = `<!DOCTYPE html>
 </style>
 </head>
 <body>
-<header>
-  <h1>&#x1F525; BOOM</h1>
-  <a href="/dashboard" class="nav-link">Dashboard</a>
-  <a href="/raw-messages" class="nav-link">Messages bruts</a>
-  <a href="/image-generator" class="nav-link">Image Generator</a>
-  <a href="/proof-generator" class="nav-link">Proof Generator</a>
-  <a href="/stats" class="nav-link">Stats</a>
-  <a href="/leaderboard" class="nav-link">Leaderboard</a>
-  <a href="/profits" class="nav-link">Profits</a>
-  <a href="/news" class="nav-link active">News</a>
-  <a href="/config" class="nav-link">Config</a>
+${sidebarHTML('/news')}
+<div class="page-content">
+<div class="page-header">
+  <h1 class="page-title">News</h1>
   <span id="dot"></span>
   <span id="lbl">Connecting...</span>
-</header>
+</div>
 <div id="wrap">
   <h2 style="color:#fff;font-size:15px;margin-bottom:16px;">&#x1F4F0; Live News Feed <span class="count-badge" id="count-badge"></span></h2>
   <div id="news-list"><div class="news-empty">Chargement...</div></div>
@@ -2706,6 +2650,7 @@ const NEWS_PAGE_HTML = `<!DOCTYPE html>
   };
 })();
 </script>
+</div>
 </body>
 </html>`;
 
@@ -2766,13 +2711,8 @@ const LEADERBOARD_HTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BOOM Leaderboard</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; overflow-x: hidden; }
-  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
-  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
-  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
-  .nav-link:hover { background: #3f4147; color: #dcddde; }
-  .nav-link.active { background: #5865f222; color: #5865f2; }
+  ${COMMON_CSS}
+  body { overflow-x: hidden; }
   #wrap { padding: 24px; transition: margin-right .3s; }
   .card { background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px; padding: 20px; }
   .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #80848e; margin-bottom: 16px; }
@@ -2835,18 +2775,9 @@ const LEADERBOARD_HTML = `<!DOCTYPE html>
 </style>
 </head>
 <body>
-<header>
-  <h1>&#x1F525; BOOM</h1>
-  <a href="/dashboard" class="nav-link">Dashboard</a>
-  <a href="/raw-messages" class="nav-link">Messages bruts</a>
-  <a href="/image-generator" class="nav-link">Image Generator</a>
-  <a href="/proof-generator" class="nav-link">Proof Generator</a>
-  <a href="/stats" class="nav-link">Stats</a>
-  <a href="/leaderboard" class="nav-link active">Leaderboard</a>
-  <a href="/profits" class="nav-link">Profits</a>
-  <a href="/news" class="nav-link">News</a>
-  <a href="/config" class="nav-link">Config</a>
-</header>
+${sidebarHTML('/leaderboard')}
+<div class="page-content">
+<div class="page-header"><h1 class="page-title">Leaderboard</h1></div>
 
 <div id="overlay"></div>
 
@@ -2988,6 +2919,7 @@ const LEADERBOARD_HTML = `<!DOCTYPE html>
     });
 })();
 </script>
+</div>
 </body>
 </html>`;
 
@@ -3093,13 +3025,7 @@ app.get('/config', requireAuth, (req, res) => {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BOOM Config</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
-  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
-  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
-  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
-  .nav-link:hover { background: #3f4147; color: #dcddde; }
-  .nav-link.active { background: #5865f222; color: #5865f2; }
+  ${COMMON_CSS}
   #wrap { padding: 24px; display: flex; flex-direction: column; gap: 20px; max-width: 900px; }
   .card { background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px; padding: 20px; }
   .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #80848e; margin-bottom: 14px; }
@@ -3122,17 +3048,9 @@ app.get('/config', requireAuth, (req, res) => {
 </style>
 </head>
 <body>
-<header>
-  <h1>&#x1F525; BOOM</h1>
-  <a href="/dashboard" class="nav-link">Dashboard</a>
-  <a href="/raw-messages" class="nav-link">Messages bruts</a>
-  <a href="/image-generator" class="nav-link">Image Generator</a>
-  <a href="/proof-generator" class="nav-link">Proof Generator</a>
-  <a href="/stats" class="nav-link">Stats</a>
-  <a href="/leaderboard" class="nav-link">Leaderboard</a>
-  <a href="/profits" class="nav-link">Profits</a>
-  <a href="/config" class="nav-link active">Config</a>
-</header>
+${sidebarHTML('/config')}
+<div class="page-content">
+<div class="page-header"><h1 class="page-title">Config</h1></div>
 <div id="wrap">
   <div class="card">
     <div class="card-title">Variables d'environnement</div>
@@ -3184,6 +3102,7 @@ app.get('/config', requireAuth, (req, res) => {
     ${channelOverrides.map(function(c){ return '<span class="tag tag-channel">' + c.replace(/</g,'&lt;') + '</span>'; }).join('')}
     <div class="note">Canal principal defini par TRADING_CHANNEL. Canaux additionnels via config-overrides.json.</div>
   </div>
+</div>
 </div>
 </body>
 </html>`;

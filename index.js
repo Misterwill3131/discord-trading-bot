@@ -283,17 +283,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <title>BOOM Signal Monitor</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
-  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
-  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
+  ${COMMON_CSS}
   #dot { width: 9px; height: 9px; border-radius: 50%; background: #aaa; flex-shrink: 0; transition: background .3s; }
   #dot.on  { background: #3ba55d; box-shadow: 0 0 6px #3ba55d; }
   #dot.off { background: #ed4245; }
   #lbl { font-size: 12px; color: #80848e; }
   #cnt { margin-left: auto; font-size: 12px; color: #80848e; }
-  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
-  .nav-link:hover { background: #3f4147; color: #dcddde; }
-  .nav-link.active { background: #5865f222; color: #5865f2; }
   #wrap { padding: 16px 24px; }
   table { width: 100%; border-collapse: collapse; }
   thead th { text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #80848e; padding: 0 10px 10px; border-bottom: 1px solid #3f4147; white-space: nowrap; }
@@ -355,21 +350,14 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 </style>
 </head>
 <body>
-<header>
-  <h1>🔥 BOOM</h1>
-  <a href="/dashboard" class="nav-link active">Dashboard</a>
-  <a href="/raw-messages" class="nav-link">Messages bruts</a>
-  <a href="/image-generator" class="nav-link">Image Generator</a>
-  <a href="/proof-generator" class="nav-link">Proof Generator</a>
-  <a href="/stats" class="nav-link">Stats</a>
-  <a href="/leaderboard" class="nav-link">Leaderboard</a>
-  <a href="/profits" class="nav-link">Profits</a>
-  <a href="/news" class="nav-link">News</a>
-  <a href="/config" class="nav-link">Config</a>
+${sidebarHTML('/dashboard')}
+<div class="page-content">
+<div class="page-header">
+  <h1 class="page-title">Dashboard</h1>
   <span id="dot"></span>
   <span id="lbl">Connecting…</span>
   <span id="cnt"></span>
-</header>
+</div>
 <div id="wrap">
   <table>
     <thead><tr><th>Time</th><th>Author</th><th>Channel</th><th>Preview</th><th>Result</th></tr></thead>
@@ -592,6 +580,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   })();
 })();
 </script>
+</div>
 </body>
 </html>`;
 

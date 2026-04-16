@@ -2610,21 +2610,22 @@ const NEWS_PAGE_HTML = `<!DOCTYPE html>
   ${COMMON_CSS}
   #dot { width: 8px; height: 8px; border-radius: 50%; background: #ed4245; margin-left: auto; }
   #dot.ok { background: #3ba55d; }
-  #lbl { font-size: 11px; color: #80848e; }
+  #lbl { font-size: 11px; color: #a0a0b0; }
   #wrap { padding: 24px; max-width: 800px; }
   .news-card {
-    background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px;
-    padding: 10px 14px; margin-bottom: 10px; transition: background .2s;
-    animation: fadeIn .4s ease;
+    background: rgba(255,255,255,0.03); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;
+    padding: 14px 18px; margin-bottom: 10px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+    animation: fadeInUp 400ms cubic-bezier(0.4,0,0.2,1) both;
   }
-  .news-card:hover { background: #32353b; }
-  @keyframes fadeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+  .news-card:hover { background: rgba(255,255,255,0.05); transform: translateY(-1px); box-shadow: 0 4px 20px rgba(139,92,246,0.15); }
   .news-emoji { font-size: 18px; margin-right: 8px; }
-  .news-title { font-weight: 600; color: #fff; font-size: 14px; }
-  .news-meta { display: flex; gap: 10px; margin-top: 6px; font-size: 11px; color: #80848e; }
-  .news-source { background: #1e1f22; padding: 1px 8px; border-radius: 3px; font-weight: 600; }
-  .news-empty { text-align: center; padding: 60px; color: #80848e; }
-  .count-badge { font-size: 11px; color: #80848e; margin-left: 8px; }
+  .news-title { font-weight: 600; color: #fafafa; font-size: 14px; letter-spacing: -0.01em; }
+  .news-meta { display: flex; gap: 10px; margin-top: 8px; font-size: 11px; color: #a0a0b0; }
+  .news-source { background: rgba(255,255,255,0.06); padding: 2px 8px; border-radius: 4px; font-weight: 600; color: #fafafa; }
+  .news-empty { text-align: center; padding: 80px; color: #a0a0b0; }
+  .count-badge { font-size: 11px; color: #a0a0b0; margin-left: 8px; }
 </style>
 </head>
 <body>

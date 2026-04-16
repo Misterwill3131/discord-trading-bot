@@ -2528,7 +2528,7 @@ const NEWS_PAGE_HTML = `<!DOCTYPE html>
   #wrap { padding: 24px; max-width: 800px; }
   .news-card {
     background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px;
-    padding: 14px 18px; margin-bottom: 10px; transition: background .2s;
+    padding: 10px 14px; margin-bottom: 10px; transition: background .2s;
     animation: fadeIn .4s ease;
   }
   .news-card:hover { background: #32353b; }
@@ -3877,7 +3877,7 @@ const NEWS_BLOCKED = [
   'sport', 'football', 'soccer', 'basketball', 'nba', 'nfl', 'mlb', 'tennis',
   'olympic', 'fifa', 'world cup', 'celebrity', 'kardashian', 'hollywood',
   'movie', 'film', 'actor', 'actress', 'grammy', 'oscar', 'emmy',
-  'entertainment', 'reality tv', 'concert', 'album',
+  'entertainment', 'reality tv', 'concert', 'album','Yuan', 'cuba', 
 ];
 
 function isNewsRelevant(item) {

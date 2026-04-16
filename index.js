@@ -3877,7 +3877,7 @@ const NEWS_BLOCKED = [
   'sport', 'football', 'soccer', 'basketball', 'nba', 'nfl', 'mlb', 'tennis',
   'olympic', 'fifa', 'world cup', 'celebrity', 'kardashian', 'hollywood',
   'movie', 'film', 'actor', 'actress', 'grammy', 'oscar', 'emmy',
-  'entertainment', 'reality tv', 'concert', 'album','Yuan', 'cuba', 'Japan Finance Minister','Beijing', 'Guangzhou', 'Shanghai', 'Shenzhen', 'australia', 
+  'entertainment', 'reality tv', 'concert', 'album','Yuan', 'cuba', 'Japan Finance Minister','Beijing', 'Guangzhou', 'Shanghai', 'Shenzhen', 'australia', 'Feds Williams',
 ];
 
 function isNewsRelevant(item) {

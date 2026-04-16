@@ -2332,24 +2332,18 @@ const PROFITS_PAGE_HTML = `<!DOCTYPE html>
 <style>
   ${COMMON_CSS}
   #wrap { padding: 24px; display: flex; flex-direction: column; gap: 28px; }
-  .card { background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px; padding: 20px; }
-  .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #80848e; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; }
+  .card-title { display: flex; align-items: center; justify-content: space-between; }
   .period-btns { display: flex; gap: 6px; }
-  .btn-period { background: #1e1f22; border: 1px solid #3f4147; color: #80848e; border-radius: 4px; padding: 4px 12px; cursor: pointer; font-size: 12px; font-weight: 600; }
-  .btn-period:hover { background: #3f4147; color: #dcddde; }
-  .btn-period.active { background: #5865f244; border-color: #5865f2; color: #5865f2; }
   .chart-wrap { position: relative; height: 220px; }
   svg.bar-chart { width: 100%; height: 100%; }
-  .bar-chart .bar { fill: #3ba55d; transition: opacity .15s; cursor: default; }
-  .bar-chart .bar:hover { opacity: 0.75; }
-  .bar-chart .axis-label { fill: #80848e; font-size: 11px; font-family: 'Segoe UI', system-ui, sans-serif; }
-  .bar-chart .value-label { fill: #dcddde; font-size: 10px; font-family: 'Segoe UI', system-ui, sans-serif; text-anchor: middle; }
+  .bar-chart .bar { fill: url(#profit-gradient); transition: opacity .15s; cursor: default; }
+  .bar-chart .bar:hover { opacity: 0.8; }
+  .bar-chart .axis-label { fill: #a0a0b0; font-size: 11px; font-family: 'Inter', system-ui, sans-serif; }
+  .bar-chart .value-label { fill: #fafafa; font-size: 10px; font-family: 'Inter', system-ui, sans-serif; text-anchor: middle; }
   .summary-row { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 16px; }
-  .stat-box { background: #1e1f22; border: 1px solid #3f4147; border-radius: 6px; padding: 14px 20px; flex: 1; min-width: 120px; }
-  .stat-box .num { font-size: 30px; font-weight: 800; color: #3ba55d; }
-  .stat-box .lbl { font-size: 12px; color: #80848e; margin-top: 4px; }
-  .btn-add { background: #3ba55d; border: none; color: #fff; border-radius: 4px; padding: 8px 18px; font-size: 13px; font-weight: 600; cursor: pointer; }
-  .btn-add:hover { background: #2d8049; }
+  .stat-box { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 16px 20px; flex: 1; min-width: 120px; }
+  .stat-box .num { font-size: 30px; font-weight: 800; color: #fafafa; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .stat-box .lbl { font-size: 11px; color: #a0a0b0; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -2366,7 +2360,14 @@ ${sidebarHTML('/profits')}
       </div>
     </div>
     <div class="chart-wrap">
-      <svg class="bar-chart" id="profit-chart" viewBox="0 0 800 200" preserveAspectRatio="none"></svg>
+      <svg class="bar-chart" id="profit-chart" viewBox="0 0 800 200" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="profit-gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="#8b5cf6" />
+            <stop offset="100%" stop-color="#3b82f6" />
+          </linearGradient>
+        </defs>
+      </svg>
     </div>
     <div class="summary-row" id="summary-row">
       <div class="stat-box"><div class="num" id="stat-today">—</div><div class="lbl">Aujourd'hui</div></div>

@@ -3066,24 +3066,22 @@ app.get('/config', requireAuth, (req, res) => {
 <style>
   ${COMMON_CSS}
   #wrap { padding: 24px; display: flex; flex-direction: column; gap: 20px; max-width: 900px; }
-  .card { background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px; padding: 20px; }
-  .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #80848e; margin-bottom: 14px; }
   table { width: 100%; border-collapse: collapse; }
-  thead th { text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #80848e; padding: 0 8px 8px; border-bottom: 1px solid #3f4147; }
-  tbody tr { border-bottom: 1px solid #2b2d31; }
-  tbody tr:hover { background: #32353b; }
+  thead th { text-align: left; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #a0a0b0; padding: 0 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  tbody tr { border-bottom: 1px solid rgba(255,255,255,0.04); }
+  tbody tr:hover { background: rgba(255,255,255,0.03); }
   td { padding: 7px 8px; font-size: 13px; vertical-align: middle; }
   .alias-key { font-weight: 700; color: #D649CC; }
-  .alias-val { color: #dcddde; }
-  .tag { display: inline-block; background: #1e1f22; border: 1px solid #3f4147; border-radius: 4px; padding: 2px 8px; font-size: 12px; margin: 3px; }
-  .tag-blocked { border-color: #ed424544; color: #ed4245; background: #3a1e1e; }
-  .tag-allowed { border-color: #3ba55d44; color: #3ba55d; background: #1e3a2f; }
-  .tag-author  { border-color: #D649CC44; color: #D649CC; background: #2a1e2e; }
-  .tag-channel { border-color: #5865f244; color: #5865f2; background: #2a2e3d; }
+  .alias-val { color: #fafafa; }
+  .tag { display: inline-block; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 3px 10px; font-size: 12px; margin: 3px; }
+  .tag-blocked { border-color: rgba(239,68,68,0.3); color: #f87171; background: rgba(239,68,68,0.1); }
+  .tag-allowed { border-color: rgba(16,185,129,0.3); color: #10b981; background: rgba(16,185,129,0.1); }
+  .tag-author  { border-color: rgba(214,73,204,0.3); color: #D649CC; background: rgba(214,73,204,0.1); }
+  .tag-channel { border-color: rgba(59,130,246,0.3); color: #60a5fa; background: rgba(59,130,246,0.1); }
   .env-row { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
-  .env-key { font-size: 12px; color: #80848e; width: 220px; flex-shrink: 0; }
-  .env-val { font-size: 12px; color: #dcddde; background: #1e1f22; border: 1px solid #3f4147; border-radius: 4px; padding: 4px 10px; flex: 1; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .note { font-size: 12px; color: #80848e; margin-top: 8px; font-style: italic; }
+  .env-key { font-size: 12px; color: #a0a0b0; width: 220px; flex-shrink: 0; }
+  .env-val { font-size: 12px; color: #fafafa; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; padding: 6px 12px; flex: 1; font-family: 'JetBrains Mono', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .note { font-size: 12px; color: #a0a0b0; margin-top: 8px; font-style: italic; }
 </style>
 </head>
 <body>
@@ -3104,7 +3102,7 @@ ${sidebarHTML('/config')}
   <div class="card">
     <div class="card-title">Aliases auteurs (AUTHOR_ALIASES)</div>
     ${Object.keys(aliases).length === 0
-      ? '<span style="color:#80848e;font-size:12px;font-style:italic">Aucun alias configure — editer config-overrides.json pour en ajouter.</span>'
+      ? '<span style="color:#a0a0b0;font-size:12px;font-style:italic">Aucun alias configure — editer config-overrides.json pour en ajouter.</span>'
       : '<table><thead><tr><th>Username Discord</th><th>Nom affiche</th></tr></thead><tbody>'
         + Object.keys(aliases).map(function(k) {
             return '<tr><td class="alias-key">' + k.replace(/</g,'&lt;') + '</td><td class="alias-val">' + String(aliases[k]).replace(/</g,'&lt;') + '</td></tr>';
@@ -3117,20 +3115,20 @@ ${sidebarHTML('/config')}
   <div class="card">
     <div class="card-title">Filtres actifs (customFilters)</div>
     <div style="margin-bottom:12px;">
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#80848e;margin-bottom:6px;">Phrases bloqu&#233;es (${safeFilters.blocked.length})</div>
-      ${safeFilters.blocked.length ? safeFilters.blocked.map(function(p){ return '<span class="tag tag-blocked">' + p.replace(/</g,'&lt;').substring(0,60) + '</span>'; }).join('') : '<span style="color:#80848e;font-size:12px;font-style:italic">Aucune</span>'}
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#a0a0b0;margin-bottom:6px;">Phrases bloqu&#233;es (${safeFilters.blocked.length})</div>
+      ${safeFilters.blocked.length ? safeFilters.blocked.map(function(p){ return '<span class="tag tag-blocked">' + p.replace(/</g,'&lt;').substring(0,60) + '</span>'; }).join('') : '<span style="color:#a0a0b0;font-size:12px;font-style:italic">Aucune</span>'}
     </div>
     <div style="margin-bottom:12px;">
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#80848e;margin-bottom:6px;">Phrases autoris&#233;es (${safeFilters.allowed.length})</div>
-      ${safeFilters.allowed.length ? safeFilters.allowed.map(function(p){ return '<span class="tag tag-allowed">' + p.replace(/</g,'&lt;').substring(0,60) + '</span>'; }).join('') : '<span style="color:#80848e;font-size:12px;font-style:italic">Aucune</span>'}
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#a0a0b0;margin-bottom:6px;">Phrases autoris&#233;es (${safeFilters.allowed.length})</div>
+      ${safeFilters.allowed.length ? safeFilters.allowed.map(function(p){ return '<span class="tag tag-allowed">' + p.replace(/</g,'&lt;').substring(0,60) + '</span>'; }).join('') : '<span style="color:#a0a0b0;font-size:12px;font-style:italic">Aucune</span>'}
     </div>
     <div style="margin-bottom:12px;">
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#80848e;margin-bottom:6px;">Auteurs bloqu&#233;s (${safeFilters.blockedAuthors.length})</div>
-      ${safeFilters.blockedAuthors.length ? safeFilters.blockedAuthors.map(function(a){ return '<span class="tag tag-blocked">' + a.replace(/</g,'&lt;') + '</span>'; }).join('') : '<span style="color:#80848e;font-size:12px;font-style:italic">Aucun</span>'}
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#a0a0b0;margin-bottom:6px;">Auteurs bloqu&#233;s (${safeFilters.blockedAuthors.length})</div>
+      ${safeFilters.blockedAuthors.length ? safeFilters.blockedAuthors.map(function(a){ return '<span class="tag tag-blocked">' + a.replace(/</g,'&lt;') + '</span>'; }).join('') : '<span style="color:#a0a0b0;font-size:12px;font-style:italic">Aucun</span>'}
     </div>
     <div style="margin-bottom:12px;">
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#80848e;margin-bottom:6px;">Auteurs autoris&#233;s (${safeFilters.allowedAuthors.length})</div>
-      ${safeFilters.allowedAuthors.length ? safeFilters.allowedAuthors.map(function(a){ return '<span class="tag tag-allowed">' + a.replace(/</g,'&lt;') + '</span>'; }).join('') : '<span style="color:#80848e;font-size:12px;font-style:italic">Aucun</span>'}
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#a0a0b0;margin-bottom:6px;">Auteurs autoris&#233;s (${safeFilters.allowedAuthors.length})</div>
+      ${safeFilters.allowedAuthors.length ? safeFilters.allowedAuthors.map(function(a){ return '<span class="tag tag-allowed">' + a.replace(/</g,'&lt;') + '</span>'; }).join('') : '<span style="color:#a0a0b0;font-size:12px;font-style:italic">Aucun</span>'}
     </div>
     <div class="note">Modifier les filtres depuis le Dashboard (boutons ✕ ❌ ✅ sur chaque message).</div>
   </div>

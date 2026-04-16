@@ -2711,13 +2711,8 @@ const LEADERBOARD_HTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BOOM Leaderboard</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; overflow-x: hidden; }
-  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
-  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
-  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
-  .nav-link:hover { background: #3f4147; color: #dcddde; }
-  .nav-link.active { background: #5865f222; color: #5865f2; }
+  ${COMMON_CSS}
+  body { overflow-x: hidden; }
   #wrap { padding: 24px; transition: margin-right .3s; }
   .card { background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px; padding: 20px; }
   .card-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #80848e; margin-bottom: 16px; }
@@ -2780,18 +2775,9 @@ const LEADERBOARD_HTML = `<!DOCTYPE html>
 </style>
 </head>
 <body>
-<header>
-  <h1>&#x1F525; BOOM</h1>
-  <a href="/dashboard" class="nav-link">Dashboard</a>
-  <a href="/raw-messages" class="nav-link">Messages bruts</a>
-  <a href="/image-generator" class="nav-link">Image Generator</a>
-  <a href="/proof-generator" class="nav-link">Proof Generator</a>
-  <a href="/stats" class="nav-link">Stats</a>
-  <a href="/leaderboard" class="nav-link active">Leaderboard</a>
-  <a href="/profits" class="nav-link">Profits</a>
-  <a href="/news" class="nav-link">News</a>
-  <a href="/config" class="nav-link">Config</a>
-</header>
+${sidebarHTML('/leaderboard')}
+<div class="page-content">
+<div class="page-header"><h1 class="page-title">Leaderboard</h1></div>
 
 <div id="overlay"></div>
 
@@ -2933,6 +2919,7 @@ const LEADERBOARD_HTML = `<!DOCTYPE html>
     });
 })();
 </script>
+</div>
 </body>
 </html>`;
 

@@ -4187,14 +4187,17 @@ client.on('messageCreate', async (message) => {
   );
   const content = message.content || '';
   const textCount = countProfitEntries(content);
+  const hasTicker = !!detectTicker(content);
 
-  if (!hasImage && textCount === 0) return;
+  // Ignorer si aucun signal détecté (ni image, ni price range, ni ticker)
+  if (!hasImage && textCount === 0 && !hasTicker) return;
 
-  // Si le texte contient des price ranges, on les compte (image ou pas)
-  // Si image seule sans texte → 1 profit
+  // Priorité : price ranges > image/ticker seul
+  // Ticker seul ou image seule → 1 profit
   const profitCount = textCount > 0 ? textCount : 1;
 
-  console.log('[profits] ' + (hasImage ? 'Image' : 'Text') + ' in #profits from ' + message.author.username + ' → ' + profitCount + ' profit(s)');
+  const reason = hasImage ? 'image' : (textCount > 0 ? 'price range(s)' : 'ticker');
+  console.log('[profits] ' + reason + ' in #profits from ' + message.author.username + ' → ' + profitCount + ' profit(s)');
   await addProfitMessage(content);
 });
 

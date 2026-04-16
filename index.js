@@ -2380,10 +2380,10 @@ ${sidebarHTML('/profits')}
   <div class="card" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
     <div style="flex:1;min-width:160px;">
       <div style="color:#dcddde;font-size:13px;font-weight:600;margin-bottom:4px;">Modifier les profits d'aujourd'hui</div>
-      <div style="color:#80848e;font-size:12px;">Définir manuellement le compteur du jour</div>
+      <div style="color:#a0a0b0;font-size:12px;">Définir manuellement le compteur du jour</div>
     </div>
     <input type="number" id="input-set-count" min="0" step="1" placeholder="Nouveau total"
-      style="width:120px;background:#2b2d31;border:1px solid #3f4147;color:#dcddde;border-radius:4px;padding:7px 10px;font-size:14px;" />
+      style="width:120px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:#fafafa;border-radius:8px;padding:9px 12px;font-size:14px;" />
     <button class="btn-add" id="btn-set-count">Modifier</button>
     <button class="btn-add" id="btn-add-profit" style="background:#4f545c;">+ Ajouter 1</button>
     <span id="add-msg" style="font-size:13px;color:#3ba55d;display:none;"></span>
@@ -2393,10 +2393,10 @@ ${sidebarHTML('/profits')}
   <div class="card" style="display:flex;align-items:center;gap:16px;">
     <div style="flex:1;">
       <div style="color:#dcddde;font-size:13px;font-weight:600;margin-bottom:4px;">Messages du bot dans #profits</div>
-      <div style="color:#80848e;font-size:12px;">Milestones et résumé quotidien</div>
+      <div style="color:#a0a0b0;font-size:12px;">Milestones et résumé quotidien</div>
     </div>
     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-      <span id="silent-label" style="font-size:13px;color:#80848e;">Activés</span>
+      <span id="silent-label" style="font-size:13px;color:#a0a0b0;">Activés</span>
       <div id="toggle-silent" style="position:relative;width:42px;height:22px;background:#3ba55d;border-radius:11px;cursor:pointer;transition:background .2s;">
         <div id="toggle-thumb" style="position:absolute;top:3px;left:3px;width:16px;height:16px;background:#fff;border-radius:50%;transition:left .2s;"></div>
       </div>
@@ -2411,7 +2411,7 @@ ${sidebarHTML('/profits')}
 
   function renderChart(data) {
     var svg = document.getElementById('profit-chart');
-    svg.innerHTML = '';
+    svg.innerHTML = '<defs><linearGradient id="profit-gradient" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#8b5cf6" /><stop offset="100%" stop-color="#3b82f6" /></linearGradient></defs>';
     if (!data.length) return;
     var max = Math.max.apply(null, data.map(function(d){ return d.count; })) || 1;
     var W = 800, H = 200, padL = 30, padR = 10, padT = 20, padB = 30;
@@ -2427,7 +2427,7 @@ ${sidebarHTML('/profits')}
       var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
       line.setAttribute('x1', padL); line.setAttribute('x2', W - padR);
       line.setAttribute('y1', yPos); line.setAttribute('y2', yPos);
-      line.setAttribute('stroke', '#3f4147'); line.setAttribute('stroke-width', '1');
+      line.setAttribute('stroke', 'rgba(255,255,255,0.08)'); line.setAttribute('stroke-width', '1');
       svg.appendChild(line);
       var txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       txt.setAttribute('x', padL - 4); txt.setAttribute('y', yPos + 4);
@@ -2834,7 +2834,7 @@ ${sidebarHTML('/leaderboard')}
   <div class="card">
     <div class="card-title">&#x1F3C6; Leaderboard — 30 derniers jours</div>
     <div class="period-note" id="period-note">Chargement...</div>
-    <div id="leaderboard-wrap"><span style="color:#80848e;font-size:12px;">Chargement...</span></div>
+    <div id="leaderboard-wrap"><span style="color:#a0a0b0;font-size:12px;">Chargement...</span></div>
   </div>
 </div>
 <script>
@@ -2918,7 +2918,7 @@ ${sidebarHTML('/leaderboard')}
       note.textContent = data.period || '30 derniers jours';
       currentDays = 30;
       if (!data.rows || !data.rows.length) {
-        wrap.innerHTML = '<span style="color:#80848e;font-size:12px;">Aucune donnee sur cette periode</span>';
+        wrap.innerHTML = '<span style="color:#a0a0b0;font-size:12px;">Aucune donnee sur cette periode</span>';
         return;
       }
       var maxSig = data.rows[0] ? data.rows[0].signals : 1;

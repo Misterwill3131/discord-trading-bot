@@ -3873,20 +3873,75 @@ function getNewsEmoji(title) {
 }
 
 // ── News filter ──
+// Whitelist — au moins un de ces mots doit être présent dans le titre
+const NEWS_KEYWORDS = [
+  // Banques centrales & politique monétaire
+  'fed', 'federal reserve', 'fomc', 'powell', 'inflation', 'cpi', 'pce', 'ppi',
+  'interest rate', 'rate cut', 'rate hike', 'rate decision', 'central bank',
+  'quantitative', 'balance sheet', 'ecb', 'lagarde', 'boj', 'boe', 'monetary policy',
+  // Macro-économie
+  'gdp', 'jobs report', 'nonfarm', 'payroll', 'unemployment', 'jobless claims',
+  'pmi', 'ism', 'retail sales', 'consumer confidence', 'consumer sentiment',
+  'housing starts', 'durable goods', 'trade balance', 'recession', 'soft landing',
+  'stagflation', 'deficit', 'debt ceiling', 'credit rating', 'downgrade',
+  // Événements marché structurels (pas variations quotidiennes)
+  'stock market', 'wall street', 'circuit breaker', 'market halt',
+  'volatility', 'vix', 'margin call', 'short squeeze', 'flash crash',
+  // Résultats d'entreprises
+  'earnings', 'eps', 'revenue', 'guidance', 'outlook',
+  'beats estimates', 'misses estimates', 'profit warning', 'ipo', 'buyback',
+  'dividend', 'merger', 'acquisition', 'layoffs', 'restructuring',
+  // Grandes capitalisations
+  'tesla', 'apple', 'nvidia', 'amazon', 'google', 'alphabet', 'meta', 'microsoft',
+  'berkshire', 'jpmorgan', 'goldman sachs', 'morgan stanley', 'blackrock',
+  'exxon', 'chevron', 'palantir', 'openai', 'anthropic',
+  // Trésorerie & obligations
+  'treasury', 'yield', 't-bill', 'bond', '10-year', '2-year', 'yield curve',
+  'spread', 'auction', 'debt',
+  // Matières premières
+  'oil', 'crude', 'wti', 'brent', 'opec', 'gold', 'silver', 'copper', 'natural gas', 'commodity',
+  // Crypto
+  'bitcoin', 'btc', 'ethereum', 'crypto',
+  // Forex
+  'dollar', 'dxy', 'usd', 'eur/usd', 'currency', 'forex',
+  // Politique & géopolitique
+  'trump', 'biden', 'harris', 'white house', 'congress', 'senate', 'president',
+  'executive order', 'government shutdown', 'election', 'legislation',
+  'tariff', 'trade war', 'trade deal', 'sanction', 'embargo', 'export ban',
+  'chip ban', 'trade deficit', 'geopolitical', 'war', 'conflict', 'china',
+  'ukraine', 'middle east', 'opec+',
+];
+
+// Blacklist — bloque même si un keyword whitelist est présent
 const NEWS_BLOCKED = [
   'sport', 'football', 'soccer', 'basketball', 'nba', 'nfl', 'mlb', 'tennis',
   'olympic', 'fifa', 'world cup', 'celebrity', 'kardashian', 'hollywood',
   'movie', 'film', 'actor', 'actress', 'grammy', 'oscar', 'emmy',
-  'entertainment', 'reality tv', 'concert', 'album','Yuan', 'cuba', 'Japan Finance Minister','Beijing', 
-  'Guangzhou', 'Shanghai', 'Shenzhen', 'australia', 'Feds Williams', 'Williams', 'Chancellor',
+  'entertainment', 'reality tv', 'concert', 'album', 'music', 'gaming',
+  'video game', 'esport',
 ];
 
+// Bloque les titres de variation d'index quotidienne (ex: "Nasdaq drops 1.4%")
+const INDEX_VARIATION_REGEX = /\b(s&p\s*500?|spx|spy|qqq|nasdaq|dow\s*jones|dow|russell\s*2000?|nikkei|ftse|dax|cac\s*40?)\b.{0,40}(\bup\b|\bdown\b|\brises?\b|\bfalls?\b|\bgains?\b|\blosses?\b|\bslips?\b|\bclimbs?\b|\bdrops?\b|\bsurges?\b|\bplunges?\b|\badvances?\b|\bdeclines?\b|\btrims?\b|\bpares?\b|\bsheds?\b|\badds?\b|\bsinks?\b|\brallies\b|\bslumps?\b|\breadjust|\brebounds?\b)/i;
+
 function isNewsRelevant(item) {
-  const text = (item.title + ' ' + item.description).toLowerCase();
+  const title = item.title || '';
+  const text = (title + ' ' + (item.description || '')).toLowerCase();
+
+  // 1. Bloquer les variations d'index quotidiennes
+  if (INDEX_VARIATION_REGEX.test(title)) return false;
+
+  // 2. Bloquer les sujets hors finance
   for (const b of NEWS_BLOCKED) {
-    if (text.includes(b)) return false;
+    if (text.includes(b.toLowerCase())) return false;
   }
-  return true;
+
+  // 3. Whitelist — doit contenir au moins un keyword
+  for (const kw of NEWS_KEYWORDS) {
+    if (text.includes(kw)) return true;
+  }
+
+  return false;
 }
 
 function extractSource(title) {
@@ -3978,14 +4033,14 @@ async function pollAllNewsFeeds() {
   for (const g of groups) {
     if (g.source && g.items.length > 1) {
       const emoji = getNewsEmoji(g.items[0].title);
-      lines.push(emoji + ' **' + g.source + ':**');
+      lines.push(emoji + ' ' + g.source + ':');
       for (const item of g.items) {
         const text = item.title.replace(g.source + ': ', '').replace(g.source + ':', '').trim();
         lines.push('> • ' + text);
       }
     } else {
       for (const item of g.items) {
-        lines.push(getNewsEmoji(item.title) + ' **' + item.title + '**');
+        lines.push(getNewsEmoji(item.title) + ' ' + item.title);
       }
     }
   }
@@ -4124,7 +4179,12 @@ client.on('messageCreate', async (message) => {
   if (!PROFITS_CHANNEL_ID) return;
   if (message.channel.id !== PROFITS_CHANNEL_ID) return;
 
-  const hasImage = message.attachments.some(a => a.contentType && a.contentType.startsWith('image/'));
+  const IMAGE_EXT = /\.(png|jpg|jpeg|gif|webp)$/i;
+  const hasImage = message.attachments.some(a =>
+    (a.contentType && a.contentType.startsWith('image/')) ||
+    (a.url && IMAGE_EXT.test(a.url)) ||
+    (a.name && IMAGE_EXT.test(a.name))
+  );
   const content = message.content || '';
 
   if (hasImage) {

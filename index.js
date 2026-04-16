@@ -1544,33 +1544,33 @@ const PROOF_GEN_HTML = `<!DOCTYPE html>
 <style>
   ${COMMON_CSS}
   #wrap { padding: 24px; display: flex; gap: 24px; max-width: 1200px; flex-wrap: wrap; }
-  .panel { background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px; padding: 20px; flex: 1; min-width: 320px; }
-  .panel-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #80848e; margin-bottom: 14px; }
+  .panel { background: rgba(255,255,255,0.03); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 24px; flex: 1; min-width: 320px; box-shadow: 0 4px 24px rgba(0,0,0,0.2); }
+  .panel-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #a0a0b0; margin-bottom: 16px; }
   label { font-size: 12px; color: #b5bac1; display: block; margin-bottom: 5px; margin-top: 12px; }
-  input, textarea, select { width: 100%; background: #1e1f22; border: 1px solid #3f4147; border-radius: 4px; color: #dcddde; padding: 8px 10px; font-size: 13px; font-family: inherit; }
-  input:focus, textarea:focus { outline: none; border-color: #5865f2; }
+  input, textarea, select { width: 100%; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; color: #fafafa; padding: 8px 10px; font-size: 13px; font-family: inherit; }
+  input:focus, textarea:focus { outline: none; border-color: rgba(139,92,246,0.5); }
   textarea { resize: vertical; min-height: 70px; }
-  .btn { background: #5865f2; color: #fff; border: none; border-radius: 4px; padding: 10px 20px; cursor: pointer; font-size: 13px; font-weight: 600; width: 100%; margin-top: 16px; }
-  .btn:hover { background: #4752c4; }
-  .btn-sm { background: #3ba55d22; border: 1px solid #3ba55d44; color: #3ba55d; border-radius: 4px; padding: 5px 12px; cursor: pointer; font-size: 12px; font-weight: 600; width: auto; margin-top: 0; }
-  .btn-sm:hover { background: #3ba55d44; }
+  .btn { background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); background-size: 200% 200%; background-position: 0% 50%; color: #fff; border: none; border-radius: 8px; padding: 11px 20px; cursor: pointer; font-size: 13px; font-weight: 600; width: 100%; margin-top: 16px; box-shadow: 0 2px 8px rgba(59,130,246,0.3); }
+  .btn:hover { background-position: 100% 50%; transform: translateY(-1px); box-shadow: 0 4px 16px rgba(139,92,246,0.4); }
+  .btn-sm { background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3); color: #10b981; border-radius: 6px; padding: 6px 14px; cursor: pointer; font-size: 12px; font-weight: 600; width: auto; margin-top: 0; }
+  .btn-sm:hover { background: rgba(16,185,129,0.2); }
   .alert-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; max-height: 300px; overflow-y: auto; }
-  .alert-item { background: #1e1f22; border: 1px solid #3f4147; border-radius: 4px; padding: 8px 10px; cursor: pointer; transition: border-color .15s; }
-  .alert-item:hover { border-color: #5865f2; }
-  .alert-item.selected { border-color: #3ba55d; background: #1a3a2a; }
+  .alert-item { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 10px 12px; cursor: pointer; transition: all 200ms; }
+  .alert-item:hover { border-color: rgba(139,92,246,0.4); background: rgba(255,255,255,0.05); }
+  .alert-item.selected { border-color: rgba(16,185,129,0.5); background: rgba(16,185,129,0.1); }
   .alert-author { font-weight: 700; color: #D649CC; font-size: 12px; }
-  .alert-content { font-size: 13px; color: #dcddde; margin-top: 3px; }
-  .alert-ts { font-size: 11px; color: #80848e; margin-top: 2px; }
+  .alert-content { font-size: 13px; color: #fafafa; margin-top: 3px; }
+  .alert-ts { font-size: 11px; color: #a0a0b0; margin-top: 2px; }
   .alert-type { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 3px; margin-left: 6px; }
-  .type-entry { background: #1a3a2a; color: #3ba55d; }
-  .type-neutral { background: #1a2a3a; color: #5865f2; }
-  #preview-wrap { background: #2b2d31; border: 1px solid #3f4147; border-radius: 8px; padding: 20px; flex: 0 0 100%; }
+  .type-entry { background: rgba(16,185,129,0.1); color: #10b981; }
+  .type-neutral { background: rgba(59,130,246,0.1); color: #60a5fa; }
+  #preview-wrap { background: rgba(255,255,255,0.03); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 24px; flex: 0 0 100%; box-shadow: 0 4px 24px rgba(0,0,0,0.2); }
   #preview-wrap img { max-width: 100%; border-radius: 6px; display: block; margin: 0 auto; }
   .search-row { display: flex; gap: 8px; align-items: flex-end; }
   .search-row input { flex: 1; }
-  #status { font-size: 12px; color: #80848e; margin-top: 8px; min-height: 16px; }
-  .download-btn { background: #3ba55d; color: #fff; border: none; border-radius: 4px; padding: 8px 20px; cursor: pointer; font-size: 13px; font-weight: 600; margin-top: 12px; display: none; }
-  .download-btn:hover { background: #2d7d46; }
+  #status { font-size: 12px; color: #a0a0b0; margin-top: 8px; min-height: 16px; }
+  .download-btn { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #fff; border: none; border-radius: 8px; padding: 8px 20px; cursor: pointer; font-size: 13px; font-weight: 600; margin-top: 12px; display: none; }
+  .download-btn:hover { transform: translateY(-1px); }
 </style>
 </head>
 <body>
@@ -1590,7 +1590,7 @@ ${sidebarHTML('/proof-generator')}
     </div>
     <div id="status"></div>
     <div id="alert-list" class="alert-list"></div>
-    <div style="margin-top:14px;border-top:1px solid #3f4147;padding-top:14px;">
+    <div style="margin-top:14px;border-top:1px solid rgba(255,255,255,0.08);padding-top:14px;">
       <div class="panel-title" style="margin-bottom:8px;">Alerte sélectionnée</div>
       <label>Analyste</label>
       <input id="alert-author" type="text" placeholder="AR">
@@ -1643,7 +1643,7 @@ ${sidebarHTML('/proof-generator')}
         var alerts = data.alerts || [];
         document.getElementById('status').textContent = alerts.length + ' alerte(s) trouvée(s)';
         if(!alerts.length){
-          document.getElementById('alert-list').innerHTML = '<div style="color:#80848e;font-size:12px;padding:8px;">Aucune alerte trouvée pour ' + esc(ticker) + '</div>';
+          document.getElementById('alert-list').innerHTML = '<div style="color:#a0a0b0;font-size:12px;padding:8px;">Aucune alerte trouvée pour ' + esc(ticker) + '</div>';
           return;
         }
         var html = '';

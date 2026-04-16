@@ -413,7 +413,7 @@ ${sidebarHTML('/dashboard')}
     <span id="authors-arrow">▶</span>
   </button>
   <div id="authors-body">
-    <div id="authors-list"><span style="color:#80848e;font-size:12px;font-style:italic">Aucun auteur vu pour l&#39;instant</span></div>
+    <div id="authors-list"><span style="color:#a0a0b0;font-size:12px;font-style:italic">Aucun auteur vu pour l&#39;instant</span></div>
   </div>
 </div>
 
@@ -425,11 +425,11 @@ ${sidebarHTML('/dashboard')}
   <div id="filters-body">
     <div class="filter-section">
       <h3>Phrases bloquées (faux-positifs corrigés) ❌</h3>
-      <div id="blocked-tags"><span style="color:#80848e;font-size:12px;font-style:italic">Aucune règle pour l&#39;instant</span></div>
+      <div id="blocked-tags"><span style="color:#a0a0b0;font-size:12px;font-style:italic">Aucune règle pour l&#39;instant</span></div>
     </div>
     <div class="filter-section">
       <h3>Phrases autorisées (faux-négatifs corrigés) ✅</h3>
-      <div id="allowed-tags"><span style="color:#80848e;font-size:12px;font-style:italic">Aucune règle pour l&#39;instant</span></div>
+      <div id="allowed-tags"><span style="color:#a0a0b0;font-size:12px;font-style:italic">Aucune règle pour l&#39;instant</span></div>
     </div>
   </div>
 </div>
@@ -510,8 +510,8 @@ ${sidebarHTML('/dashboard')}
     document.getElementById('rule-count').textContent=blocked.length+allowed.length;
     var bt=document.getElementById('blocked-tags');
     var at=document.getElementById('allowed-tags');
-    bt.innerHTML=blocked.length?'':'<span style="color:#80848e;font-size:12px;font-style:italic">Aucune regle</span>';
-    at.innerHTML=allowed.length?'':'<span style="color:#80848e;font-size:12px;font-style:italic">Aucune regle</span>';
+    bt.innerHTML=blocked.length?'':'<span style="color:#a0a0b0;font-size:12px;font-style:italic">Aucune regle</span>';
+    at.innerHTML=allowed.length?'':'<span style="color:#a0a0b0;font-size:12px;font-style:italic">Aucune regle</span>';
     blocked.forEach(function(phrase){
       var tag=document.createElement('span'); tag.className='filter-tag';
       tag.innerHTML=esc(phrase)+'<button data-phrase="'+esc(phrase)+'" data-list="blocked" title="Supprimer">✕</button>';
@@ -570,7 +570,7 @@ ${sidebarHTML('/dashboard')}
     blocked.forEach(function(a){ if(!authors.includes(a)) authors.push(a); });
     allowed.forEach(function(a){ if(!authors.includes(a)) authors.push(a); });
     var list=document.getElementById('authors-list');
-    if(!authors.length){ list.innerHTML='<span style="color:#80848e;font-size:12px;font-style:italic">Aucun auteur vu</span>'; return; }
+    if(!authors.length){ list.innerHTML='<span style="color:#a0a0b0;font-size:12px;font-style:italic">Aucun auteur vu</span>'; return; }
     list.innerHTML='';
     authors.sort().forEach(function(name){
       var isBlocked=blocked.includes(name), isAllowed=allowed.includes(name);
@@ -1748,7 +1748,7 @@ const STATS_HTML = `<!DOCTYPE html>
   .hour-chart { display: flex; align-items: flex-end; gap: 2px; height: 80px; margin-top: 10px; }
   .hour-col { flex: 1; display: flex; flex-direction: column; align-items: center; }
   .hour-bar { width: 100%; border-radius: 2px 2px 0 0; min-height: 1px; }
-  .hour-lbl { font-size: 9px; color: #80848e; margin-top: 3px; }
+  .hour-lbl { font-size: 9px; color: #a0a0b0; margin-top: 3px; }
   .period-btns { display: flex; gap: 6px; margin-left: 16px; }
   .perf-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
   .perf-table th { text-align: left; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #a0a0b0; padding: 0 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.08); }
@@ -1801,11 +1801,11 @@ ${sidebarHTML('/stats')}
   </div>
   <div class="card card-full">
     <div class="card-title">Top 10 tickers — taux de succes</div>
-    <div id="ticker-success-wrap"><span style="color:#80848e;font-size:12px;">Chargement...</span></div>
+    <div id="ticker-success-wrap"><span style="color:#a0a0b0;font-size:12px;">Chargement...</span></div>
   </div>
   <div class="card card-full">
     <div class="card-title">Performance par auteur</div>
-    <div id="author-perf-wrap"><span style="color:#80848e;font-size:12px;">Chargement...</span></div>
+    <div id="author-perf-wrap"><span style="color:#a0a0b0;font-size:12px;">Chargement...</span></div>
   </div>
   <div class="card card-full">
     <div class="card-title" id="vol-chart-title">Volume par heure (24h)</div>
@@ -1813,7 +1813,7 @@ ${sidebarHTML('/stats')}
   </div>
   <div class="card card-full">
     <div class="card-title">Analyst Performance — 30 jours</div>
-    <div id="perf-chart"><span style="color:#80848e;font-size:12px;">Chargement...</span></div>
+    <div id="perf-chart"><span style="color:#a0a0b0;font-size:12px;">Chargement...</span></div>
   </div>
 </div>
 <script>
@@ -1836,7 +1836,7 @@ ${sidebarHTML('/stats')}
 
   function renderBars(containerId, data, color) {
     var container = document.getElementById(containerId);
-    if (!data.length) { container.innerHTML = '<span style="color:#80848e;font-size:12px;">Aucune donnee</span>'; return; }
+    if (!data.length) { container.innerHTML = '<span style="color:#a0a0b0;font-size:12px;">Aucune donnee</span>'; return; }
     var max = data[0][1] || 1;
     container.innerHTML = '';
     data.forEach(function(item) {
@@ -1863,7 +1863,7 @@ ${sidebarHTML('/stats')}
     });
     var rows = Object.keys(authorStats).map(function(a) { return [a, authorStats[a]]; })
       .sort(function(x, y) { return y[1].total - x[1].total; }).slice(0, 10);
-    if (!rows.length) { wrap.innerHTML = '<span style="color:#80848e;font-size:12px;">Aucune donnee</span>'; return; }
+    if (!rows.length) { wrap.innerHTML = '<span style="color:#a0a0b0;font-size:12px;">Aucune donnee</span>'; return; }
     var html = '<table class="perf-table"><thead><tr>'
       + '<th>Auteur</th><th>Total</th><th>Acceptes</th><th>Filtres</th><th>Taux</th><th>Ticker top</th>'
       + '</tr></thead><tbody>';
@@ -1913,7 +1913,7 @@ ${sidebarHTML('/stats')}
         var heightPct = Math.round(v / maxV * 100);
         var accRate = v ? acc / v : 0;
         var barColor = accRate >= 0.5 ? '#3ba55d' : accRate >= 0.25 ? '#faa61a' : '#ed4245';
-        if (v === 0) barColor = '#3f4147';
+        if (v === 0) barColor = 'rgba(255,255,255,0.08)';
         var lbl = d.slice(5); // MM-DD
         var col = document.createElement('div');
         col.className = 'hour-col';
@@ -1936,7 +1936,7 @@ ${sidebarHTML('/stats')}
         var heightPct = Math.round(v / maxH * 100);
         var accRate = v ? hourAccepted[i] / v : 0;
         var barColor = accRate >= 0.5 ? '#3ba55d' : accRate >= 0.25 ? '#faa61a' : '#ed4245';
-        if (v === 0) barColor = '#3f4147';
+        if (v === 0) barColor = 'rgba(255,255,255,0.08)';
         var col = document.createElement('div');
         col.className = 'hour-col';
         col.innerHTML = '<div class="hour-bar" title="' + v + ' msg" style="height:' + heightPct + '%;background:' + barColor + ';"></div>'
@@ -1965,7 +1965,7 @@ ${sidebarHTML('/stats')}
     });
     var rows = Object.keys(tickerStats).map(function(t) { return [t, tickerStats[t]]; })
       .sort(function(a, b) { return b[1].total - a[1].total; }).slice(0, 10);
-    if (!rows.length) { wrap.innerHTML = '<span style="color:#80848e;font-size:12px;">Aucune donnee</span>'; return; }
+    if (!rows.length) { wrap.innerHTML = '<span style="color:#a0a0b0;font-size:12px;">Aucune donnee</span>'; return; }
     var html = '<table class="perf-table"><thead><tr>'
       + '<th>#</th><th>Ticker</th><th>Prix entree</th><th>Total</th><th>Acceptes</th><th>Filtres</th><th>Taux succes</th>'
       + '</tr></thead><tbody>';
@@ -1977,7 +1977,7 @@ ${sidebarHTML('/stats')}
         ? '<span style="color:#faa61a;font-weight:700;">$' + s.firstEntry + '</span>'
         : '<span style="color:#4f5660;">—</span>';
       html += '<tr>'
-        + '<td style="color:#80848e;">' + (i + 1) + '</td>'
+        + '<td style="color:#a0a0b0;">' + (i + 1) + '</td>'
         + '<td class="perf-ticker" style="font-weight:700;font-size:13px;">$' + esc(t) + '</td>'
         + '<td>' + entryCell + '</td>'
         + '<td>' + s.total + '</td>'
@@ -2057,7 +2057,7 @@ ${sidebarHTML('/stats')}
     .then(function(data) {
       var wrap = document.getElementById('perf-chart');
       if (!data.datasets || !data.datasets.length) {
-        wrap.innerHTML = '<span style="color:#80848e;font-size:12px;">Aucune donnee</span>';
+        wrap.innerHTML = '<span style="color:#a0a0b0;font-size:12px;">Aucune donnee</span>';
         return;
       }
       var labels = data.labels || [];
@@ -2073,8 +2073,8 @@ ${sidebarHTML('/stats')}
       // Grid lines
       for (var g = 0; g <= 4; g++) {
         var gy = PAD_T + chartH - (g/4)*chartH;
-        svg += '<line x1="'+PAD_L+'" y1="'+gy+'" x2="'+(W-PAD_R)+'" y2="'+gy+'" stroke="#3f4147" stroke-width="0.5"/>';
-        svg += '<text x="'+(PAD_L-4)+'" y="'+(gy+3)+'" fill="#80848e" font-size="9" text-anchor="end">'+Math.round(maxVal*g/4)+'</text>';
+        svg += '<line x1="'+PAD_L+'" y1="'+gy+'" x2="'+(W-PAD_R)+'" y2="'+gy+'" stroke="rgba(255,255,255,0.08)" stroke-width="0.5"/>';
+        svg += '<text x="'+(PAD_L-4)+'" y="'+(gy+3)+'" fill="#a0a0b0" font-size="9" text-anchor="end">'+Math.round(maxVal*g/4)+'</text>';
       }
       // Lines
       datasets.forEach(function(ds) {
@@ -2099,7 +2099,7 @@ ${sidebarHTML('/stats')}
       // Legend
       var legend = '<div style="display:flex;gap:16px;margin-top:10px;flex-wrap:wrap;">';
       datasets.forEach(function(ds){
-        legend += '<div style="display:flex;align-items:center;gap:5px;font-size:12px;"><span style="width:10px;height:10px;border-radius:2px;background:'+ds.color+';display:inline-block;"></span><span style="color:#dcddde;">'+ds.author+'</span></div>';
+        legend += '<div style="display:flex;align-items:center;gap:5px;font-size:12px;"><span style="width:10px;height:10px;border-radius:2px;background:'+ds.color+';display:inline-block;"></span><span style="color:#fafafa;">'+ds.author+'</span></div>';
       });
       legend += '</div>';
       wrap.innerHTML = svg + legend;
@@ -2383,7 +2383,7 @@ ${sidebarHTML('/profits')}
   <!-- Modifier le count du jour -->
   <div class="card" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
     <div style="flex:1;min-width:160px;">
-      <div style="color:#dcddde;font-size:13px;font-weight:600;margin-bottom:4px;">Modifier les profits d'aujourd'hui</div>
+      <div style="color:#fafafa;font-size:13px;font-weight:600;margin-bottom:4px;">Modifier les profits d'aujourd'hui</div>
       <div style="color:#a0a0b0;font-size:12px;">Définir manuellement le compteur du jour</div>
     </div>
     <input type="number" id="input-set-count" min="0" step="1" placeholder="Nouveau total"
@@ -2396,7 +2396,7 @@ ${sidebarHTML('/profits')}
   <!-- Toggle messages bot dans #profits -->
   <div class="card" style="display:flex;align-items:center;gap:16px;">
     <div style="flex:1;">
-      <div style="color:#dcddde;font-size:13px;font-weight:600;margin-bottom:4px;">Messages du bot dans #profits</div>
+      <div style="color:#fafafa;font-size:13px;font-weight:600;margin-bottom:4px;">Messages du bot dans #profits</div>
       <div style="color:#a0a0b0;font-size:12px;">Milestones et résumé quotidien</div>
     </div>
     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">

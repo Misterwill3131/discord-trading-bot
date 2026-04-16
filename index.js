@@ -242,6 +242,39 @@ const CONFIG = {
 // ═══════════════════════════════════════════════════════════════════════════
 const FONT = CONFIG.FONT; // alias de compatibilité
 
+const COMMON_CSS = `
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1e1f22; color: #f2f3f5; font-family: 'Inter', system-ui, sans-serif; font-size: 14px; display: flex; min-height: 100vh; }
+  .nav-sidebar { width: 220px; min-width: 220px; background: #1a1b1e; border-right: 1px solid #2e3035; display: flex; flex-direction: column; height: 100vh; position: sticky; top: 0; overflow-y: auto; z-index: 20; flex-shrink: 0; }
+  .nav-sidebar-logo { padding: 20px 16px 14px; font-size: 17px; font-weight: 700; color: #fff; border-bottom: 1px solid #2e3035; margin-bottom: 8px; }
+  .nav-sidebar a { display: flex; align-items: center; gap: 10px; padding: 9px 16px; font-size: 13px; font-weight: 500; color: #80848e; text-decoration: none; border-left: 3px solid transparent; transition: background .15s, color .15s; }
+  .nav-sidebar a:hover { background: #25262a; color: #f2f3f5; }
+  .nav-sidebar a.active { background: rgba(88,101,242,0.12); color: #5865f2; border-left-color: #5865f2; font-weight: 600; }
+  .nav-sidebar-icon { font-size: 15px; min-width: 20px; text-align: center; }
+  .page-content { flex: 1; min-width: 0; overflow-y: auto; }
+  .page-header { display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-bottom: 1px solid #3f4147; background: #1e1f22; position: sticky; top: 0; z-index: 10; }
+  .page-title { font-size: 15px; font-weight: 700; color: #fff; flex-shrink: 0; }
+`;
+
+function sidebarHTML(active) {
+  const links = [
+    { href: '/dashboard',       icon: '📡', label: 'Dashboard' },
+    { href: '/stats',           icon: '📊', label: 'Stats' },
+    { href: '/profits',         icon: '💰', label: 'Profits' },
+    { href: '/news',            icon: '📰', label: 'News' },
+    { href: '/leaderboard',     icon: '🏆', label: 'Leaderboard' },
+    { href: '/image-generator', icon: '🖼️', label: 'Image Generator' },
+    { href: '/proof-generator', icon: '🔍', label: 'Proof Generator' },
+    { href: '/raw-messages',    icon: '📋', label: 'Raw Messages' },
+    { href: '/config',          icon: '⚙️', label: 'Config' },
+  ];
+  return `<nav class="nav-sidebar">
+  <div class="nav-sidebar-logo">🔥 BOOM</div>
+  ${links.map(l => `<a href="${l.href}"${active === l.href ? ' class="active"' : ''}><span class="nav-sidebar-icon">${l.icon}</span>${l.label}</a>`).join('\n  ')}
+</nav>`;
+}
+
 const DASHBOARD_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>

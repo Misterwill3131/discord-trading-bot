@@ -2362,6 +2362,81 @@ app.post('/api/profits-bot-silent', requireAuth, (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
+//  Profits review API — messages list, feedback, filters
+// ─────────────────────────────────────────────────────────────────────
+app.get('/api/profit-messages', requireAuth, (req, res) => {
+  const date = String(req.query.date || todayKey());
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'invalid date' });
+  const filter = String(req.query.filter || 'all');
+  const page = Math.max(1, parseInt(req.query.page || '1', 10));
+  const pageSize = 50;
+
+  let msgs = loadProfitMessages(date);
+  if (filter === 'counted') msgs = msgs.filter(m => m.counted === true);
+  else if (filter === 'ignored') msgs = msgs.filter(m => m.counted === false);
+  else if (filter === 'flagged') msgs = msgs.filter(m => m.feedback != null);
+
+  msgs.sort((a, b) => (a.ts || '') < (b.ts || '') ? 1 : -1);
+
+  const total = msgs.length;
+  const start = (page - 1) * pageSize;
+  const pageMsgs = msgs.slice(start, start + pageSize);
+
+  res.json({ date, total, page, pageSize, messages: pageMsgs });
+});
+
+app.post('/api/profit-feedback', requireAuth, (req, res) => {
+  const id = String(req.body?.id || '');
+  const content = String(req.body?.content || '');
+  const action = String(req.body?.action || '');
+
+  if (action === 'unblock-blocked') {
+    profitFilters.blocked = (profitFilters.blocked || []).filter(p => p !== content);
+    saveProfitFilters();
+    return res.json({ ok: true, profitFilters });
+  }
+  if (action === 'unblock-allowed') {
+    profitFilters.allowed = (profitFilters.allowed || []).filter(p => p !== content);
+    saveProfitFilters();
+    return res.json({ ok: true, profitFilters });
+  }
+
+  const phrase = truncatePhrase(content);
+  if (!phrase) return res.status(400).json({ error: 'empty content' });
+
+  if (action === 'block') {
+    if (!profitFilters.blocked.includes(phrase)) profitFilters.blocked.push(phrase);
+  } else if (action === 'allow') {
+    if (!profitFilters.allowed.includes(phrase)) profitFilters.allowed.push(phrase);
+  } else {
+    return res.status(400).json({ error: 'invalid action' });
+  }
+  saveProfitFilters();
+
+  // Update feedback on the stored message (search today + last 30 days)
+  if (id) {
+    const targetFeedback = action === 'block' ? 'bad' : 'good';
+    for (let i = 0; i < 30; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dk = d.toISOString().slice(0, 10);
+      const msgs = loadProfitMessages(dk);
+      let changed = false;
+      for (const m of msgs) {
+        if (m.id === id) { m.feedback = targetFeedback; changed = true; break; }
+      }
+      if (changed) { saveProfitMessages(dk, msgs); break; }
+    }
+  }
+
+  res.json({ ok: true, profitFilters });
+});
+
+app.get('/api/profit-filters', requireAuth, (req, res) => {
+  res.json(profitFilters);
+});
+
+// ─────────────────────────────────────────────────────────────────────
 //  Webhook endpoint pour Discord → profits (pas d'auth requise)
 //  Configure le webhook Discord du salon #profits vers cette URL
 // ─────────────────────────────────────────────────────────────────────

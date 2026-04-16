@@ -120,6 +120,71 @@ function hasProfitPattern(content) {
   return PROFIT_PATTERN.test(content);
 }
 
+// ─────────────────────────────────────────────────────────────────────
+//  Profits review — per-message storage + learning filters
+// ─────────────────────────────────────────────────────────────────────
+const PROFIT_FILTERS_PATH = path.join(__dirname, 'profit-filters.json');
+const PROFIT_PHRASE_MAX = 120;
+
+function loadProfitMessages(dateKey) {
+  try {
+    const filePath = path.join(DATA_DIR, 'profit-messages-' + dateKey + '.json');
+    if (fs.existsSync(filePath)) {
+      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    }
+  } catch (e) {
+    console.error('[profits-msg] Failed to load profit-messages-' + dateKey + '.json:', e.message);
+  }
+  return [];
+}
+
+function saveProfitMessages(dateKey, msgs) {
+  try {
+    const filePath = path.join(DATA_DIR, 'profit-messages-' + dateKey + '.json');
+    fs.writeFileSync(filePath, JSON.stringify(msgs, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[profits-msg] Failed to save profit-messages-' + dateKey + '.json:', e.message);
+  }
+}
+
+function loadProfitFilters() {
+  try {
+    if (fs.existsSync(PROFIT_FILTERS_PATH)) {
+      const data = JSON.parse(fs.readFileSync(PROFIT_FILTERS_PATH, 'utf8'));
+      return { blocked: Array.isArray(data.blocked) ? data.blocked : [], allowed: Array.isArray(data.allowed) ? data.allowed : [] };
+    }
+  } catch (e) {
+    console.error('[profit-filters] Failed to load profit-filters.json:', e.message);
+  }
+  return { blocked: [], allowed: [] };
+}
+
+function saveProfitFilters() {
+  try {
+    fs.writeFileSync(PROFIT_FILTERS_PATH, JSON.stringify(profitFilters, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[profit-filters] Failed to save profit-filters.json:', e.message);
+  }
+}
+
+function truncatePhrase(s) {
+  const str = String(s || '').trim();
+  return str.length > PROFIT_PHRASE_MAX ? str.slice(0, PROFIT_PHRASE_MAX) : str;
+}
+
+function profitFiltersMatch(list, content) {
+  if (!content || !list || !list.length) return false;
+  const lower = String(content).toLowerCase();
+  for (const phrase of list) {
+    if (!phrase) continue;
+    if (lower.includes(String(phrase).toLowerCase())) return true;
+  }
+  return false;
+}
+
+let profitFilters = loadProfitFilters();
+// ─────────────────────────────────────────────────────────────────────
+
 // Last generated promo image
 let lastPromoImageBuffer = null;
 

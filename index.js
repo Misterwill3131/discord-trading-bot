@@ -2573,13 +2573,7 @@ const NEWS_PAGE_HTML = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BOOM News</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #1e1f22; color: #dcddde; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
-  header { background: #2b2d31; border-bottom: 1px solid #3f4147; padding: 14px 24px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 10; }
-  header h1 { font-size: 16px; font-weight: 700; color: #fff; }
-  .nav-link { font-size: 13px; color: #80848e; text-decoration: none; padding: 4px 10px; border-radius: 4px; transition: background .15s, color .15s; }
-  .nav-link:hover { background: #3f4147; color: #dcddde; }
-  .nav-link.active { background: #5865f222; color: #5865f2; }
+  ${COMMON_CSS}
   #dot { width: 8px; height: 8px; border-radius: 50%; background: #ed4245; margin-left: auto; }
   #dot.ok { background: #3ba55d; }
   #lbl { font-size: 11px; color: #80848e; }
@@ -2600,20 +2594,13 @@ const NEWS_PAGE_HTML = `<!DOCTYPE html>
 </style>
 </head>
 <body>
-<header>
-  <h1>&#x1F525; BOOM</h1>
-  <a href="/dashboard" class="nav-link">Dashboard</a>
-  <a href="/raw-messages" class="nav-link">Messages bruts</a>
-  <a href="/image-generator" class="nav-link">Image Generator</a>
-  <a href="/proof-generator" class="nav-link">Proof Generator</a>
-  <a href="/stats" class="nav-link">Stats</a>
-  <a href="/leaderboard" class="nav-link">Leaderboard</a>
-  <a href="/profits" class="nav-link">Profits</a>
-  <a href="/news" class="nav-link active">News</a>
-  <a href="/config" class="nav-link">Config</a>
+${sidebarHTML('/news')}
+<div class="page-content">
+<div class="page-header">
+  <h1 class="page-title">News</h1>
   <span id="dot"></span>
   <span id="lbl">Connecting...</span>
-</header>
+</div>
 <div id="wrap">
   <h2 style="color:#fff;font-size:15px;margin-bottom:16px;">&#x1F4F0; Live News Feed <span class="count-badge" id="count-badge"></span></h2>
   <div id="news-list"><div class="news-empty">Chargement...</div></div>
@@ -2663,6 +2650,7 @@ const NEWS_PAGE_HTML = `<!DOCTYPE html>
   };
 })();
 </script>
+</div>
 </body>
 </html>`;
 

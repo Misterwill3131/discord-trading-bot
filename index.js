@@ -2412,8 +2412,10 @@ app.post('/api/profit-feedback', requireAuth, (req, res) => {
   if (!phrase) return res.status(400).json({ error: 'empty content' });
 
   if (action === 'block') {
+    profitFilters.allowed = profitFilters.allowed.filter(p => p !== phrase);
     if (!profitFilters.blocked.includes(phrase)) profitFilters.blocked.push(phrase);
   } else if (action === 'allow') {
+    profitFilters.blocked = profitFilters.blocked.filter(p => p !== phrase);
     if (!profitFilters.allowed.includes(phrase)) profitFilters.allowed.push(phrase);
   }
   saveProfitFilters();
@@ -2859,7 +2861,7 @@ ${sidebarHTML('/profits')}
         +   '<span class="rm-author">' + esc(m.author || '') + '</span>'
         +   statusHtml + ' ' + reasonHtml + ' ' + feedbackHtml
         + '</div>'
-        + '<div class="rm-content">' + esc(m.preview || m.content || '') + '</div>'
+        + '<div class="rm-content">' + (m.hasImage && !(m.preview || m.content) ? '<em style="color:#a0a0b0;">[image]</em>' : esc(m.preview || m.content || '')) + '</div>'
         + actionHtml
         + '</div>';
     }).join('');

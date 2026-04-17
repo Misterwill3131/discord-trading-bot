@@ -910,7 +910,11 @@ app.get('/health', async (req, res) => {
 });
 
 app.get('/api/messages', requireAuth, (req, res) => {
-  var msgs = messageLog;
+  // Exclut les auteurs bloqués : les messages historiques antérieurs au
+  // blocage ne doivent pas polluer le dashboard (stats, timeline, etc.).
+  var msgs = messageLog.filter(function(m) {
+    return !m.author || !BLOCKED_AUTHORS.has(String(m.author).toLowerCase());
+  });
   if (req.query.from) {
     var from = new Date(req.query.from).getTime();
     if (!isNaN(from)) msgs = msgs.filter(function(m) { return new Date(m.ts).getTime() >= from; });
@@ -5539,7 +5543,15 @@ client.on('messageCreate', async (message) => {
   // ───────────────────────────────────────────────────────────────────────────
 
   // ── Filtre par auteur ──────────────────────────────────────────────────────
-  if (BLOCKED_AUTHORS.has(authorName.toLowerCase()) || (customFilters.blockedAuthors || []).includes(authorName)) {
+  // Les auteurs dans BLOCKED_AUTHORS (hardcodé) sont ignorés silencieusement —
+  // aucun logEvent pour qu'ils ne polluent jamais le dashboard. Les auteurs
+  // bloqués via customFilters (UI) restent logués avec reason 'Auteur bloqué'
+  // pour que l'utilisateur voie que son filtre a fonctionné.
+  if (BLOCKED_AUTHORS.has(authorName.toLowerCase())) {
+    console.log('[AUTHOR BLOCKED] ' + authorName);
+    return;
+  }
+  if ((customFilters.blockedAuthors || []).includes(authorName)) {
     console.log('[AUTHOR BLOCKED] ' + authorName);
     logEvent(authorName, channelName, content, null, 'Auteur bloqué');
     return;

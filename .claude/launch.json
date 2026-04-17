@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "proof-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Users/willi/Documents/GitHub/discord-trading-bot/preview_server.js"],
+      "port": 5173
+    },
+    {
       "name": "discord-trading-bot",
       "runtimeExecutable": "node",
       "runtimeArgs": ["C:/Users/willi/Documents/GitHub/discord-trading-bot/index.js"],

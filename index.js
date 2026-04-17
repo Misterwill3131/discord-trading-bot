@@ -4254,19 +4254,18 @@ async function drawRichLine(ctx, text, x, y, fontSize) {
 // ─────────────────────────────────────────────────────────────────────
 async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
   ctx.save();
-  const PADDING_V = 14;
+  const PADDING_V = 18;
   const PADDING_L = 16;
   const AVATAR_D = 40;
   const AVATAR_X = PADDING_L;
   const CONTENT_X = PADDING_L + AVATAR_D + 16;
   const MAX_TW = W - CONTENT_X - PADDING_L;
   const LINE_H = 22;
-  const ROW_H = 20;
-  const FONT = 'gg sans, Segoe UI, Arial, sans-serif';
+  const NAME_H = 20;
 
   // Avatar
   const avatarCX = AVATAR_X + AVATAR_D / 2;
-  const avatarCY = yStart + PADDING_V + ROW_H / 2 + 2;
+  const avatarCY = yStart + PADDING_V + NAME_H / 2 + 2;
   const avatarR = AVATAR_D / 2;
   ctx.save();
   ctx.beginPath();
@@ -4285,28 +4284,30 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
       else { drawH = size / imgRatio; drawY = avatarCY - drawH / 2; }
       ctx.drawImage(img, drawX, drawY, drawW, drawH);
     } catch (e) {
-      ctx.fillStyle = '#5865f2';
+      ctx.fillStyle = CONFIG.AVATAR_COLOR;
       ctx.fillRect(avatarCX - avatarR, avatarCY - avatarR, AVATAR_D, AVATAR_D);
     }
   } else {
-    ctx.fillStyle = '#5865f2';
+    ctx.fillStyle = CONFIG.AVATAR_COLOR;
     ctx.fillRect(avatarCX - avatarR, avatarCY - avatarR, AVATAR_D, AVATAR_D);
   }
   ctx.restore();
   if (!customAvatarUrl) {
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = CONFIG.AVATAR_TEXT_COLOR;
     ctx.font = 'bold 14px ' + FONT;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText((author || '?').slice(0, 2).toUpperCase(), avatarCX, avatarCY);
+    ctx.fillText((author || 'W').slice(0, 2).toUpperCase(), avatarCX, avatarCY);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
   }
 
-  // Username
-  const nameY = yStart + PADDING_V + ROW_H - 3;
-  ctx.font = 'bold 15px ' + FONT;
-  const nameW = ctx.measureText(author || '?').width;
+  // Username — identical to generateImage
+  const nameY = yStart + PADDING_V + NAME_H - 3;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.font = 'bold 16px ' + FONT;
+  const nameW = ctx.measureText(author || 'Z').width;
   if (author === 'Legacy Trading') {
     ctx.fillStyle = '#e84040';
   } else {
@@ -4315,59 +4316,70 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
     nameGrad.addColorStop(1, '#d649cc');
     ctx.fillStyle = nameGrad;
   }
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
-  ctx.fillText(author || '?', CONTENT_X, nameY);
+  ctx.fillText(author || 'Z', CONTENT_X, nameY);
 
-  // Role badges
-  let badgeX = CONTENT_X + nameW + 8;
-  const badgeY = nameY - 14;
-  const badgeH = 16;
-  ctx.font = 'bold 10px ' + FONT;
+  // tag_boom.png — identical to generateImage
+  const TAG_H = 18;
+  const badgeX = CONTENT_X + nameW + 6;
+  const badgeY = nameY - TAG_H + 2;
+  let BADGE_W = 0;
+  try {
+    const tagImg = await loadImage(path.join(__dirname, 'avatar', 'tag_boom.png'));
+    const tagRatio = tagImg.width / tagImg.height;
+    BADGE_W = Math.round(TAG_H * tagRatio);
+    ctx.drawImage(tagImg, badgeX, badgeY, BADGE_W, TAG_H);
+  } catch(e) {
+    ctx.font = 'bold 10px ' + FONT;
+    ctx.fillStyle = '#ffffff';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('BOOM', badgeX, badgeY + TAG_H / 2);
+    ctx.textBaseline = 'alphabetic';
+    BADGE_W = 50;
+  }
 
-  const drawBadge = (text, bgColor, borderColor, textColor) => {
-    const tw = ctx.measureText(text).width;
-    const bw = tw + 12;
-    ctx.fillStyle = bgColor;
-    ctx.strokeStyle = borderColor;
-    ctx.lineWidth = 1;
+  // Logo BOOM circulaire — identical to generateImage
+  const LOGO_SIZE = 18;
+  const logoX = badgeX + BADGE_W + 6;
+  const logoCY = badgeY + TAG_H / 2;
+  let logoEndX = logoX;
+  try {
+    const logoImg = await loadImage(path.join(__dirname, 'logo_boom.png'));
+    ctx.save();
     ctx.beginPath();
-    ctx.roundRect(badgeX, badgeY, bw, badgeH, 3);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = textColor;
-    ctx.fillText(text, badgeX + 6, nameY - 2);
-    badgeX += bw + 4;
-  };
+    ctx.arc(logoX + LOGO_SIZE / 2, logoCY, LOGO_SIZE / 2, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+    ctx.drawImage(logoImg, logoX, logoCY - LOGO_SIZE / 2, LOGO_SIZE, LOGO_SIZE);
+    ctx.restore();
+    logoEndX = logoX + LOGO_SIZE + 6;
+  } catch(e) {
+    logoEndX = logoX;
+  }
 
-  drawBadge('BOOM', 'rgba(214,73,204,0.15)', 'rgba(214,73,204,0.4)', '#d649cc');
-  drawBadge('boom', 'rgba(255,255,255,0.06)', 'rgba(255,255,255,0.12)', '#a0a0b0');
-
-  // Timestamp
+  // Time — identical to generateImage (en-US, CONFIG.TIME_COLOR)
   const d = timestamp ? new Date(timestamp) : new Date();
-  const dateStr = d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'America/New_York' });
-  const timeStr = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
-  ctx.fillStyle = '#72767d';
-  ctx.font = '11px ' + FONT;
-  ctx.fillText(dateStr + ' - ' + timeStr, badgeX + 4, nameY - 2);
+  const timeStr = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
+  ctx.fillStyle = CONFIG.TIME_COLOR;
+  ctx.font = '12px ' + FONT;
+  ctx.fillText(timeStr, logoEndX, nameY - 1);
 
-  // Message content
+  // Message content — 16px with rich text (emoji + mention support)
   content = resolveUserMentions(content);
   const tmpC = createCanvas(W, 400);
   const tmpCtx = tmpC.getContext('2d');
-  tmpCtx.font = '15px ' + FONT;
-  const EMOJI_SIZE = 17;
+  tmpCtx.font = '16px ' + FONT;
+  const EMOJI_SIZE = 18;
   const lines = wrapRichText(tmpCtx, content, MAX_TW, EMOJI_SIZE);
-  ctx.fillStyle = '#dcddde';
-  ctx.font = '15px ' + FONT;
+  ctx.fillStyle = CONFIG.MESSAGE_COLOR;
+  ctx.font = '16px ' + FONT;
   let ty = nameY + LINE_H;
   for (const line of lines) {
-    await drawRichLine(ctx, line, CONTENT_X, ty, 15);
+    await drawRichLine(ctx, line, CONTENT_X, ty, 16);
     ty += LINE_H;
   }
 
   ctx.restore();
-  return PADDING_V + ROW_H + lines.length * LINE_H + PADDING_V;
+  return PADDING_V + NAME_H + lines.length * LINE_H + PADDING_V;
 }
 
 async function generateProofImage(alertAuthor, alertContent, alertTimestamp, recapAuthor, recapContent, recapTimestamp) {
@@ -4377,25 +4389,25 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
   recapContent = resolveUserMentions(recapContent);
 
   const W = 740;
-  const FONT = 'gg sans, Segoe UI, Arial, sans-serif';
   const CONTENT_X = 16 + 40 + 16;
   const MAX_TW = W - CONTENT_X - 16;
   const LINE_H = 22;
-  const PADDING_V = 14;
-  const ROW_H = 20;
-  const EMOJI_SIZE = 17;
+  const PADDING_V = 18;
+  const NAME_H = 20;
+  const EMOJI_SIZE = 18;
 
   const tmpC = createCanvas(W, 1000);
   const tmpCtx = tmpC.getContext('2d');
-  tmpCtx.font = '15px ' + FONT;
+  tmpCtx.font = '16px ' + FONT;
   const recapLines = wrapRichText(tmpCtx, recapContent, MAX_TW, EMOJI_SIZE);
 
-  const recapH = PADDING_V + ROW_H + recapLines.length * LINE_H + PADDING_V;
+  const recapH = PADDING_V + NAME_H + recapLines.length * LINE_H + PADDING_V;
   const REPLY_REF_H = 28;
   const HEADER_H = 52;
   const FOOTER_H = 50;
 
-  const H = HEADER_H + 8 + REPLY_REF_H + recapH + 8 + FOOTER_H;
+  const BIG_BLOCK_SHIFT = 10;
+  const H = HEADER_H + 8 + REPLY_REF_H + recapH + 8 + FOOTER_H - BIG_BLOCK_SHIFT;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
 
@@ -4436,22 +4448,25 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
   const refMidY = refY + REPLY_REF_H / 2;
   const REF_AVT_D = 16;
 
-  // Bent reply arrow (L-shape: down then right, like Discord's ↱ indicator)
+  // Small avatar for alert author
+  const refAvtCX = 72 + REF_AVT_D / 2;
+  const refAvtCY = refMidY;
+
+  // Bent reply arrow connecting big avatar below to small ref avatar above
+  const lineY = refAvtCY;
+  const bigAvatarTopY = refY + REPLY_REF_H + 18 + 10 + 2 - 20 - BIG_BLOCK_SHIFT;
+  const lineStartX = 36;
   ctx.save();
   ctx.strokeStyle = '#4f545c';
   ctx.lineWidth = 2;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(20, refMidY + 10);
-  ctx.arcTo(20, refMidY, 28, refMidY, 6);
-  ctx.lineTo(34, refMidY);
+  ctx.moveTo(lineStartX, bigAvatarTopY + 8);
+  ctx.arcTo(lineStartX, lineY, lineStartX + 8, lineY, 6);
+  ctx.lineTo(refAvtCX, lineY);
   ctx.stroke();
   ctx.restore();
-
-  // Small avatar for alert author
-  const refAvtCX = 34 + REF_AVT_D / 2;
-  const refAvtCY = refMidY;
   ctx.save();
   ctx.beginPath();
   ctx.arc(refAvtCX, refAvtCY, REF_AVT_D / 2, 0, Math.PI * 2);
@@ -4473,7 +4488,7 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
   ctx.restore();
 
   // Alert author name in pink
-  const refNameX = 34 + REF_AVT_D + 4;
+  const refNameX = 72 + REF_AVT_D + 4;
   ctx.font = 'bold 12px ' + FONT;
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
@@ -4488,8 +4503,40 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
   }
   ctx.fillText(alertAuthor || '?', refNameX, refMidY);
 
+  // tag_boom.png + logo_boom.png circulaire (same as bottom block)
+  let refBadgeX = refNameX + refNameW + 6;
+  const refTagH = 14;
+  let refTagW = 0;
+  try {
+    const tagImg = await loadImage(path.join(__dirname, 'avatar', 'tag_boom.png'));
+    const tagRatio = tagImg.width / tagImg.height;
+    refTagW = Math.round(refTagH * tagRatio);
+    ctx.drawImage(tagImg, refBadgeX, refMidY - refTagH / 2, refTagW, refTagH);
+  } catch (e) {
+    ctx.font = 'bold 9px ' + FONT;
+    ctx.fillStyle = '#ffffff';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('BOOM', refBadgeX, refMidY);
+    ctx.textBaseline = 'alphabetic';
+    refTagW = 35;
+  }
+  refBadgeX += refTagW + 5;
+
+  const refLogoSize = 14;
+  try {
+    const logoImg = await loadImage(path.join(__dirname, 'logo_boom.png'));
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(refBadgeX + refLogoSize / 2, refMidY, refLogoSize / 2, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+    ctx.drawImage(logoImg, refBadgeX, refMidY - refLogoSize / 2, refLogoSize, refLogoSize);
+    ctx.restore();
+    refBadgeX += refLogoSize + 6;
+  } catch (e) {}
+
   // Truncated alert content
-  const refContentX = refNameX + refNameW + 6;
+  const refContentX = refBadgeX;
   ctx.font = '12px ' + FONT;
   ctx.fillStyle = '#72767d';
   const truncMaxW = W - refContentX - 16;
@@ -4503,7 +4550,7 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
   ctx.textBaseline = 'alphabetic';
 
   // Main recap message
-  await drawMessageBlock(ctx, recapAuthor, recapContent, recapTimestamp, refY + REPLY_REF_H, W);
+  await drawMessageBlock(ctx, recapAuthor, recapContent, recapTimestamp, refY + REPLY_REF_H - BIG_BLOCK_SHIFT, W);
 
   // Footer
   const footerY = H - FOOTER_H;

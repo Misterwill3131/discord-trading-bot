@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Proof Image Preview</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #111;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 32px 16px;
+    gap: 24px;
+    font-family: 'gg sans', 'Segoe UI', Arial, sans-serif;
+  }
+
+  /* ── Proof card ── */
+  .proof {
+    width: 740px;
+    background: #1e1f22;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  /* ── Header ── */
+  .proof-header {
+    background: linear-gradient(to right, #2a1e3a, #1a2a3a);
+    height: 52px;
+    display: flex;
+    align-items: center;
+    padding: 0 14px;
+    gap: 10px;
+  }
+  .header-logo {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: #5865f2;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: bold; color: #fff;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  .header-logo img { width: 100%; height: 100%; object-fit: cover; }
+  .header-title {
+    font-size: 20px; font-weight: bold;
+    color: #D649CC;
+    letter-spacing: 0.5px;
+  }
+  .header-sub {
+    font-size: 13px;
+    color: #80848e;
+    margin-left: 6px;
+  }
+
+  /* ── Reply reference row ── */
+  .reply-ref {
+    height: 28px;
+    display: flex;
+    align-items: center;
+    padding: 0 0 0 8px;
+    position: relative;
+  }
+  .reply-arrow {
+    position: relative;
+    width: 42px;
+    height: 28px;
+    flex-shrink: 0;
+  }
+  .reply-arrow svg {
+    position: absolute;
+    left: 0; top: 0;
+    width: 100%; height: 100%;
+    overflow: visible;
+  }
+  .ref-avatar {
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: #5865f2;
+    flex-shrink: 0;
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 7px; color: #fff; font-weight: bold;
+  }
+  .ref-avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .ref-author {
+    font-size: 12px; font-weight: bold;
+    background: linear-gradient(to right, #ff79f2, #d649cc);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    margin-left: 4px;
+    white-space: nowrap;
+  }
+  .ref-content {
+    font-size: 12px;
+    color: #72767d;
+    margin-left: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 500px;
+  }
+
+  /* ── Message block ── */
+  .msg-block {
+    display: flex;
+    padding: 14px 16px;
+    gap: 16px;
+  }
+  .msg-avatar {
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    background: #5865f2;
+    flex-shrink: 0;
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; color: #fff; font-weight: bold;
+    margin-top: 2px;
+  }
+  .msg-avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .msg-body { flex: 1; min-width: 0; }
+  .msg-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+  .msg-author {
+    font-size: 15px; font-weight: bold;
+    background: linear-gradient(to right, #ff79f2, #d649cc);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .msg-author.legacy { background: none; -webkit-text-fill-color: #e84040; color: #e84040; }
+  .badge {
+    font-size: 10px; font-weight: bold;
+    padding: 1px 6px;
+    border-radius: 3px;
+    border: 1px solid;
+  }
+  .badge-boom {
+    background: rgba(214,73,204,0.15);
+    border-color: rgba(214,73,204,0.4);
+    color: #d649cc;
+  }
+  .badge-server {
+    background: rgba(255,255,255,0.06);
+    border-color: rgba(255,255,255,0.12);
+    color: #a0a0b0;
+  }
+  .msg-time {
+    font-size: 11px;
+    color: #72767d;
+  }
+  .msg-content {
+    font-size: 15px;
+    color: #dcddde;
+    line-height: 22px;
+  }
+
+  /* ── Footer ── */
+  .proof-footer {
+    background: #2b2d31;
+    height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    color: #4f545c;
+  }
+
+  /* ── Controls ── */
+  .controls {
+    width: 740px;
+    background: #2b2d31;
+    border-radius: 6px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .controls h3 { color: #dcddde; font-size: 14px; margin-bottom: 4px; }
+  .control-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .control-row label { color: #b9bbbe; font-size: 13px; width: 130px; }
+  .control-row input[type=text],
+  .control-row input[type=color] {
+    background: #1e1f22; border: 1px solid #4f545c; border-radius: 4px;
+    color: #dcddde; padding: 4px 8px; font-size: 13px; flex: 1;
+  }
+  .control-row input[type=color] { flex: none; width: 40px; height: 28px; padding: 2px; cursor: pointer; }
+  button {
+    background: #5865f2; color: #fff; border: none;
+    border-radius: 4px; padding: 6px 14px; font-size: 13px;
+    cursor: pointer; font-weight: bold;
+  }
+  button:hover { background: #4752c4; }
+</style>
+</head>
+<body>
+
+<div class="proof" id="proof">
+  <!-- Header -->
+  <div class="proof-header">
+    <div class="header-logo" id="logoEl">
+      <img src="logo_boom.png" onerror="this.parentElement.textContent='B'" alt="BOOM">
+    </div>
+    <span class="header-title">BOOM</span>
+    <span class="header-sub">Trade Proof &nbsp;•&nbsp; discord.gg/templeofboom</span>
+  </div>
+
+  <!-- Reply reference -->
+  <div class="reply-ref">
+    <div class="reply-arrow">
+      <!-- Arrow: starts lower-left, curves up, goes right to center-top of avatar -->
+      <svg viewBox="0 0 42 28" fill="none">
+        <path d="M12 24 Q12 10 20 10 L42 10"
+              stroke="#4f545c" stroke-width="2"
+              stroke-linejoin="round" stroke-linecap="round" fill="none"/>
+      </svg>
+    </div>
+    <div class="ref-avatar" id="refAvatar">
+      <img src="avatar/z-avatar.jpg" onerror="this.parentElement.textContent='Z'" alt="Z">
+    </div>
+    <span class="ref-author" id="refAuthor">Z</span>
+    <span class="ref-content" id="refContent">UCAR $1.31 in small</span>
+  </div>
+
+  <!-- Full message -->
+  <div class="msg-block">
+    <div class="msg-avatar" id="msgAvatar">
+      <img src="avatar/z-avatar.jpg" onerror="this.parentElement.textContent='Z'" alt="Z">
+    </div>
+    <div class="msg-body">
+      <div class="msg-meta">
+        <span class="msg-author" id="msgAuthor">Z</span>
+        <span class="badge badge-boom">BOOM</span>
+        <span class="badge badge-server" id="serverBadge">boom</span>
+        <span class="msg-time" id="msgTime">17 avr. 2026 - 12:22</span>
+      </div>
+      <div class="msg-content" id="msgContent">UCAR 1.31-1.85</div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="proof-footer">discord.gg/templeofboom</div>
+</div>
+
+<!-- Live edit controls -->
+<div class="controls">
+  <h3>Édition en direct</h3>
+  <div class="control-row">
+    <label>Alerte (auteur)</label>
+    <input type="text" id="ctrlRefAuthor" value="Z" oninput="update()">
+  </div>
+  <div class="control-row">
+    <label>Alerte (contenu)</label>
+    <input type="text" id="ctrlRefContent" value="UCAR $1.31 in small" oninput="update()">
+  </div>
+  <div class="control-row">
+    <label>Recap (auteur)</label>
+    <input type="text" id="ctrlMsgAuthor" value="Z" oninput="update()">
+  </div>
+  <div class="control-row">
+    <label>Recap (contenu)</label>
+    <input type="text" id="ctrlMsgContent" value="UCAR 1.31-1.85" oninput="update()">
+  </div>
+  <div class="control-row">
+    <label>Horodatage</label>
+    <input type="text" id="ctrlTime" value="17 avr. 2026 - 12:22" oninput="update()">
+  </div>
+  <div class="control-row">
+    <label>Serveur badge</label>
+    <input type="text" id="ctrlBadge" value="boom" oninput="update()">
+  </div>
+</div>
+
+<script>
+function update() {
+  document.getElementById('refAuthor').textContent = document.getElementById('ctrlRefAuthor').value;
+  document.getElementById('refContent').textContent = document.getElementById('ctrlRefContent').value;
+  document.getElementById('msgAuthor').textContent = document.getElementById('ctrlMsgAuthor').value;
+  document.getElementById('msgContent').textContent = document.getElementById('ctrlMsgContent').value;
+  document.getElementById('msgTime').textContent = document.getElementById('ctrlTime').value;
+  document.getElementById('serverBadge').textContent = document.getElementById('ctrlBadge').value;
+}
+</script>
+</body>
+</html>

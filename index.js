@@ -4950,6 +4950,17 @@ client.once('ready', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
+//  Flame reaction on profit messages in #profits
+// ─────────────────────────────────────────────────────────────────────
+client.on('messageCreate', async (message) => {
+  if (!PROFITS_CHANNEL_ID) return;
+  if (message.channel.id !== PROFITS_CHANNEL_ID) return;
+  if (message.attachments.size > 0) {
+    try { await message.react('\uD83D\uDD25'); } catch (e) { console.error('[react] flame:', e.message); }
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────
 //  !profits command — fonctionne dans tous les salons
 // ─────────────────────────────────────────────────────────────────────
 client.on('messageCreate', async (message) => {

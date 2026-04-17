@@ -260,7 +260,7 @@ const CUSTOM_AVATARS = {
 };
 
 const CUSTOM_EMOJIS = {
-  'greatcall': path.join(__dirname, 'great_call.png'),
+  'greatcall': AV('great_call.png'),
 };
 // ─────────────────────────────────────────────────────────────────────
 

@@ -2855,7 +2855,7 @@ ${sidebarHTML('/profits')}
         if (m.counted) {
           actionHtml = '<button class="rm-action rm-action-bad" data-id="' + esc(m.id) + '" data-content="' + esc((m.content || '').slice(0, 120)) + '" data-action="block">❌ Pas un profit</button>';
         } else {
-          actionHtml = '<button class="rm-action rm-action-good" data-id="' + esc(m.id) + '" data-content="' + esc((m.content || '').slice(0, 120)) + '" data-action="allow">✅ C\'est un profit</button>';
+          actionHtml = '<button class="rm-action rm-action-good" data-id="' + esc(m.id) + '" data-content="' + esc((m.content || '').slice(0, 120)) + '" data-action="allow">✅ C&#39;est un profit</button>';
         }
       }
 
@@ -2948,11 +2948,11 @@ ${sidebarHTML('/profits')}
         loadMessages();
       } else {
         btn.disabled = false;
-        btn.textContent = action === 'block' ? '❌ Pas un profit' : '✅ C\'est un profit';
+        btn.textContent = action === 'block' ? '❌ Pas un profit' : "✅ C'est un profit";
       }
     }).catch(function(){
       btn.disabled = false;
-      btn.textContent = action === 'block' ? '❌ Pas un profit' : '✅ C\'est un profit';
+      btn.textContent = action === 'block' ? '❌ Pas un profit' : "✅ C'est un profit";
     });
   });
 

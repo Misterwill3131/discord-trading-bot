@@ -4918,7 +4918,7 @@ client.once('ready', () => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   const cmd = message.content.trim().toLowerCase();
-  if (cmd !== '!profits' && cmd !== '!bilan') return;
+  if (cmd !== '!profits') return;
   console.log('[!profits] Command received from ' + message.author.username + ' in #' + (message.channel.name || message.channel.id));
 
   const dateKey = todayKey();
@@ -4947,8 +4947,8 @@ client.on('messageCreate', async (message) => {
 // ─────────────────────────────────────────────────────────────────────
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
-  if (message.content.trim().toLowerCase() !== '!report') return;
-  console.log('[!report] Triggered by ' + message.author.username);
+  if (message.content.trim().toLowerCase() !== '!bilan') return;
+  console.log('[!bilan] Triggered by ' + message.author.username);
   await sendDailyProfitSummary();
   try { await message.react('✅'); } catch (_) {}
 });

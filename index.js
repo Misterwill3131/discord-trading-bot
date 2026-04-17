@@ -30,6 +30,11 @@ const DATA_DIR = fs.existsSync('/data') ? '/data' : __dirname;
 // ─────────────────────────────────────────────────────────────────────
 //  ALIAS D'AUTEURS — Tag Discord → Nom affiché
 // ─────────────────────────────────────────────────────────────────────
+const BLOCKED_AUTHORS = new Set([
+  'trendvision',
+  'FrogOracle',
+]);
+
 const AUTHOR_ALIASES = {
   'sanibel2026':       'AR',
   'therealbora':       'Bora',
@@ -5277,7 +5282,7 @@ client.on('messageCreate', async (message) => {
   // ───────────────────────────────────────────────────────────────────────────
 
   // ── Filtre par auteur ──────────────────────────────────────────────────────
-  if ((customFilters.blockedAuthors || []).includes(authorName)) {
+  if (BLOCKED_AUTHORS.has(authorName) || (customFilters.blockedAuthors || []).includes(authorName)) {
     console.log('[AUTHOR BLOCKED] ' + authorName);
     logEvent(authorName, channelName, content, null, 'Auteur bloqué');
     return;

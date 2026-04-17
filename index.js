@@ -2251,12 +2251,15 @@ function buildProfitSummaryMsg() {
   const record = getProfitRecord();
 
   const days7 = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    const dk = d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
-    const pd = loadProfitData(dk);
-    days7.push({ date: dk, count: pd.count || 0 });
+  const cursor = new Date();
+  while (days7.length < 7) {
+    const dk = cursor.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    const [y, m, day] = dk.split('-').map(Number);
+    const dow = new Date(y, m - 1, day).getDay(); // 0=Sun, 6=Sat
+    if (dow !== 0 && dow !== 6) {
+      days7.unshift({ date: dk, count: loadProfitData(dk).count || 0 });
+    }
+    cursor.setDate(cursor.getDate() - 1);
   }
   const max7 = Math.max.apply(null, days7.map(d => d.count)) || 1;
   const chart = days7.map(d => {

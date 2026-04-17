@@ -53,7 +53,8 @@ function getDisplayName(username) {
 }
 
 function todayKey() {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  // Day starts at 23:55 ET: shift by +5 min so 23:55 maps to the next calendar day
+  return new Date(Date.now() + 5 * 60 * 1000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
 function loadDailyFile(dateKey) {

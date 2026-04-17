@@ -4955,7 +4955,10 @@ client.once('ready', () => {
 client.on('messageCreate', async (message) => {
   if (!PROFITS_CHANNEL_ID) return;
   if (message.channel.id !== PROFITS_CHANNEL_ID) return;
-  if (message.attachments.size > 0) {
+  const hasImage = message.attachments.size > 0;
+  const hasTicker = /\$?[A-Z]{2,5}\b/.test(message.content);
+  const hasPct = /[+-]?\d+(?:\.\d+)?%/.test(message.content);
+  if (hasImage || hasTicker || hasPct) {
     try { await message.react('\uD83D\uDD25'); } catch (e) { console.error('[react] flame:', e.message); }
   }
 });

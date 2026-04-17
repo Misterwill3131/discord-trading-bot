@@ -53,7 +53,7 @@ function getDisplayName(username) {
 }
 
 function todayKey() {
-  return new Date().toISOString().slice(0, 10);
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
 function loadDailyFile(dateKey) {

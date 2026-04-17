@@ -4053,6 +4053,79 @@ function wrapText(ctx, text, maxWidth) {
   return result.length ? result : [''];
 }
 
+// Replace <@userId> with @username using Discord cache
+function resolveUserMentions(content) {
+  return (content || '').replace(/<@!?(\d+)>/g, (match, userId) => {
+    const user = client?.users?.cache?.get(userId);
+    return user ? '@' + (user.globalName || user.username) : match;
+  });
+}
+
+// Parse text into {type:'text',value} or {type:'emoji',id,name,animated} segments
+function parseRichSegments(text) {
+  const segs = [];
+  const re = /<(a?):(\w+):(\d+)>/g;
+  let last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) segs.push({ type: 'text', value: text.slice(last, m.index) });
+    segs.push({ type: 'emoji', animated: m[1] === 'a', name: m[2], id: m[3] });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) segs.push({ type: 'text', value: text.slice(last) });
+  return segs.length ? segs : [{ type: 'text', value: text }];
+}
+
+function measureRichWidth(ctx, text, emojiSize) {
+  let w = 0;
+  for (const seg of parseRichSegments(text)) {
+    w += seg.type === 'text' ? ctx.measureText(seg.value).width : emojiSize + 2;
+  }
+  return w;
+}
+
+function wrapRichText(ctx, text, maxWidth, emojiSize) {
+  const result = [];
+  for (const para of String(text || '').split('\n')) {
+    const words = para.split(' ');
+    let current = '';
+    for (const word of words) {
+      const test = current ? current + ' ' + word : word;
+      if (measureRichWidth(ctx, test, emojiSize) > maxWidth && current) {
+        result.push(current);
+        current = word;
+      } else {
+        current = test;
+      }
+    }
+    result.push(current);
+  }
+  return result.length ? result : [''];
+}
+
+async function drawRichLine(ctx, text, x, y, fontSize) {
+  const emojiSize = Math.round(fontSize * 1.15);
+  let cx = x;
+  for (const seg of parseRichSegments(text)) {
+    if (seg.type === 'text') {
+      if (seg.value) {
+        ctx.fillText(seg.value, cx, y);
+        cx += ctx.measureText(seg.value).width;
+      }
+    } else {
+      const ext = seg.animated ? 'gif' : 'png';
+      const url = 'https://cdn.discordapp.com/emojis/' + seg.id + '.' + ext + '?size=32';
+      try {
+        const img = await loadImage(url);
+        ctx.drawImage(img, cx, y - emojiSize * 0.82, emojiSize, emojiSize);
+        cx += emojiSize + 2;
+      } catch (e) {
+        ctx.fillText(':' + seg.name + ':', cx, y);
+        cx += ctx.measureText(':' + seg.name + ':').width;
+      }
+    }
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────
 //  generateProofImage — composite: original alert + recap proof
 // ─────────────────────────────────────────────────────────────────────
@@ -4156,15 +4229,17 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
   ctx.fillText(dateStr + ' - ' + timeStr, badgeX + 4, nameY - 2);
 
   // Message content
+  content = resolveUserMentions(content);
   const tmpC = createCanvas(W, 400);
   const tmpCtx = tmpC.getContext('2d');
   tmpCtx.font = '15px ' + FONT;
-  const lines = wrapText(tmpCtx, content, MAX_TW);
+  const EMOJI_SIZE = 17;
+  const lines = wrapRichText(tmpCtx, content, MAX_TW, EMOJI_SIZE);
   ctx.fillStyle = '#dcddde';
   ctx.font = '15px ' + FONT;
   let ty = nameY + LINE_H;
   for (const line of lines) {
-    ctx.fillText(line, CONTENT_X, ty);
+    await drawRichLine(ctx, line, CONTENT_X, ty, 15);
     ty += LINE_H;
   }
 
@@ -4175,6 +4250,8 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
 async function generateProofImage(alertAuthor, alertContent, alertTimestamp, recapAuthor, recapContent, recapTimestamp) {
   alertAuthor = getDisplayName(alertAuthor);
   recapAuthor = getDisplayName(recapAuthor);
+  alertContent = resolveUserMentions(alertContent);
+  recapContent = resolveUserMentions(recapContent);
 
   const W = 740;
   const FONT = 'gg sans, Segoe UI, Arial, sans-serif';
@@ -4183,11 +4260,12 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
   const LINE_H = 22;
   const PADDING_V = 14;
   const ROW_H = 20;
+  const EMOJI_SIZE = 17;
 
   const tmpC = createCanvas(W, 1000);
   const tmpCtx = tmpC.getContext('2d');
   tmpCtx.font = '15px ' + FONT;
-  const recapLines = wrapText(tmpCtx, recapContent, MAX_TW);
+  const recapLines = wrapRichText(tmpCtx, recapContent, MAX_TW, EMOJI_SIZE);
 
   const recapH = PADDING_V + ROW_H + recapLines.length * LINE_H + PADDING_V;
   const REPLY_REF_H = 28;

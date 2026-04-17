@@ -2254,7 +2254,7 @@ function buildProfitSummaryMsg() {
   for (let i = 6; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    const dk = d.toISOString().slice(0, 10);
+    const dk = d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
     const pd = loadProfitData(dk);
     days7.push({ date: dk, count: pd.count || 0 });
   }
@@ -2274,7 +2274,7 @@ function buildProfitSummaryMsg() {
 
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayCount = loadProfitData(yesterday.toISOString().slice(0, 10)).count || 0;
+  const yesterdayCount = loadProfitData(yesterday.toLocaleDateString('en-CA', { timeZone: 'America/New_York' })).count || 0;
   let comparison = '';
   if (yesterdayCount > 0) {
     const diff = todayCount - yesterdayCount;

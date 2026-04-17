@@ -5213,7 +5213,7 @@ client.on('messageCreate', async (message) => {
 });
 
 client.on('messageCreate', async (message) => {
-  if (message.author.bot) return;
+  if (message.author.bot && !message.webhookId) return;
   const channelName = message.channel.name || '';
   console.log('Message received - channel: "' + channelName + '", author: ' + message.author.username);
   if (!channelName.includes(TRADING_CHANNEL)) return;

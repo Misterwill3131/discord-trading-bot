@@ -2314,7 +2314,7 @@ app.get('/api/profits-history', requireAuth, (req, res) => {
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    const dateKey = d.toISOString().slice(0, 10);
+    const dateKey = d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
     const data = loadProfitData(dateKey);
     result.push({ date: dateKey, count: data.count || 0 });
   }
@@ -2426,7 +2426,7 @@ app.post('/api/profit-feedback', requireAuth, (req, res) => {
     for (let i = 0; i < 30; i++) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const dk = d.toISOString().slice(0, 10);
+      const dk = d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
       const msgs = loadProfitMessages(dk);
       let changed = false;
       for (const m of msgs) {
@@ -2677,7 +2677,7 @@ ${sidebarHTML('/profits')}
       rect.setAttribute('x', x); rect.setAttribute('y', barH ? y : padT + chartH - 1);
       rect.setAttribute('width', barW); rect.setAttribute('height', barH || 1);
       rect.setAttribute('rx', '2');
-      if (d.date === new Date().toISOString().slice(0,10)) rect.setAttribute('fill', '#faa61a');
+      if (d.date === new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })) rect.setAttribute('fill', '#faa61a');
       var title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
       title.textContent = d.date + ': ' + d.count + ' profits';
       rect.appendChild(title);
@@ -2707,7 +2707,7 @@ ${sidebarHTML('/profits')}
       .then(function(r){ return r.json(); })
       .then(function(data) {
         renderChart(data);
-        var today = new Date().toISOString().slice(0,10);
+        var today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
         var todayEntry = data.find(function(d){ return d.date === today; });
         var total = data.reduce(function(s,d){ return s + d.count; }, 0);
         var avg = data.length ? (total / days).toFixed(1) : '0';

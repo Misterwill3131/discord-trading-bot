@@ -4943,6 +4943,17 @@ client.on('messageCreate', async (message) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────
+//  !report command — poste le rapport journalier manuellement
+// ─────────────────────────────────────────────────────────────────────
+client.on('messageCreate', async (message) => {
+  if (message.author.bot) return;
+  if (message.content.trim().toLowerCase() !== '!report') return;
+  console.log('[!report] Triggered by ' + message.author.username);
+  await sendDailyProfitSummary();
+  try { await message.react('✅'); } catch (_) {}
+});
+
+// ─────────────────────────────────────────────────────────────────────
 //  !delete-report command — supprime le dernier rapport journalier
 // ─────────────────────────────────────────────────────────────────────
 client.on('messageCreate', async (message) => {

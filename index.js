@@ -4735,6 +4735,7 @@ const NEWS_FEEDS = [
 ];
 const NEWS_POLL_INTERVAL = 2 * 60 * 1000; // 2 minutes
 const newsSeenGuids = new Set();
+const newsSeenTitles = new Set();
 const recentNews = []; // last 50 items for !news command + dashboard
 const newsSSEClients = [];
 let newsInitialized = {};
@@ -4896,7 +4897,9 @@ async function pollNewsFeed(feed) {
     const newItems = items.filter(i => {
       const key = feed.name + ':' + i.guid;
       if (newsSeenGuids.has(key)) return false;
+      if (newsSeenTitles.has(i.title)) return false;
       newsSeenGuids.add(key);
+      newsSeenTitles.add(i.title);
       return true;
     }).reverse();
 
@@ -4980,6 +4983,12 @@ async function pollAllNewsFeeds() {
     arr.splice(0, arr.length - 500);
     newsSeenGuids.clear();
     arr.forEach(g => newsSeenGuids.add(g));
+  }
+  if (newsSeenTitles.size > 1000) {
+    const arr = Array.from(newsSeenTitles);
+    arr.splice(0, arr.length - 500);
+    newsSeenTitles.clear();
+    arr.forEach(t => newsSeenTitles.add(t));
   }
 }
 

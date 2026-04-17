@@ -5031,21 +5031,6 @@ client.once('ready', () => {
   }, 60000);
 });
 
-// ─────────────────────────────────────────────────────────────────────
-//  Flame reaction on profit messages in #profits
-// ─────────────────────────────────────────────────────────────────────
-client.on('messageCreate', async (message) => {
-  if (!PROFITS_CHANNEL_ID) return;
-  if (message.channel.id !== PROFITS_CHANNEL_ID) return;
-  const hasImage = message.attachments.size > 0
-    || message.embeds.some(e => e.image || e.thumbnail);
-  const hasTicker = /\$?[A-Z]{2,5}\b/.test(message.content);
-  const hasPct = /[+-]?\d+(?:\.\d+)?%/.test(message.content);
-  console.log('[react] profits msg — hasImage:', hasImage, 'hasTicker:', hasTicker, 'hasPct:', hasPct, 'content:', message.content.slice(0, 80));
-  if (hasImage || hasTicker || hasPct) {
-    try { await message.react('\uD83D\uDD25'); } catch (e) { console.error('[react] flame error:', e.message); }
-  }
-});
 
 // ─────────────────────────────────────────────────────────────────────
 //  !profits command — fonctionne dans tous les salons

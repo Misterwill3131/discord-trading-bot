@@ -2752,15 +2752,18 @@ ${sidebarHTML('/profits')}
     if (isNaN(val) || val < 0) { showMsg('Valeur invalide', '#ed4245'); return; }
     var btn = this;
     btn.disabled = true;
-    fetch('/api/set-profit-count', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count: val }) })
-      .then(function(r){ return r.json(); })
+    fetch('/api/set-profit-count', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count: val }) })
+      .then(function(r){
+        if (!r.ok) return r.json().then(function(e){ throw new Error(e.error || 'Erreur ' + r.status); });
+        return r.json();
+      })
       .then(function(data){
         showMsg('Compteur mis à jour : ' + data.count, '#3ba55d');
         input.value = '';
         loadData(currentDays);
         btn.disabled = false;
       })
-      .catch(function(){ btn.disabled = false; });
+      .catch(function(e){ showMsg(e && e.message ? e.message : 'Erreur réseau', '#ed4245'); btn.disabled = false; });
   });
 
   function showMsg(text, color) {

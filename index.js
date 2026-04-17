@@ -4196,28 +4196,23 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
 
   const W = 740;
   const FONT = 'gg sans, Segoe UI, Arial, sans-serif';
-
-  // Measure heights
-  const tmpC = createCanvas(W, 1000);
-  const tmpCtx = tmpC.getContext('2d');
-  tmpCtx.font = '15px ' + FONT;
   const CONTENT_X = 16 + 40 + 16;
   const MAX_TW = W - CONTENT_X - 16;
   const LINE_H = 22;
   const PADDING_V = 14;
   const ROW_H = 20;
 
-  const alertLines = wrapText(tmpCtx, alertContent, MAX_TW);
+  const tmpC = createCanvas(W, 1000);
+  const tmpCtx = tmpC.getContext('2d');
+  tmpCtx.font = '15px ' + FONT;
   const recapLines = wrapText(tmpCtx, recapContent, MAX_TW);
 
-  const blockH = (lines) => PADDING_V + ROW_H + lines.length * LINE_H + PADDING_V;
-  const alertH = blockH(alertLines);
-  const recapH = blockH(recapLines);
-  const DIVIDER_H = 20;
+  const recapH = PADDING_V + ROW_H + recapLines.length * LINE_H + PADDING_V;
+  const REPLY_REF_H = 28;
   const HEADER_H = 52;
   const FOOTER_H = 50;
 
-  const H = HEADER_H + 8 + alertH + DIVIDER_H + recapH + 8 + FOOTER_H;
+  const H = HEADER_H + 8 + REPLY_REF_H + recapH + 8 + FOOTER_H;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
 
@@ -4253,35 +4248,89 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
   ctx.fillText('Trade Proof  •  discord.gg/templeofboom', 52 + ctx.measureText('BOOM').width + 14, HEADER_H / 2);
   ctx.textBaseline = 'alphabetic';
 
-  // Alert block
-  let y = HEADER_H + 8;
-  await drawMessageBlock(ctx, alertAuthor, alertContent, alertTimestamp, y, W);
+  // Reply reference bar (compact, showing original alert)
+  const refY = HEADER_H + 8;
+  const refMidY = refY + REPLY_REF_H / 2;
+  const REF_AVT_D = 16;
 
-  // Thin divider
-  y += alertH;
+  // Bent reply arrow (L-shape: down then right, like Discord's ↱ indicator)
   ctx.save();
-  ctx.strokeStyle = '#3f4147';
-  ctx.lineWidth = 1;
-  ctx.globalAlpha = 0.6;
+  ctx.strokeStyle = '#4f545c';
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(40, y + DIVIDER_H / 2);
-  ctx.lineTo(W - 40, y + DIVIDER_H / 2);
+  ctx.moveTo(20, refMidY + 10);
+  ctx.arcTo(20, refMidY, 28, refMidY, 6);
+  ctx.lineTo(34, refMidY);
   ctx.stroke();
   ctx.restore();
 
-  // Recap block
-  y += DIVIDER_H;
-  await drawMessageBlock(ctx, recapAuthor, recapContent, recapTimestamp, y, W);
+  // Small avatar for alert author
+  const refAvtCX = 34 + REF_AVT_D / 2;
+  const refAvtCY = refMidY;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(refAvtCX, refAvtCY, REF_AVT_D / 2, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.clip();
+  const alertAvtUrl = CUSTOM_AVATARS[alertAuthor];
+  if (alertAvtUrl) {
+    try {
+      const img = await loadImage(alertAvtUrl);
+      ctx.drawImage(img, refAvtCX - REF_AVT_D / 2, refAvtCY - REF_AVT_D / 2, REF_AVT_D, REF_AVT_D);
+    } catch (e) {
+      ctx.fillStyle = '#5865f2';
+      ctx.fillRect(refAvtCX - REF_AVT_D / 2, refAvtCY - REF_AVT_D / 2, REF_AVT_D, REF_AVT_D);
+    }
+  } else {
+    ctx.fillStyle = '#5865f2';
+    ctx.fillRect(refAvtCX - REF_AVT_D / 2, refAvtCY - REF_AVT_D / 2, REF_AVT_D, REF_AVT_D);
+  }
+  ctx.restore();
+
+  // Alert author name in pink
+  const refNameX = 34 + REF_AVT_D + 4;
+  ctx.font = 'bold 12px ' + FONT;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  const refNameW = ctx.measureText(alertAuthor || '?').width;
+  if (alertAuthor === 'Legacy Trading') {
+    ctx.fillStyle = '#e84040';
+  } else {
+    const rg = ctx.createLinearGradient(refNameX, 0, refNameX + refNameW, 0);
+    rg.addColorStop(0, '#ff79f2');
+    rg.addColorStop(1, '#d649cc');
+    ctx.fillStyle = rg;
+  }
+  ctx.fillText(alertAuthor || '?', refNameX, refMidY);
+
+  // Truncated alert content
+  const refContentX = refNameX + refNameW + 6;
+  ctx.font = '12px ' + FONT;
+  ctx.fillStyle = '#72767d';
+  const truncMaxW = W - refContentX - 16;
+  let truncText = (alertContent || '').replace(/\n/g, ' ');
+  const fullTrunc = truncText;
+  while (truncText.length > 0 && ctx.measureText(truncText).width > truncMaxW) {
+    truncText = truncText.slice(0, -1);
+  }
+  if (truncText.length < fullTrunc.length) truncText += '...';
+  ctx.fillText(truncText, refContentX, refMidY);
+  ctx.textBaseline = 'alphabetic';
+
+  // Main recap message
+  await drawMessageBlock(ctx, recapAuthor, recapContent, recapTimestamp, refY + REPLY_REF_H, W);
 
   // Footer
-  y = H - FOOTER_H;
+  const footerY = H - FOOTER_H;
   ctx.fillStyle = '#2b2d31';
-  ctx.fillRect(0, y, W, FOOTER_H);
+  ctx.fillRect(0, footerY, W, FOOTER_H);
   ctx.fillStyle = '#4f545c';
   ctx.font = '13px ' + FONT;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('discord.gg/templeofboom', W / 2, y + FOOTER_H / 2);
+  ctx.fillText('discord.gg/templeofboom', W / 2, footerY + FOOTER_H / 2);
 
   return canvas.toBuffer('image/png');
 }

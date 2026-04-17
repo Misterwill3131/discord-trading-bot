@@ -2244,65 +2244,62 @@ function getProfitRecord() {
 let lastProfitSummaryDate = null;
 let lastProfitSummaryMessageId = null;
 
+function buildProfitSummaryMsg() {
+  const dateKey = todayKey();
+  const data = loadProfitData(dateKey);
+  const todayCount = data.count || 0;
+  const record = getProfitRecord();
+
+  const days7 = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dk = d.toISOString().slice(0, 10);
+    const pd = loadProfitData(dk);
+    days7.push({ date: dk, count: pd.count || 0 });
+  }
+  const max7 = Math.max.apply(null, days7.map(d => d.count)) || 1;
+  const chart = days7.map(d => {
+    const bars = Math.round((d.count / max7) * 8);
+    const bar = '█'.repeat(bars) + '░'.repeat(8 - bars);
+    const label = d.date.slice(5);
+    const isToday = d.date === dateKey;
+    return (isToday ? '**' : '') + '`' + label + '` ' + bar + ' ' + d.count + (isToday ? ' ← today**' : '');
+  }).join('\n');
+
+  const isNewRecord = todayCount > 0 && todayCount >= record.count && dateKey === record.date;
+  const recordLine = isNewRecord
+    ? '\n\n🏆 **NEW ALL-TIME RECORD! ' + todayCount + ' profits!** 🏆'
+    : '\n\n📊 All-time record: **' + record.count + '** profits (' + record.date + ')';
+
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayCount = loadProfitData(yesterday.toISOString().slice(0, 10)).count || 0;
+  let comparison = '';
+  if (yesterdayCount > 0) {
+    const diff = todayCount - yesterdayCount;
+    if (diff > 0) comparison = ' (📈 +' + diff + ' vs yesterday)';
+    else if (diff < 0) comparison = ' (📉 ' + diff + ' vs yesterday)';
+    else comparison = ' (➡️ same as yesterday)';
+  }
+
+  return '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+    + '📊 **Daily Profit Report**\n'
+    + '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'
+    + '🔥 **' + todayCount + '** profits posted today' + comparison + '\n\n'
+    + '**Last 7 days:**\n' + chart
+    + recordLine + '\n\n'
+    + '-# Keep posting your wins! Every profit counts 💪';
+}
+
 async function sendDailyProfitSummary() {
   if (!PROFITS_CHANNEL_ID || !client || profitsBotSilent) return;
   try {
     const ch = client.channels.cache.get(PROFITS_CHANNEL_ID);
     if (!ch || !ch.send) return;
-
-    const dateKey = todayKey();
-    const data = loadProfitData(dateKey);
-    const todayCount = data.count || 0;
-    const record = getProfitRecord();
-
-    // Build last 7 days bar chart (text-based)
-    const days7 = [];
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const dk = d.toISOString().slice(0, 10);
-      const pd = loadProfitData(dk);
-      days7.push({ date: dk, count: pd.count || 0 });
-    }
-    const max7 = Math.max.apply(null, days7.map(d => d.count)) || 1;
-    const chart = days7.map(d => {
-      const bars = Math.round((d.count / max7) * 8);
-      const bar = '█'.repeat(bars) + '░'.repeat(8 - bars);
-      const label = d.date.slice(5); // MM-DD
-      const isToday = d.date === dateKey;
-      return (isToday ? '**' : '') + '`' + label + '` ' + bar + ' ' + d.count + (isToday ? ' ← today**' : '');
-    }).join('\n');
-
-    // Check if today is a new record
-    const isNewRecord = todayCount > 0 && todayCount >= record.count && dateKey === record.date;
-    const recordLine = isNewRecord
-      ? '\n\n🏆 **NEW ALL-TIME RECORD! ' + todayCount + ' profits!** 🏆'
-      : '\n\n📊 All-time record: **' + record.count + '** profits (' + record.date + ')';
-
-    // Compare to yesterday
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayData = loadProfitData(yesterday.toISOString().slice(0, 10));
-    const yesterdayCount = yesterdayData.count || 0;
-    let comparison = '';
-    if (yesterdayCount > 0) {
-      const diff = todayCount - yesterdayCount;
-      if (diff > 0) comparison = ' (📈 +' + diff + ' vs yesterday)';
-      else if (diff < 0) comparison = ' (📉 ' + diff + ' vs yesterday)';
-      else comparison = ' (➡️ same as yesterday)';
-    }
-
-    const msg = '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-      + '📊 **Daily Profit Report**\n'
-      + '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'
-      + '🔥 **' + todayCount + '** profits posted today' + comparison + '\n\n'
-      + '**Last 7 days:**\n' + chart
-      + recordLine + '\n\n'
-      + '-# Keep posting your wins! Every profit counts 💪';
-
-    const sent = await ch.send(msg);
+    const sent = await ch.send(buildProfitSummaryMsg());
     lastProfitSummaryMessageId = sent.id;
-    console.log('[profits] Daily summary posted — ' + todayCount + ' profits today');
+    console.log('[profits] Daily summary posted');
   } catch (e) {
     console.error('[profits] Summary error:', e.message);
   }
@@ -4949,8 +4946,7 @@ client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   if (message.content.trim().toLowerCase() !== '!bilan') return;
   console.log('[!bilan] Triggered by ' + message.author.username);
-  await sendDailyProfitSummary();
-  try { await message.react('✅'); } catch (_) {}
+  try { await message.reply(buildProfitSummaryMsg()); } catch (e) { console.error('[!bilan]', e.message); }
 });
 
 // ─────────────────────────────────────────────────────────────────────

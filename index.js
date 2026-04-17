@@ -4162,7 +4162,7 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
     badgeX += bw + 4;
   };
 
-  drawBadge('\uD83D\uDD25 BOOM', 'rgba(214,73,204,0.15)', 'rgba(214,73,204,0.4)', '#d649cc');
+  drawBadge('BOOM', 'rgba(214,73,204,0.15)', 'rgba(214,73,204,0.4)', '#d649cc');
   drawBadge('boom', 'rgba(255,255,255,0.06)', 'rgba(255,255,255,0.12)', '#a0a0b0');
 
   // Timestamp
@@ -4171,7 +4171,7 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
   const timeStr = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
   ctx.fillStyle = '#72767d';
   ctx.font = '11px ' + FONT;
-  ctx.fillText(dateStr + ' \u00B7 ' + timeStr, badgeX + 4, nameY - 2);
+  ctx.fillText(dateStr + ' - ' + timeStr, badgeX + 4, nameY - 2);
 
   // Message content
   const tmpC = createCanvas(W, 400);

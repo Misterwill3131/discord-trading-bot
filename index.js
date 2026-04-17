@@ -34,6 +34,7 @@ const AUTHOR_ALIASES = {
   'sanibel2026':       'AR',
   'therealbora':       'Bora',
   'traderzz1m':        'Z',
+  'ZZ':                'Z',
   'viking9496':        'Viking',
   'legacytrading506':  'Legacy Trading',
   'rf0496_76497':      'RF',

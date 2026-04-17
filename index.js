@@ -4053,20 +4053,22 @@ async function generateImage(author, content, timestamp, parentAuthor, parentCon
 }
 
 function wrapText(ctx, text, maxWidth) {
-  const words = text.split(' ');
-  const lines = [];
-  let current = '';
-  for (const word of words) {
-    const test = current ? current + ' ' + word : word;
-    if (ctx.measureText(test).width > maxWidth && current) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = test;
+  const result = [];
+  for (const para of String(text || '').split('\n')) {
+    const words = para.split(' ');
+    let current = '';
+    for (const word of words) {
+      const test = current ? current + ' ' + word : word;
+      if (ctx.measureText(test).width > maxWidth && current) {
+        result.push(current);
+        current = word;
+      } else {
+        current = test;
+      }
     }
+    result.push(current);
   }
-  if (current) lines.push(current);
-  return lines.length ? lines : [''];
+  return result.length ? result : [''];
 }
 
 // ─────────────────────────────────────────────────────────────────────

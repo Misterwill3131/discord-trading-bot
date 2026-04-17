@@ -4249,39 +4249,75 @@ async function drawRichLine(ctx, text, x, y, fontSize) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────
-//  generateProofImage — composite: original alert + recap proof
-// ─────────────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════════════
+//  IMAGE "RÉPONSE" STYLE DISCORD
+//
+//  Deux fonctions se partagent la tâche :
+//    • drawMessageBlock  — dessine le message complet (avatar + en-tête + contenu)
+//    • generateProofImage — assemble une barre de référence en haut (petit
+//      avatar + nom + contenu tronqué) reliée par une flèche courbée au
+//      bloc principal dessiné par drawMessageBlock.
+//
+//  Utilisée pour tous les messages Discord qui sont des réponses, ainsi que
+//  pour les recaps de trades (exit > entry) où l'alerte d'origine est affichée
+//  dans la référence du haut.
+// ═════════════════════════════════════════════════════════════════════
+
+// ── Constantes partagées entre drawMessageBlock et generateProofImage ──
+// Regroupées ici pour éviter la dérive entre les deux formules de layout.
+const PROOF_LAYOUT = {
+  PADDING_L:      16,   // padding horizontal (gauche/droite)
+  PADDING_V:      18,   // padding vertical (haut/bas du bloc principal)
+  AVATAR_D:       40,   // diamètre du gros avatar
+  NAME_H:         20,   // hauteur de la ligne d'en-tête (nom + badges)
+  LINE_H:         22,   // hauteur d'une ligne de contenu
+  EMOJI_SIZE:     18,   // taille des emojis dans le contenu
+  TAG_H:          18,   // hauteur du badge tag_boom.png
+  LOGO_SIZE:      18,   // diamètre du logo BOOM circulaire
+  // Le NAME_ROW_LIFT remonte la ligne d'en-tête (nom + tag + logo + heure)
+  // de 6px par rapport au centre vertical de l'avatar. Ça réduit visuellement
+  // l'espace entre la barre de référence et le titre du message principal.
+  NAME_ROW_LIFT:  6,
+};
+
+/**
+ * Dessine un bloc de message Discord complet à la position yStart.
+ * Inclut : avatar rond, nom (dégradé rose ou rouge), badge BOOM, logo circulaire,
+ * heure (fuseau New York), puis contenu avec emojis + mentions.
+ * Retourne la hauteur totale occupée par le bloc.
+ */
 async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
   ctx.save();
-  const PADDING_V = 18;
-  const PADDING_L = 16;
-  const AVATAR_D = 40;
-  const AVATAR_X = PADDING_L;
-  const CONTENT_X = PADDING_L + AVATAR_D + 16;
-  const MAX_TW = W - CONTENT_X - PADDING_L;
-  const LINE_H = 22;
-  const NAME_H = 20;
 
-  // Avatar
-  const avatarCX = AVATAR_X + AVATAR_D / 2;
+  // ── Layout local dérivé des constantes partagées ───────────────────
+  const { PADDING_L, PADDING_V, AVATAR_D, NAME_H, LINE_H, EMOJI_SIZE,
+          TAG_H, LOGO_SIZE, NAME_ROW_LIFT } = PROOF_LAYOUT;
+  const CONTENT_X = PADDING_L + AVATAR_D + PADDING_L;  // colonne texte (à droite de l'avatar)
+  const MAX_TW    = W - CONTENT_X - PADDING_L;         // largeur max du texte
+
+  // ─────────────────── Avatar rond (gros) ───────────────────
+  const avatarR  = AVATAR_D / 2;
+  const avatarCX = PADDING_L + avatarR;
+  // Le +2 compense une légère asymétrie de la police pour rester visuellement
+  // aligné avec la baseline du nom, comme dans le vrai client Discord.
   const avatarCY = yStart + PADDING_V + NAME_H / 2 + 2;
-  const avatarR = AVATAR_D / 2;
+
   ctx.save();
   ctx.beginPath();
   ctx.arc(avatarCX, avatarCY, avatarR, 0, Math.PI * 2);
   ctx.closePath();
   ctx.clip();
+
   const customAvatarUrl = CUSTOM_AVATARS[author];
   if (customAvatarUrl) {
     try {
       const img = await loadImage(customAvatarUrl);
-      const size = AVATAR_D;
+      // "Cover" behavior : couvre tout le cercle en gardant le ratio.
       const imgRatio = img.width / img.height;
-      let drawW = size, drawH = size;
+      let drawW = AVATAR_D, drawH = AVATAR_D;
       let drawX = avatarCX - avatarR, drawY = avatarCY - avatarR;
-      if (imgRatio > 1) { drawW = size * imgRatio; drawX = avatarCX - drawW / 2; }
-      else { drawH = size / imgRatio; drawY = avatarCY - drawH / 2; }
+      if (imgRatio > 1) { drawW = AVATAR_D * imgRatio; drawX = avatarCX - drawW / 2; }
+      else              { drawH = AVATAR_D / imgRatio; drawY = avatarCY - drawH / 2; }
       ctx.drawImage(img, drawX, drawY, drawW, drawH);
     } catch (e) {
       ctx.fillStyle = CONFIG.AVATAR_COLOR;
@@ -4292,6 +4328,8 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
     ctx.fillRect(avatarCX - avatarR, avatarCY - avatarR, AVATAR_D, AVATAR_D);
   }
   ctx.restore();
+
+  // Fallback : initiales affichées sur le carré coloré si pas d'avatar custom.
   if (!customAvatarUrl) {
     ctx.fillStyle = CONFIG.AVATAR_TEXT_COLOR;
     ctx.font = 'bold 14px ' + FONT;
@@ -4302,12 +4340,16 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
     ctx.textBaseline = 'alphabetic';
   }
 
-  // Username — identical to generateImage
-  const nameY = yStart + PADDING_V + NAME_H - 3;
+  // ─────────────── Ligne d'en-tête : nom + tag + logo + heure ───────────────
+  // NAME_ROW_LIFT rapproche la ligne du haut du bloc (voir constantes).
+  const nameY = yStart + PADDING_V + NAME_H - 3 - NAME_ROW_LIFT;
+
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   ctx.font = 'bold 16px ' + FONT;
   const nameW = ctx.measureText(author || 'Z').width;
+
+  // Legacy Trading utilise le rouge ; tous les autres ont le dégradé rose.
   if (author === 'Legacy Trading') {
     ctx.fillStyle = '#e84040';
   } else {
@@ -4318,8 +4360,7 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
   }
   ctx.fillText(author || 'Z', CONTENT_X, nameY);
 
-  // tag_boom.png — identical to generateImage
-  const TAG_H = 18;
+  // Badge tag_boom.png (fallback texte "BOOM" si l'image est absente).
   const badgeX = CONTENT_X + nameW + 6;
   const badgeY = nameY - TAG_H + 2;
   let BADGE_W = 0;
@@ -4328,7 +4369,7 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
     const tagRatio = tagImg.width / tagImg.height;
     BADGE_W = Math.round(TAG_H * tagRatio);
     ctx.drawImage(tagImg, badgeX, badgeY, BADGE_W, TAG_H);
-  } catch(e) {
+  } catch (e) {
     ctx.font = 'bold 10px ' + FONT;
     ctx.fillStyle = '#ffffff';
     ctx.textBaseline = 'middle';
@@ -4337,11 +4378,10 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
     BADGE_W = 50;
   }
 
-  // Logo BOOM circulaire — identical to generateImage
-  const LOGO_SIZE = 18;
-  const logoX = badgeX + BADGE_W + 6;
-  const logoCY = badgeY + TAG_H / 2;
-  let logoEndX = logoX;
+  // Logo BOOM circulaire (masque en arc de cercle pour un vrai rond).
+  const logoX   = badgeX + BADGE_W + 6;
+  const logoCY  = badgeY + TAG_H / 2;
+  let   logoEndX = logoX;
   try {
     const logoImg = await loadImage(path.join(__dirname, 'logo_boom.png'));
     ctx.save();
@@ -4352,24 +4392,25 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
     ctx.drawImage(logoImg, logoX, logoCY - LOGO_SIZE / 2, LOGO_SIZE, LOGO_SIZE);
     ctx.restore();
     logoEndX = logoX + LOGO_SIZE + 6;
-  } catch(e) {
-    logoEndX = logoX;
-  }
+  } catch (e) {}
 
-  // Time — identical to generateImage (en-US, CONFIG.TIME_COLOR)
+  // Heure (format 24h, fuseau New York pour matcher l'heure du marché US).
   const d = timestamp ? new Date(timestamp) : new Date();
-  const timeStr = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
+  const timeStr = d.toLocaleTimeString('en-US', {
+    hour: '2-digit', minute: '2-digit', hour12: false,
+    timeZone: 'America/New_York',
+  });
   ctx.fillStyle = CONFIG.TIME_COLOR;
   ctx.font = '12px ' + FONT;
   ctx.fillText(timeStr, logoEndX, nameY - 1);
 
-  // Message content — 16px with rich text (emoji + mention support)
+  // ─────────────── Contenu du message (emojis + mentions) ───────────────
   content = resolveUserMentions(content);
   const tmpC = createCanvas(W, 400);
   const tmpCtx = tmpC.getContext('2d');
   tmpCtx.font = '16px ' + FONT;
-  const EMOJI_SIZE = 18;
   const lines = wrapRichText(tmpCtx, content, MAX_TW, EMOJI_SIZE);
+
   ctx.fillStyle = CONFIG.MESSAGE_COLOR;
   ctx.font = '16px ' + FONT;
   let ty = nameY + LINE_H;
@@ -4382,91 +4423,82 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
   return PADDING_V + NAME_H + lines.length * LINE_H + PADDING_V;
 }
 
+/**
+ * Génère une image "réponse à un autre message" style Discord.
+ * - alertAuthor/alertContent/alertTimestamp : message d'origine (barre du haut)
+ * - recapAuthor/recapContent/recapTimestamp : message complet (bloc du bas)
+ */
 async function generateProofImage(alertAuthor, alertContent, alertTimestamp, recapAuthor, recapContent, recapTimestamp) {
-  alertAuthor = getDisplayName(alertAuthor);
-  recapAuthor = getDisplayName(recapAuthor);
+  // Résolution des alias d'affichage et des mentions @user.
+  alertAuthor  = getDisplayName(alertAuthor);
+  recapAuthor  = getDisplayName(recapAuthor);
   alertContent = resolveUserMentions(alertContent);
   recapContent = resolveUserMentions(recapContent);
 
-  const W = 740;
-  const CONTENT_X = 16 + 40 + 16;
-  const MAX_TW = W - CONTENT_X - 16;
-  const LINE_H = 22;
-  const PADDING_V = 18;
-  const NAME_H = 20;
-  const EMOJI_SIZE = 18;
+  // ── Constantes locales + partagées ─────────────────────────────────
+  const { PADDING_L, PADDING_V, AVATAR_D, NAME_H, LINE_H, EMOJI_SIZE } = PROOF_LAYOUT;
+  const W              = 740;                              // largeur totale
+  const CONTENT_X      = PADDING_L + AVATAR_D + PADDING_L; // doit matcher drawMessageBlock
+  const MAX_TW         = W - CONTENT_X - PADDING_L;
+  const REPLY_REF_H    = 28;                               // hauteur de la barre de référence
+  const REF_AVT_D      = 16;                               // diamètre du petit avatar
+  const TOP_MARGIN     = 8;                                // marge au-dessus de la barre de référence
+  // BIG_BLOCK_SHIFT remonte le bloc principal pour compacter l'image
+  // et raccourcir la flèche de réponse (elle devient donc ~14px de haut).
+  const BIG_BLOCK_SHIFT = 10;
 
+  // ── Calcul de la hauteur totale ────────────────────────────────────
+  // On wrap le contenu du recap une première fois pour connaître le nombre
+  // de lignes et dimensionner le canvas correctement.
   const tmpC = createCanvas(W, 1000);
   const tmpCtx = tmpC.getContext('2d');
   tmpCtx.font = '16px ' + FONT;
   const recapLines = wrapRichText(tmpCtx, recapContent, MAX_TW, EMOJI_SIZE);
-
   const recapH = PADDING_V + NAME_H + recapLines.length * LINE_H + PADDING_V;
-  const REPLY_REF_H = 28;
-  const HEADER_H = 52;
-  const FOOTER_H = 50;
+  const H = TOP_MARGIN + REPLY_REF_H + recapH - BIG_BLOCK_SHIFT;
 
-  const BIG_BLOCK_SHIFT = 10;
-  const H = HEADER_H + 8 + REPLY_REF_H + recapH + 8 + FOOTER_H - BIG_BLOCK_SHIFT;
+  // ── Création du canvas + fond Discord ──────────────────────────────
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
-
-  // Background
   ctx.fillStyle = '#1e1f22';
   ctx.fillRect(0, 0, W, H);
 
-  // Header gradient
-  const headerGrad = ctx.createLinearGradient(0, 0, W, 0);
-  headerGrad.addColorStop(0, '#2a1e3a');
-  headerGrad.addColorStop(1, '#1a2a3a');
-  ctx.fillStyle = headerGrad;
-  ctx.fillRect(0, 0, W, HEADER_H);
-
-  // Header: BOOM branding
-  try {
-    const logoImg = await loadImage(path.join(__dirname, 'logo_boom.png'));
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(26, HEADER_H / 2, 18, 0, Math.PI * 2);
-    ctx.closePath();
-    ctx.clip();
-    ctx.drawImage(logoImg, 8, HEADER_H / 2 - 18, 36, 36);
-    ctx.restore();
-  } catch (e) {}
-  ctx.fillStyle = '#D649CC';
-  ctx.font = 'bold 20px ' + FONT;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('BOOM', 52, HEADER_H / 2);
-  ctx.fillStyle = '#80848e';
-  ctx.font = '13px ' + FONT;
-  ctx.fillText('Trade Proof  •  discord.gg/templeofboom', 52 + ctx.measureText('BOOM').width + 14, HEADER_H / 2);
-  ctx.textBaseline = 'alphabetic';
-
-  // Reply reference bar (compact, showing original alert)
-  const refY = HEADER_H + 8;
-  const refMidY = refY + REPLY_REF_H / 2;
-  const REF_AVT_D = 16;
-
-  // Small avatar for alert author
-  const refAvtCX = 72 + REF_AVT_D / 2;
+  // ═════════ Barre de référence (message d'origine, en haut) ═════════
+  const refY     = TOP_MARGIN;
+  const refMidY  = refY + REPLY_REF_H / 2;
+  // Le petit avatar est aligné horizontalement avec la première lettre du nom
+  // du bloc principal (CONTENT_X = 72), pour un look harmonieux.
+  const refAvtCX = CONTENT_X + REF_AVT_D / 2;
   const refAvtCY = refMidY;
 
-  // Bent reply arrow connecting big avatar below to small ref avatar above
-  const lineY = refAvtCY;
-  const bigAvatarTopY = refY + REPLY_REF_H + 18 + 10 + 2 - 20 - BIG_BLOCK_SHIFT;
-  const lineStartX = 36;
+  // ── Flèche courbée reliant le gros avatar (bas) au petit (haut) ────
+  // Formule de bigAvatarTopY : replique le calcul interne de drawMessageBlock.
+  //   yStart_principal = refY + REPLY_REF_H - BIG_BLOCK_SHIFT
+  //   avatarCY         = yStart + PADDING_V + NAME_H/2 + 2
+  //   top              = avatarCY - AVATAR_D/2
+  const mainAvatarTopY = refY + REPLY_REF_H + PADDING_V + NAME_H / 2 + 2
+                         - AVATAR_D / 2 - BIG_BLOCK_SHIFT;
+  const arrowX         = PADDING_L + AVATAR_D / 2;   // centre horizontal du gros avatar
+  const arrowCornerR   = 6;
+
   ctx.save();
   ctx.strokeStyle = '#4f545c';
-  ctx.lineWidth = 2;
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
+  ctx.lineWidth   = 2;
+  ctx.lineJoin    = 'round';
+  ctx.lineCap     = 'round';
   ctx.beginPath();
-  ctx.moveTo(lineStartX, bigAvatarTopY + 8);
-  ctx.arcTo(lineStartX, lineY, lineStartX + 8, lineY, 6);
-  ctx.lineTo(refAvtCX, lineY);
+  // Départ : 3px au-dessus du haut du gros avatar (le round cap de 1px
+  // rogne la moitié, il reste 2px de gap visible).
+  ctx.moveTo(arrowX, mainAvatarTopY - 3);
+  // Coin courbé entre la verticale et l'horizontale.
+  ctx.arcTo(arrowX, refAvtCY, arrowX + 8, refAvtCY, arrowCornerR);
+  // Arrivée : 3px avant le bord gauche du petit avatar (même calcul,
+  // 2px de gap visible après le round cap).
+  ctx.lineTo(refAvtCX - REF_AVT_D / 2 - 3, refAvtCY);
   ctx.stroke();
   ctx.restore();
+
+  // ── Petit avatar (auteur de l'alerte d'origine) ────────────────────
   ctx.save();
   ctx.beginPath();
   ctx.arc(refAvtCX, refAvtCY, REF_AVT_D / 2, 0, Math.PI * 2);
@@ -4487,12 +4519,13 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
   }
   ctx.restore();
 
-  // Alert author name in pink
-  const refNameX = 72 + REF_AVT_D + 4;
+  // ── Nom de l'auteur de l'alerte (barre du haut) ────────────────────
+  const refNameX = CONTENT_X + REF_AVT_D + 4;
   ctx.font = 'bold 12px ' + FONT;
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
   const refNameW = ctx.measureText(alertAuthor || '?').width;
+
   if (alertAuthor === 'Legacy Trading') {
     ctx.fillStyle = '#e84040';
   } else {
@@ -4503,10 +4536,10 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
   }
   ctx.fillText(alertAuthor || '?', refNameX, refMidY);
 
-  // tag_boom.png + logo_boom.png circulaire (same as bottom block)
-  let refBadgeX = refNameX + refNameW + 6;
-  const refTagH = 14;
-  let refTagW = 0;
+  // ── Badge BOOM + logo circulaire (dans la barre du haut) ───────────
+  let   refBadgeX = refNameX + refNameW + 6;
+  const refTagH   = 14;
+  let   refTagW   = 0;
   try {
     const tagImg = await loadImage(path.join(__dirname, 'avatar', 'tag_boom.png'));
     const tagRatio = tagImg.width / tagImg.height;
@@ -4535,13 +4568,14 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
     refBadgeX += refLogoSize + 6;
   } catch (e) {}
 
-  // Truncated alert content
+  // ── Contenu tronqué de l'alerte d'origine ──────────────────────────
   const refContentX = refBadgeX;
-  ctx.font = '12px ' + FONT;
-  ctx.fillStyle = '#72767d';
-  const truncMaxW = W - refContentX - 16;
+  ctx.font = '11px ' + FONT;
+  ctx.fillStyle = '#ffffff';
+  const truncMaxW = W - refContentX - PADDING_L;
   let truncText = (alertContent || '').replace(/\n/g, ' ');
   const fullTrunc = truncText;
+  // Tronque caractère par caractère jusqu'à rentrer dans la largeur dispo.
   while (truncText.length > 0 && ctx.measureText(truncText).width > truncMaxW) {
     truncText = truncText.slice(0, -1);
   }
@@ -4549,18 +4583,11 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
   ctx.fillText(truncText, refContentX, refMidY);
   ctx.textBaseline = 'alphabetic';
 
-  // Main recap message
-  await drawMessageBlock(ctx, recapAuthor, recapContent, recapTimestamp, refY + REPLY_REF_H - BIG_BLOCK_SHIFT, W);
-
-  // Footer
-  const footerY = H - FOOTER_H;
-  ctx.fillStyle = '#2b2d31';
-  ctx.fillRect(0, footerY, W, FOOTER_H);
-  ctx.fillStyle = '#4f545c';
-  ctx.font = '13px ' + FONT;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('discord.gg/templeofboom', W / 2, footerY + FOOTER_H / 2);
+  // ═════════ Bloc principal (message complet, en bas) ═════════
+  await drawMessageBlock(
+    ctx, recapAuthor, recapContent, recapTimestamp,
+    refY + REPLY_REF_H - BIG_BLOCK_SHIFT, W
+  );
 
   return canvas.toBuffer('image/png');
 }
@@ -5514,7 +5541,19 @@ client.on('messageCreate', async (message) => {
 
   let imageUrl = null;
   try {
-    const imgBuf = await generateImage(message.author.username, content, message.createdAt.toISOString());
+    let imgBuf;
+    if (isReply && parentAuthor) {
+      imgBuf = await generateProofImage(
+        parentAuthor,
+        parentContent || '',
+        null,
+        message.author.username,
+        content,
+        message.createdAt.toISOString()
+      );
+    } else {
+      imgBuf = await generateImage(message.author.username, content, message.createdAt.toISOString());
+    }
     lastImageBuffer = imgBuf;
     lastImageId = Date.now();
     addToGallery('signal', signalTicker, authorName, imgBuf);

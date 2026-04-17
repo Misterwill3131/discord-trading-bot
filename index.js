@@ -2582,8 +2582,8 @@ ${sidebarHTML('/profits')}
     </div>
     <input type="number" id="input-set-count" min="0" step="1" placeholder="Nouveau total"
       style="width:120px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);color:#fafafa;border-radius:8px;padding:9px 12px;font-size:14px;" />
-    <button class="btn-add" id="btn-set-count">Modifier</button>
-    <button class="btn-add" id="btn-add-profit" style="background:#4f545c;">+ Ajouter 1</button>
+    <button type="button" class="btn-add" id="btn-set-count">Modifier</button>
+    <button type="button" class="btn-add" id="btn-add-profit" style="background:#4f545c;">+ Ajouter 1</button>
     <span id="add-msg" style="font-size:13px;color:#3ba55d;display:none;"></span>
   </div>
 
@@ -2637,6 +2637,7 @@ ${sidebarHTML('/profits')}
 (function(){
   var currentDays = 7;
 
+  function on(id, ev, fn) { var el = document.getElementById(id); if (el) el.addEventListener(ev, fn); }
   function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
   function renderChart(data) {
@@ -2720,19 +2721,19 @@ ${sidebarHTML('/profits')}
       .catch(function(){ });
   }
 
-  document.getElementById('btn-7d').addEventListener('click', function(){
+  on('btn-7d', 'click', function(){
     currentDays = 7;
     document.querySelectorAll('.btn-period').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-days')==='7'); });
     loadData(7);
   });
-  document.getElementById('btn-30d').addEventListener('click', function(){
+  on('btn-30d', 'click', function(){
     currentDays = 30;
     document.querySelectorAll('.btn-period').forEach(function(b){ b.classList.toggle('active', b.getAttribute('data-days')==='30'); });
     loadData(30);
   });
 
   // Bouton +1
-  document.getElementById('btn-add-profit').addEventListener('click', function(){
+  on('btn-add-profit', 'click', function(){
     var btn = this;
     btn.disabled = true;
     fetch('/api/add-profit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
@@ -2746,7 +2747,7 @@ ${sidebarHTML('/profits')}
   });
 
   // Bouton Modifier (set count)
-  document.getElementById('btn-set-count').addEventListener('click', function(){
+  on('btn-set-count', 'click', function(){
     var input = document.getElementById('input-set-count');
     var val = parseInt(input.value, 10);
     if (isNaN(val) || val < 0) { showMsg('Valeur invalide', '#ed4245'); return; }
@@ -2768,6 +2769,7 @@ ${sidebarHTML('/profits')}
 
   function showMsg(text, color) {
     var msg = document.getElementById('add-msg');
+    if (!msg) return;
     msg.textContent = text;
     msg.style.color = color || '#3ba55d';
     msg.style.display = '';
@@ -2782,10 +2784,9 @@ ${sidebarHTML('/profits')}
 
   function applySilentUI(silent) {
     isSilent = silent;
-    silentToggle.style.background = silent ? '#ed4245' : '#3ba55d';
-    silentThumb.style.left = silent ? '23px' : '3px';
-    silentLabel.textContent = silent ? 'Désactivés' : 'Activés';
-    silentLabel.style.color = silent ? '#ed4245' : '#3ba55d';
+    if (silentToggle) silentToggle.style.background = silent ? '#ed4245' : '#3ba55d';
+    if (silentThumb) silentThumb.style.left = silent ? '23px' : '3px';
+    if (silentLabel) { silentLabel.textContent = silent ? 'Désactivés' : 'Activés'; silentLabel.style.color = silent ? '#ed4245' : '#3ba55d'; }
   }
 
   fetch('/api/profits-bot-silent')
@@ -2793,7 +2794,7 @@ ${sidebarHTML('/profits')}
     .then(function(d){ applySilentUI(d.silent); })
     .catch(function(){});
 
-  silentToggle.addEventListener('click', function(){
+  on('toggle-silent', 'click', function(){
     var newVal = !isSilent;
     fetch('/api/profits-bot-silent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ silent: newVal }) })
       .then(function(r){ return r.json(); })

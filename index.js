@@ -2242,6 +2242,7 @@ function getProfitRecord() {
 }
 
 let lastProfitSummaryDate = null;
+let lastProfitSummaryMessageId = null;
 
 async function sendDailyProfitSummary() {
   if (!PROFITS_CHANNEL_ID || !client || profitsBotSilent) return;
@@ -2299,7 +2300,8 @@ async function sendDailyProfitSummary() {
       + recordLine + '\n\n'
       + '-# Keep posting your wins! Every profit counts 💪';
 
-    await ch.send(msg);
+    const sent = await ch.send(msg);
+    lastProfitSummaryMessageId = sent.id;
     console.log('[profits] Daily summary posted — ' + todayCount + ' profits today');
   } catch (e) {
     console.error('[profits] Summary error:', e.message);
@@ -4937,6 +4939,52 @@ client.on('messageCreate', async (message) => {
     );
   } catch (e) {
     console.error('[!profits]', e.message);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────
+//  !delete-report command — supprime le dernier rapport journalier
+// ─────────────────────────────────────────────────────────────────────
+client.on('messageCreate', async (message) => {
+  if (message.author.bot) return;
+  if (message.content.trim().toLowerCase() !== '!delete-report') return;
+
+  if (!PROFITS_CHANNEL_ID) {
+    try { await message.reply('❌ PROFITS_CHANNEL_ID non configuré.'); } catch (_) {}
+    return;
+  }
+
+  try {
+    const ch = client.channels.cache.get(PROFITS_CHANNEL_ID);
+    if (!ch) { await message.reply('❌ Salon #profits introuvable.'); return; }
+
+    let targetMsg = null;
+
+    // Try known message ID first
+    if (lastProfitSummaryMessageId) {
+      try { targetMsg = await ch.messages.fetch(lastProfitSummaryMessageId); } catch (_) {}
+    }
+
+    // Fallback: search last 50 messages for the bot's profit report
+    if (!targetMsg) {
+      const fetched = await ch.messages.fetch({ limit: 50 });
+      targetMsg = fetched.find(m =>
+        m.author.id === client.user.id && m.content.includes('Daily Profit Report')
+      ) || null;
+    }
+
+    if (!targetMsg) {
+      await message.reply('❌ Aucun rapport journalier trouvé dans #profits.');
+      return;
+    }
+
+    await targetMsg.delete();
+    if (lastProfitSummaryMessageId === targetMsg.id) lastProfitSummaryMessageId = null;
+    console.log('[!delete-report] Report deleted by ' + message.author.username);
+    try { await message.react('✅'); } catch (_) {}
+  } catch (e) {
+    console.error('[!delete-report]', e.message);
+    try { await message.reply('❌ Erreur : ' + e.message); } catch (_) {}
   }
 });
 

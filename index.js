@@ -2198,25 +2198,6 @@ async function addProfitMessage(content) {
   saveProfitData(dateKey, data);
   console.log('[profits] +' + entries + ' profit(s) — total: ' + data.count);
 
-  // Check milestones
-  for (const milestone of PROFIT_MILESTONES) {
-    if (data.count >= milestone && !data.milestones.includes(milestone)) {
-      data.milestones.push(milestone);
-      saveProfitData(dateKey, data);
-      // Post to profits channel
-      if (PROFITS_CHANNEL_ID && client && !profitsBotSilent) {
-        try {
-          const ch = client.channels.cache.get(PROFITS_CHANNEL_ID);
-          if (ch && ch.send) {
-            await ch.send('🎯 Milestone reached — **' + milestone + ' profits today!** 🔥');
-            console.log('[profits] Milestone ' + milestone + ' posted to #profits');
-          }
-        } catch (e) {
-          console.error('[profits] Error posting milestone:', e.message);
-        }
-      }
-    }
-  }
   return data.count;
 }
 

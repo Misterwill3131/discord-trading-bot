@@ -4117,7 +4117,9 @@ async function drawRichLine(ctx, text, x, y, fontSize) {
       }
     } else {
       const localPath = CUSTOM_EMOJIS[seg.name];
-      const src = localPath || ('https://cdn.discordapp.com/emojis/' + seg.id + '.' + (seg.animated ? 'gif' : 'png') + '?size=32');
+      const src = localPath || (seg.animated
+        ? 'https://cdn.discordapp.com/emojis/' + seg.id + '.webp?size=32&animated=true'
+        : 'https://cdn.discordapp.com/emojis/' + seg.id + '.png?size=32');
       try {
         const img = await loadImage(src);
         ctx.drawImage(img, cx, y - emojiSize * 0.82, emojiSize, emojiSize);

@@ -30,9 +30,10 @@ const DATA_DIR = fs.existsSync('/data') ? '/data' : __dirname;
 // ─────────────────────────────────────────────────────────────────────
 //  ALIAS D'AUTEURS — Tag Discord → Nom affiché
 // ─────────────────────────────────────────────────────────────────────
+// Comparaison case-insensitive : toujours stocker les entrées en minuscules.
 const BLOCKED_AUTHORS = new Set([
   'trendvision',
-  'FrogOracle',
+  'frogoracle',
 ]);
 
 const AUTHOR_ALIASES = {
@@ -1911,6 +1912,20 @@ ${sidebarHTML('/stats')}
 (function(){
   function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
+  // Aliases serveur injectés : regroupe les stats par nom canonique affiché
+  // (ex. "traderzz1m" et "ZZ" → "Z") plutôt que par username Discord brut.
+  var AUTHOR_ALIASES = ${JSON.stringify(AUTHOR_ALIASES)};
+  var BLOCKED_AUTHORS = ${JSON.stringify(Array.from(BLOCKED_AUTHORS))};
+  function canonical(a){ return AUTHOR_ALIASES[a] || a; }
+  function isBlocked(a){
+    if (!a) return false;
+    var low = String(a).toLowerCase();
+    for (var i = 0; i < BLOCKED_AUTHORS.length; i++) {
+      if (BLOCKED_AUTHORS[i] === low) return true;
+    }
+    return false;
+  }
+
   var currentPeriod = 'today';
 
   function periodFromTs() {
@@ -1946,8 +1961,10 @@ ${sidebarHTML('/stats')}
     var authorStats = {};
     msgs.forEach(function(m) {
       if (!m.author) return;
-      if (!authorStats[m.author]) authorStats[m.author] = { total: 0, accepted: 0, filtered: 0, tickers: {} };
-      var s = authorStats[m.author];
+      if (isBlocked(m.author)) return;
+      var key = canonical(m.author);
+      if (!authorStats[key]) authorStats[key] = { total: 0, accepted: 0, filtered: 0, tickers: {} };
+      var s = authorStats[key];
       s.total++;
       if (m.passed) s.accepted++; else s.filtered++;
       if (m.ticker) s.tickers[m.ticker] = (s.tickers[m.ticker] || 0) + 1;
@@ -2109,7 +2126,11 @@ ${sidebarHTML('/stats')}
         document.getElementById('cnt-filtered').textContent = cFiltered;
 
         var authorMap = {};
-        msgs.forEach(function(m){ if(m.author) authorMap[m.author] = (authorMap[m.author]||0) + 1; });
+        msgs.forEach(function(m){
+          if (!m.author || isBlocked(m.author)) return;
+          var key = canonical(m.author);
+          authorMap[key] = (authorMap[key]||0) + 1;
+        });
         var topAuthors = Object.keys(authorMap).map(function(k){ return [k, authorMap[k]]; })
           .sort(function(a,b){ return b[1]-a[1]; }).slice(0,5);
         renderBars('top-authors', topAuthors, '#D649CC');
@@ -3178,7 +3199,10 @@ app.get('/api/ticker/:symbol', requireAuth, (req, res) => {
     else if (m.type === 'exit') breakdown.exit++;
     else breakdown.neutral++;
 
-    if (m.author) authorCounts[m.author] = (authorCounts[m.author] || 0) + 1;
+    if (m.author && !BLOCKED_AUTHORS.has(String(m.author).toLowerCase())) {
+      const key = getDisplayName(m.author);
+      authorCounts[key] = (authorCounts[key] || 0) + 1;
+    }
 
     if (m.ts) {
       const d = new Date(m.ts);
@@ -4852,7 +4876,11 @@ function sendDailySummary() {
     .sort(function(a, b) { return b[1] - a[1]; }).slice(0, 3);
 
   const authorMap = {};
-  todayMsgs.forEach(function(m) { if (m.author) authorMap[m.author] = (authorMap[m.author] || 0) + 1; });
+  todayMsgs.forEach(function(m) {
+    if (!m.author || BLOCKED_AUTHORS.has(String(m.author).toLowerCase())) return;
+    const key = getDisplayName(m.author);
+    authorMap[key] = (authorMap[key] || 0) + 1;
+  });
   const topAuthors = Object.keys(authorMap).map(function(k) { return [k, authorMap[k]]; })
     .sort(function(a, b) { return b[1] - a[1]; }).slice(0, 3);
 
@@ -4932,6 +4960,12 @@ const newsSeenTitles = new Set();
 const recentNews = []; // last 50 items for !news command + dashboard
 const newsSSEClients = [];
 let newsInitialized = {};
+// Fenêtre de condensation : si le poll suivant tombe dans la même minute
+// calendaire que le précédent, on édite ce message au lieu d'en créer un
+// nouveau. Permet de regrouper visuellement les news arrivées à 18:03:05
+// et 18:03:55 sous le même timestamp Discord.
+let lastNewsMsg = null;
+let lastNewsSentAt = null;
 
 const RSS_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
@@ -5165,10 +5199,46 @@ async function pollAllNewsFeeds() {
     }
     if (current) chunks.push(current);
   }
-  for (const chunk of chunks) {
-    try { await channel.send(chunk); } catch (e) { console.error('[news] Send error:', e.message); }
+  // ── Condensation "même minute" ──────────────────────────────────
+  // Si le dernier message news a été envoyé dans la même minute calendaire,
+  // on l'édite pour y ajouter les nouvelles lignes (tant qu'on tient dans
+  // la limite Discord de 2000 caractères et qu'il n'y a qu'un chunk).
+  const now = new Date();
+  const sameMinute = lastNewsSentAt
+    && now.getFullYear() === lastNewsSentAt.getFullYear()
+    && now.getMonth()    === lastNewsSentAt.getMonth()
+    && now.getDate()     === lastNewsSentAt.getDate()
+    && now.getHours()    === lastNewsSentAt.getHours()
+    && now.getMinutes()  === lastNewsSentAt.getMinutes();
+
+  let merged = false;
+  if (sameMinute && lastNewsMsg && chunks.length === 1) {
+    const combinedContent = lastNewsMsg.content + '\n' + chunks[0];
+    if (combinedContent.length <= 2000) {
+      try {
+        const edited = await lastNewsMsg.edit(combinedContent);
+        lastNewsMsg = edited;
+        lastNewsSentAt = now;
+        merged = true;
+        console.log('[news] Merged ' + allRelevant.length + ' headline(s) into existing message ' + lastNewsMsg.id);
+      } catch (e) {
+        console.error('[news] Edit failed, falling back to send:', e.message);
+      }
+    }
   }
-  console.log('[news] Posted ' + allRelevant.length + ' headline(s) in ' + chunks.length + ' message(s)');
+
+  if (!merged) {
+    for (const chunk of chunks) {
+      try {
+        const sent = await channel.send(chunk);
+        lastNewsMsg = sent;
+        lastNewsSentAt = new Date();
+      } catch (e) {
+        console.error('[news] Send error:', e.message);
+      }
+    }
+    console.log('[news] Posted ' + allRelevant.length + ' headline(s) in ' + chunks.length + ' message(s)');
+  }
 
   // Keep seen set manageable
   if (newsSeenGuids.size > 1000) {
@@ -5450,7 +5520,9 @@ client.on('messageCreate', async (message) => {
     const filtered = total - accepted;
     const authorMap = {};
     todayMsgs.filter(function(m) { return m.passed; }).forEach(function(m) {
-      if (m.author) authorMap[m.author] = (authorMap[m.author] || 0) + 1;
+      if (!m.author || BLOCKED_AUTHORS.has(String(m.author).toLowerCase())) return;
+      const key = getDisplayName(m.author);
+      authorMap[key] = (authorMap[key] || 0) + 1;
     });
     const topAuthors = Object.keys(authorMap).map(function(k) { return k + ' (' + authorMap[k] + ')'; })
       .sort(function(a, b) { return authorMap[b.split(' ')[0]] - authorMap[a.split(' ')[0]]; });
@@ -5467,7 +5539,7 @@ client.on('messageCreate', async (message) => {
   // ───────────────────────────────────────────────────────────────────────────
 
   // ── Filtre par auteur ──────────────────────────────────────────────────────
-  if (BLOCKED_AUTHORS.has(authorName) || (customFilters.blockedAuthors || []).includes(authorName)) {
+  if (BLOCKED_AUTHORS.has(authorName.toLowerCase()) || (customFilters.blockedAuthors || []).includes(authorName)) {
     console.log('[AUTHOR BLOCKED] ' + authorName);
     logEvent(authorName, channelName, content, null, 'Auteur bloqué');
     return;

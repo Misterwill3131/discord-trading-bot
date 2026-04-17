@@ -4072,7 +4072,8 @@ function wrapText(ctx, text, maxWidth) {
 // ─────────────────────────────────────────────────────────────────────
 //  generateProofImage — composite: original alert + recap proof
 // ─────────────────────────────────────────────────────────────────────
-async function drawMessageBlock(ctx, author, content, timestamp, yStart, W, label, labelColor) {
+async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
+  ctx.save();
   const PADDING_V = 14;
   const PADDING_L = 16;
   const AVATAR_D = 40;
@@ -4080,28 +4081,13 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W, labe
   const CONTENT_X = PADDING_L + AVATAR_D + 16;
   const MAX_TW = W - CONTENT_X - PADDING_L;
   const LINE_H = 22;
-  const NAME_H = 20;
+  const ROW_H = 20;
   const FONT = 'gg sans, Segoe UI, Arial, sans-serif';
-
-  // Label badge (ORIGINAL ALERT or RESULT)
-  const labelH = 22;
-  ctx.fillStyle = labelColor + '22';
-  const labelW = ctx.measureText(label).width + 24;
-  ctx.beginPath();
-  ctx.roundRect(PADDING_L, yStart + 4, labelW, labelH, 4);
-  ctx.fill();
-  ctx.fillStyle = labelColor;
-  ctx.font = 'bold 11px ' + FONT;
-  ctx.textAlign = 'left';
-  ctx.fillText(label, PADDING_L + 12, yStart + 4 + labelH / 2 + 4);
-
-  const blockY = yStart + labelH + 10;
 
   // Avatar
   const avatarCX = AVATAR_X + AVATAR_D / 2;
-  const avatarCY = blockY + PADDING_V + NAME_H / 2 + 2;
+  const avatarCY = yStart + PADDING_V + ROW_H / 2 + 2;
   const avatarR = AVATAR_D / 2;
-
   ctx.save();
   ctx.beginPath();
   ctx.arc(avatarCX, avatarCY, avatarR, 0, Math.PI * 2);
@@ -4127,7 +4113,6 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W, labe
     ctx.fillRect(avatarCX - avatarR, avatarCY - avatarR, AVATAR_D, AVATAR_D);
   }
   ctx.restore();
-
   if (!customAvatarUrl) {
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 14px ' + FONT;
@@ -4138,8 +4123,9 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W, labe
     ctx.textBaseline = 'alphabetic';
   }
 
-  const nameY = blockY + PADDING_V + NAME_H - 3;
-  ctx.font = 'bold 16px ' + FONT;
+  // Username
+  const nameY = yStart + PADDING_V + ROW_H - 3;
+  ctx.font = 'bold 15px ' + FONT;
   const nameW = ctx.measureText(author || '?').width;
   if (author === 'Legacy Trading') {
     ctx.fillStyle = '#e84040';
@@ -4153,28 +4139,53 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W, labe
   ctx.textBaseline = 'alphabetic';
   ctx.fillText(author || '?', CONTENT_X, nameY);
 
-  // Time
-  const d = timestamp ? new Date(timestamp) : new Date();
-  const timeStr = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
-  ctx.fillStyle = '#72767d';
-  ctx.font = '12px ' + FONT;
-  ctx.fillText(timeStr, CONTENT_X + nameW + 10, nameY - 1);
+  // Role badges
+  let badgeX = CONTENT_X + nameW + 8;
+  const badgeY = nameY - 14;
+  const badgeH = 16;
+  ctx.font = 'bold 10px ' + FONT;
 
-  // Content
+  const drawBadge = (text, bgColor, borderColor, textColor) => {
+    const tw = ctx.measureText(text).width;
+    const bw = tw + 12;
+    ctx.fillStyle = bgColor;
+    ctx.strokeStyle = borderColor;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(badgeX, badgeY, bw, badgeH, 3);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = textColor;
+    ctx.fillText(text, badgeX + 6, nameY - 2);
+    badgeX += bw + 4;
+  };
+
+  drawBadge('\uD83D\uDD25 BOOM', 'rgba(214,73,204,0.15)', 'rgba(214,73,204,0.4)', '#d649cc');
+  drawBadge('boom', 'rgba(255,255,255,0.06)', 'rgba(255,255,255,0.12)', '#a0a0b0');
+
+  // Timestamp
+  const d = timestamp ? new Date(timestamp) : new Date();
+  const dateStr = d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'America/New_York' });
+  const timeStr = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
+  ctx.fillStyle = '#72767d';
+  ctx.font = '11px ' + FONT;
+  ctx.fillText(dateStr + ' \u00B7 ' + timeStr, badgeX + 4, nameY - 2);
+
+  // Message content
   const tmpC = createCanvas(W, 400);
   const tmpCtx = tmpC.getContext('2d');
-  tmpCtx.font = '16px ' + FONT;
+  tmpCtx.font = '15px ' + FONT;
   const lines = wrapText(tmpCtx, content, MAX_TW);
   ctx.fillStyle = '#dcddde';
-  ctx.font = '16px ' + FONT;
+  ctx.font = '15px ' + FONT;
   let ty = nameY + LINE_H;
   for (const line of lines) {
     ctx.fillText(line, CONTENT_X, ty);
     ty += LINE_H;
   }
 
-  const blockHeight = labelH + 10 + PADDING_V + NAME_H + lines.length * LINE_H + PADDING_V;
-  return blockHeight;
+  ctx.restore();
+  return PADDING_V + ROW_H + lines.length * LINE_H + PADDING_V;
 }
 
 async function generateProofImage(alertAuthor, alertContent, alertTimestamp, recapAuthor, recapContent, recapTimestamp) {
@@ -4187,25 +4198,24 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
   // Measure heights
   const tmpC = createCanvas(W, 1000);
   const tmpCtx = tmpC.getContext('2d');
-  tmpCtx.font = '16px ' + FONT;
+  tmpCtx.font = '15px ' + FONT;
   const CONTENT_X = 16 + 40 + 16;
   const MAX_TW = W - CONTENT_X - 16;
   const LINE_H = 22;
-  const LABEL_H = 32;
   const PADDING_V = 14;
-  const NAME_H = 20;
+  const ROW_H = 20;
 
   const alertLines = wrapText(tmpCtx, alertContent, MAX_TW);
   const recapLines = wrapText(tmpCtx, recapContent, MAX_TW);
 
-  const blockH = (lines) => LABEL_H + PADDING_V + NAME_H + lines.length * LINE_H + PADDING_V;
+  const blockH = (lines) => PADDING_V + ROW_H + lines.length * LINE_H + PADDING_V;
   const alertH = blockH(alertLines);
   const recapH = blockH(recapLines);
-  const DIVIDER_H = 44;
+  const DIVIDER_H = 20;
   const HEADER_H = 52;
   const FOOTER_H = 50;
 
-  const H = HEADER_H + alertH + DIVIDER_H + recapH + FOOTER_H;
+  const H = HEADER_H + 8 + alertH + DIVIDER_H + recapH + 8 + FOOTER_H;
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
 
@@ -4243,29 +4253,23 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
 
   // Alert block
   let y = HEADER_H + 8;
-  await drawMessageBlock(ctx, alertAuthor, alertContent, alertTimestamp, y, W, '📣  ORIGINAL ALERT', '#3ba55d');
+  await drawMessageBlock(ctx, alertAuthor, alertContent, alertTimestamp, y, W);
 
-  // Divider with arrow
+  // Thin divider
   y += alertH;
+  ctx.save();
   ctx.strokeStyle = '#3f4147';
   ctx.lineWidth = 1;
-  ctx.setLineDash([4, 4]);
+  ctx.globalAlpha = 0.6;
   ctx.beginPath();
   ctx.moveTo(40, y + DIVIDER_H / 2);
   ctx.lineTo(W - 40, y + DIVIDER_H / 2);
   ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.fillStyle = '#3ba55d';
-  ctx.font = 'bold 22px ' + FONT;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('↓', W / 2, y + DIVIDER_H / 2);
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
+  ctx.restore();
 
   // Recap block
   y += DIVIDER_H;
-  await drawMessageBlock(ctx, recapAuthor, recapContent, recapTimestamp, y, W, '✅  RESULT', '#faa61a');
+  await drawMessageBlock(ctx, recapAuthor, recapContent, recapTimestamp, y, W);
 
   // Footer
   y = H - FOOTER_H;

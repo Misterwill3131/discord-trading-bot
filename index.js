@@ -258,6 +258,10 @@ const CUSTOM_AVATARS = {
   'thedutchess1':   AV('thedutchess1_avatar.png'),
   'Legacy Trading': AV('Legacy Trading_avatar.png'),
 };
+
+const CUSTOM_EMOJIS = {
+  'greatcall': path.join(__dirname, 'great_call.png'),
+};
 // ─────────────────────────────────────────────────────────────────────
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -4112,10 +4116,10 @@ async function drawRichLine(ctx, text, x, y, fontSize) {
         cx += ctx.measureText(seg.value).width;
       }
     } else {
-      const ext = seg.animated ? 'gif' : 'png';
-      const url = 'https://cdn.discordapp.com/emojis/' + seg.id + '.' + ext + '?size=32';
+      const localPath = CUSTOM_EMOJIS[seg.name];
+      const src = localPath || ('https://cdn.discordapp.com/emojis/' + seg.id + '.' + (seg.animated ? 'gif' : 'png') + '?size=32');
       try {
-        const img = await loadImage(url);
+        const img = await loadImage(src);
         ctx.drawImage(img, cx, y - emojiSize * 0.82, emojiSize, emojiSize);
         cx += emojiSize + 2;
       } catch (e) {

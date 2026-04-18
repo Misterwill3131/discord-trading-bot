@@ -1,11 +1,16 @@
 node_modules/
 messages.json
 messages-*.json
+profits-*.json
+profit-messages-*.json
+profit-filters.json
 custom-filters.json
 .claude/worktrees/
 *.log
 
-# SQLite database (vit dans DATA_DIR = /data sur Railway, racine en local)
+# SQLite database (vit dans DATA_DIR = /data sur Railway, racine en local).
+# boom-backup.db EST commité (snapshot nightly via runGitBackup) — seul
+# mécanisme de backup de la DB vers GitHub.
 boom.db
 boom.db-journal
 boom.db-wal

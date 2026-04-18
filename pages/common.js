@@ -83,6 +83,8 @@ const SIDEBAR_LINKS = [
   { href: '/proof-generator', icon: '🔍', label: 'Proof Generator' },
   { href: '/gallery',         icon: '🖼', label: 'Galerie' },
   { href: '/raw-messages',    icon: '📋', label: 'Raw Messages' },
+  { href: '/db-viewer',       icon: '🗄️', label: 'DB Viewer' },
+  { href: '/backup-log',      icon: '💾', label: 'Backup Log' },
   { href: '/config',          icon: '⚙️', label: 'Config' },
 ];
 

@@ -23,10 +23,23 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const { MAX_LOG } = require('../utils/persistence');
-const { insertMessage, getRecentMessages } = require('../db/sqlite');
+const {
+  insertMessage,
+  getRecentMessages,
+  purgeFilteredMessagesWithoutData,
+} = require('../db/sqlite');
 
-// Boot : hydrate le cache depuis la DB (les MAX_LOG plus récents).
-// Plus besoin de `loadInitialMessages()` qui lisait le fichier du jour.
+// Purge au boot : supprime les messages filtrés sans valeur (ni ticker
+// ni prix). Gardent la DB svelte entre les restarts. Les passed=1 sont
+// toujours conservés, même sans ticker.
+try {
+  const purged = purgeFilteredMessagesWithoutData();
+  if (purged > 0) console.log('[messages] Purged ' + purged + ' filtered messages without ticker/price at boot');
+} catch (e) {
+  console.error('[messages] Boot purge failed:', e.message);
+}
+
+// Boot : hydrate le cache depuis la DB (les MAX_LOG plus récents, après purge).
 const messageLog = getRecentMessages(MAX_LOG);
 const sseClients = [];
 

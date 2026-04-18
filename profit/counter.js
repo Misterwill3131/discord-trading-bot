@@ -21,9 +21,8 @@
 // lisible d'un coup d'œil.
 // ─────────────────────────────────────────────────────────────────────
 
-const fs = require('fs');
-const path = require('path');
-const { DATA_DIR, todayKey } = require('../utils/persistence');
+const { todayKey } = require('../utils/persistence');
+const dbMod = require('../db/sqlite');
 
 // ── Constantes partagées ─────────────────────────────────────────────
 
@@ -35,11 +34,9 @@ const PROFIT_MILESTONES = [10, 25, 50, 100, 150, 200];
 // Les points leading (.97) sont tolérés (notation trader informelle).
 const PROFIT_PATTERN = /\.?\d+(?:\.\d+)?\s*(?:[-–]+|to)\s*\.?\d+(?:\.\d+)?/gi;
 
-// Tronque les extraits stockés dans profit-messages-*.json pour éviter
-// d'enregistrer des pavés entiers dans le JSON de review.
+// Tronque les extraits stockés dans la DB pour éviter d'enregistrer
+// des pavés entiers dans la table profit_messages.
 const PROFIT_PHRASE_MAX = 120;
-
-const PROFIT_FILTERS_PATH = path.join(DATA_DIR, 'profit-filters.json');
 
 // ── Pure parsers ─────────────────────────────────────────────────────
 
@@ -70,70 +67,51 @@ function profitFiltersMatch(list, content) {
   return false;
 }
 
-// ── Persistence I/O ──────────────────────────────────────────────────
+// ── Persistence (wrappers DB) ────────────────────────────────────────
+// API identique à l'ancienne (load/save par dateKey) pour que les
+// consommateurs (routes/profits, profit-listener, commands) n'aient
+// pas à changer. Sous le capot : SQLite au lieu de JSON files.
 
-function loadProfitData(dateKey) {
-  try {
-    const filePath = path.join(DATA_DIR, 'profits-' + dateKey + '.json');
-    if (fs.existsSync(filePath)) {
-      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    }
-  } catch (e) {
-    console.error('[profits] Failed to load profits-' + dateKey + '.json:', e.message);
-  }
-  return { count: 0, milestones: [] };
-}
+function loadProfitData(dateKey)       { return dbMod.getProfitData(dateKey); }
+function saveProfitData(dateKey, data) { dbMod.setProfitData(dateKey, data); }
 
-function saveProfitData(dateKey, data) {
-  try {
-    const filePath = path.join(DATA_DIR, 'profits-' + dateKey + '.json');
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
-  } catch (e) {
-    console.error('[profits] Failed to save profits-' + dateKey + '.json:', e.message);
-  }
-}
+function loadProfitMessages(dateKey)   { return dbMod.getProfitMessagesByDate(dateKey); }
 
-function loadProfitMessages(dateKey) {
-  try {
-    const filePath = path.join(DATA_DIR, 'profit-messages-' + dateKey + '.json');
-    if (fs.existsSync(filePath)) {
-      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    }
-  } catch (e) {
-    console.error('[profits-msg] Failed to load profit-messages-' + dateKey + '.json:', e.message);
-  }
-  return [];
-}
-
+// saveProfitMessages : l'ancien caller faisait un dump complet de
+// l'array modifié. On détecte les nouvelles entrées (celles dont l'id
+// n'est pas encore en DB) via INSERT OR IGNORE, et on met à jour le
+// feedback des anciennes si changé. Coût O(n) mais n reste petit.
 function saveProfitMessages(dateKey, msgs) {
-  try {
-    const filePath = path.join(DATA_DIR, 'profit-messages-' + dateKey + '.json');
-    fs.writeFileSync(filePath, JSON.stringify(msgs, null, 2), 'utf8');
-  } catch (e) {
-    console.error('[profits-msg] Failed to save profit-messages-' + dateKey + '.json:', e.message);
-  }
-}
+  if (!Array.isArray(msgs)) return;
+  const existing = dbMod.getProfitMessagesByDate(dateKey);
+  const existingById = {};
+  existing.forEach(m => existingById[m.id] = m);
 
-function loadProfitFilters() {
-  try {
-    if (fs.existsSync(PROFIT_FILTERS_PATH)) {
-      const data = JSON.parse(fs.readFileSync(PROFIT_FILTERS_PATH, 'utf8'));
-      return {
-        blocked: Array.isArray(data.blocked) ? data.blocked : [],
-        allowed: Array.isArray(data.allowed) ? data.allowed : [],
-      };
+  for (const m of msgs) {
+    const prev = existingById[m.id];
+    if (!prev) {
+      // Nouveau message : insert.
+      dbMod.insertProfitMessage(m);
+    } else if (prev.feedback !== m.feedback) {
+      // Message existant : on n'update que le feedback (le reste est immutable).
+      dbMod.updateProfitMessageFeedback(m.id, m.feedback);
     }
-  } catch (e) {
-    console.error('[profit-filters] Failed to load profit-filters.json:', e.message);
   }
-  return { blocked: [], allowed: [] };
 }
 
+// saveProfitFilters : écrit l'état courant de l'objet `profitFilters`
+// en DB. Stratégie delete-all + re-insert dans une transaction — simple,
+// idempotent, et le volume reste trivial (quelques dizaines de phrases).
 function saveProfitFilters() {
+  const tx = dbMod.db.transaction(() => {
+    dbMod.db.prepare('DELETE FROM profit_filter_phrases').run();
+    for (const p of profitFilters.blocked || []) dbMod.addProfitFilterPhrase(p, 'blocked');
+    for (const p of profitFilters.allowed || []) dbMod.addProfitFilterPhrase(p, 'allowed');
+  });
   try {
-    fs.writeFileSync(PROFIT_FILTERS_PATH, JSON.stringify(profitFilters, null, 2), 'utf8');
+    tx();
   } catch (e) {
-    console.error('[profit-filters] Failed to save profit-filters.json:', e.message);
+    console.error('[profit-filters] Failed to save:', e.message);
   }
 }
 
@@ -141,7 +119,7 @@ function saveProfitFilters() {
 
 // Singleton — référence stable, les consommateurs mutent profitFilters.blocked
 // / profitFilters.allowed puis appellent saveProfitFilters().
-const profitFilters = loadProfitFilters();
+const profitFilters = dbMod.getProfitFilters();
 
 // Mode "bot silencieux" dans #profits : désactive l'envoi automatique du
 // daily summary. Utile pour débug ou pendant la config.

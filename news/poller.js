@@ -27,6 +27,17 @@ const {
   isNewsRelevant,
   extractSource,
 } = require('../filters/news');
+const {
+  insertNewsItem,
+  getRecentNewsItems,
+  trimNewsItems,
+  purgeNewsOlderThan,
+} = require('../db/sqlite');
+
+// Rétention des news en DB. Au-delà, on DELETE même si on n'a pas
+// atteint la limite de lignes — c'est une contrainte de fraîcheur
+// (dashboard affiche du récent, pas une archive).
+const NEWS_RETENTION_DAYS = 7;
 
 // ── Configuration ────────────────────────────────────────────────────
 const NEWS_FEEDS = [
@@ -53,7 +64,18 @@ const SEEN_CACHE_KEEP = 500;
 // ── État interne (non exporté) ───────────────────────────────────────
 const newsSeenGuids   = new Set();
 const newsSeenTitles  = new Set();
-const recentNews      = []; // 50 derniers items — !news + dashboard
+// Purge au boot : si le bot a été éteint plusieurs jours, on nettoie
+// les items devenus trop vieux avant de les charger en RAM.
+try {
+  const purged = purgeNewsOlderThan(NEWS_RETENTION_DAYS);
+  if (purged > 0) console.log('[news] Purged ' + purged + ' items > ' + NEWS_RETENTION_DAYS + ' days at boot');
+} catch (e) {
+  console.error('[news] Boot purge failed:', e.message);
+}
+// Hydrate recentNews depuis la DB au boot — permet à /news et à !news
+// d'afficher le fil immédiatement, sans attendre le prochain poll RSS.
+// Les items DB viennent déjà triés DESC par ts — on garde le format tel quel.
+const recentNews      = getRecentNewsItems(50);
 const newsSSEClients  = []; // { res } — broadcast des nouveaux items
 const newsInitialized = {}; // par feed : premier poll = seed seulement
 // Fenêtre de condensation : si le poll suivant tombe dans la même minute
@@ -92,6 +114,15 @@ function addToRecentNews(item) {
   };
   recentNews.unshift(entry);
   if (recentNews.length > 50) recentNews.pop();
+
+  // Persiste en DB + purge items > NEWS_RETENTION_DAYS. Les erreurs ne
+  // doivent pas bloquer le polling — on catch et log.
+  try {
+    insertNewsItem(entry);
+    purgeNewsOlderThan(NEWS_RETENTION_DAYS);
+  } catch (e) {
+    console.error('[news] DB persist failed:', e.message);
+  }
 
   // Broadcast aux clients SSE connectés (dashboard /news en temps réel).
   const payload = 'data: ' + JSON.stringify(entry) + '\n\n';

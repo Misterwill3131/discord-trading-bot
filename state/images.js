@@ -11,31 +11,55 @@
 //   lastImageBuffer       — PNG de la dernière image générée (signal/proof)
 //   lastImageId           — Date.now() au moment du dernier generateImage
 //   lastPromoImageBuffer  — PNG de la dernière promo 1080×1080
-//   imageGallery          — 100 dernières images (proof + signal) en RAM
+//   imageGallery          — 100 dernières images (proof + signal) ; hydraté
+//                           depuis SQLite au boot, persisté à chaque ajout
 //
 // Méthodes :
 //   addToGallery(type, ticker, author, buffer)
-//     → Ajoute une entrée en tête. Retourne l'id pour pointer dessus.
-//     → Cap à 100 entrées (pop du plus ancien).
+//     → Ajoute une entrée en tête (RAM + DB). Retourne l'id pour pointer dessus.
+//     → Cap à 100 entrées (pop du plus ancien + trim DB).
+//
+// Les `last*Buffer` restent volatiles — toujours rafraîchis au prochain
+// message traité. Pas la peine de les persister.
 // ─────────────────────────────────────────────────────────────────────
+
+const {
+  insertGalleryItem,
+  getRecentGalleryItems,
+  trimGalleryItems,
+} = require('../db/sqlite');
 
 const imageState = {
   lastImageBuffer: null,
   lastImageId: null,
   lastPromoImageBuffer: null,
-  imageGallery: [], // { id, type, ticker, author, ts, buffer }
+  // Hydrate depuis la DB au boot pour que /gallery fonctionne
+  // immédiatement après un restart (sinon vide jusqu'au prochain signal).
+  // better-sqlite3 renvoie déjà les BLOB comme Buffer.
+  imageGallery: getRecentGalleryItems(100),
 
   addToGallery(type, ticker, author, buffer) {
     const id = Date.now() + '-' + Math.random().toString(36).slice(2, 6);
-    this.imageGallery.unshift({
+    const entry = {
       id,
       type,
       ticker: ticker || null,
       author: author || null,
       ts: new Date().toISOString(),
       buffer,
-    });
+    };
+    // RAM d'abord pour la latence immédiate (SSE/UI).
+    this.imageGallery.unshift(entry);
     if (this.imageGallery.length > 100) this.imageGallery.pop();
+
+    // Puis persist en DB. Échec non bloquant — la galerie RAM fonctionne
+    // quand même, seul le restart perdrait l'entrée.
+    try {
+      insertGalleryItem(entry);
+      trimGalleryItems(100);
+    } catch (e) {
+      console.error('[gallery] DB persist failed:', e.message);
+    }
     return id;
   },
 };

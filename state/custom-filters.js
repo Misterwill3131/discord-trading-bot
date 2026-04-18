@@ -1,9 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────
 // state/custom-filters.js — Filtres custom persistés (learned rules)
 // ─────────────────────────────────────────────────────────────────────
-// Charge `custom-filters.json` (racine du projet) au démarrage et
-// expose l'objet en lecture/écriture. Les consommateurs mutent
-// directement les champs (push/filter/assign) puis appellent `save()`.
+// Charge les filtres depuis la table `settings` (clé 'custom_filters')
+// au démarrage et expose l'objet en lecture/écriture. Les consommateurs
+// mutent directement les champs (push/filter/assign) puis appellent
+// `saveCustomFilters()` pour persister.
 //
 // IMPORTANT : ne PAS faire `const { blocked } = customFilters` côté
 // consommateur — c'est un snapshot, tu manqueras les updates. Utilise
@@ -18,10 +19,9 @@
 //   falsePositiveCounts  — {word: n} pour auto-blocker après 3 FP
 // ─────────────────────────────────────────────────────────────────────
 
-const fs = require('fs');
-const path = require('path');
+const { getSetting, setSetting } = require('../db/sqlite');
 
-const FILTERS_PATH = path.join(__dirname, '..', 'custom-filters.json');
+const SETTINGS_KEY = 'custom_filters';
 
 const EMPTY_FILTERS = {
   blocked: [],
@@ -31,31 +31,23 @@ const EMPTY_FILTERS = {
   falsePositiveCounts: {},
 };
 
-function loadCustomFilters() {
-  try {
-    if (fs.existsSync(FILTERS_PATH)) {
-      return JSON.parse(fs.readFileSync(FILTERS_PATH, 'utf8'));
-    }
-  } catch (e) {
-    console.error('[filters] Failed to load custom-filters.json:', e.message);
-  }
-  return Object.assign({}, EMPTY_FILTERS);
-}
+// Objet singleton — référence stable sur toute la durée de vie du process.
+// Les consommateurs doivent muter ce même objet, pas créer une nouvelle instance.
+const customFilters = Object.assign(
+  {},
+  EMPTY_FILTERS,
+  getSetting(SETTINGS_KEY, {}) || {},
+);
 
 function saveCustomFilters() {
   try {
-    fs.writeFileSync(FILTERS_PATH, JSON.stringify(customFilters, null, 2), 'utf8');
+    setSetting(SETTINGS_KEY, customFilters);
   } catch (e) {
-    console.error('[filters] Failed to save custom-filters.json:', e.message);
+    console.error('[custom-filters] Failed to save:', e.message);
   }
 }
-
-// Objet singleton — référence stable sur toute la durée de vie du process.
-// Les consommateurs doivent muter ce même objet, pas créer une nouvelle instance.
-const customFilters = loadCustomFilters();
 
 module.exports = {
   customFilters,
   saveCustomFilters,
-  FILTERS_PATH,
 };

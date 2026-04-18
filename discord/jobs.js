@@ -21,11 +21,15 @@
 
 const path = require('path');
 const { exec } = require('child_process');
+const { promisify } = require('util');
+
+const execAsync = promisify(exec);
 
 const { BLOCKED_AUTHORS, getDisplayName } = require('../utils/authors');
 const { DATA_DIR, todayKey } = require('../utils/persistence');
 const { messageLog } = require('../state/messages');
 const profitCounter = require('../profit/counter');
+const { backupDb, purgeFilteredMessagesWithoutData } = require('../db/sqlite');
 
 // Dernière exécution de chaque job — évite les doublons si
 // l'intervalle de 60s tombe deux fois dans la même minute cible.
@@ -102,39 +106,84 @@ function sendDailySummary(client, tradingChannel) {
   }
 }
 
-// ── Backup git des fichiers JSON de DATA_DIR ────────────────────────
-// Commits et push toutes les nuits — seul moyen de survivre à un restart
-// Railway sans perdre les logs quotidiens. Le volume persistant /data
-// n'est pas versionné, donc on garde une copie dans le repo.
+// ── Backup git : DB SQLite → snapshot → commit + push ──────────────
+// Commits toutes les nuits — seul moyen de survivre à un crash du volume
+// Railway sans perdre les données. Avant la migration SQLite on versionnait
+// les JSON ; maintenant on crée un snapshot `boom-backup.db` via l'API
+// .backup() de better-sqlite3 (safe même pendant des writes concurrents,
+// contrairement à un simple cp qui peut attraper un état WAL incohérent).
+//
+// Les fichiers JSON legacy (messages-*.json, profits-*.json, etc.) sont
+// aussi ajoutés — ils ne sont plus écrits mais on garde l'historique au
+// cas où on voudrait les régénérer.
 //
 // --allow-empty : commit même si rien n'a changé (crée un point dans
 // l'historique pour savoir que le backup a tourné).
-function runGitBackup() {
+async function runGitBackup() {
   const dateKey = todayKey();
-  const dataGlob = path.join(DATA_DIR, '*.json').replace(/\\/g, '/');
-  // __dirname ici = <projet>/discord ; on remonte d'un niveau pour cd au root du repo.
   const projectRoot = path.resolve(__dirname, '..').replace(/\\/g, '/');
-  const cmd = 'git -C "' + projectRoot + '" add "' + dataGlob + '"'
-    + ' && git -C "' + projectRoot + '" commit -m "Auto backup data ' + dateKey + '" --allow-empty'
-    + ' && git -C "' + projectRoot + '" push';
+  const backupPath = path.join(projectRoot, 'boom-backup.db');
+  const jsonGlob = path.join(DATA_DIR, '*.json').replace(/\\/g, '/');
+  const git = 'git -C "' + projectRoot + '"';
+
+  const logResult = (success, stdout, error) => {
+    backupLog.unshift({
+      date: new Date().toISOString(),
+      success,
+      stdout: (stdout || '').trim().substring(0, 300),
+      stderr: '',
+      error: error ? String(error).substring(0, 300) : null,
+    });
+    if (backupLog.length > 30) backupLog.pop();
+  };
 
   console.log('[backup] Running git backup for ' + dateKey);
-  exec(cmd, (err, stdout, stderr) => {
-    const entry = {
-      date: new Date().toISOString(),
-      success: !err,
-      stdout: (stdout || '').trim().substring(0, 300),
-      stderr: (stderr || '').trim().substring(0, 300),
-      error: err ? err.message : null,
-    };
-    backupLog.unshift(entry);
-    if (backupLog.length > 30) backupLog.pop();
-    if (err) {
-      console.error('[backup] Git backup failed:', err.message);
-    } else {
-      console.log('[backup] Git backup success:', stdout.trim().substring(0, 100));
-    }
-  });
+
+  // 0. Purge des messages filtrés sans valeur avant le snapshot.
+  //    Le backup reflète donc un état déjà nettoyé (plus petit, plus utile).
+  try {
+    const purged = purgeFilteredMessagesWithoutData();
+    if (purged > 0) console.log('[backup] Pre-purge: removed ' + purged + ' filtered messages');
+  } catch (err) {
+    // Non-bloquant : on continue vers le snapshot même si la purge a échoué.
+    console.error('[backup] Pre-purge failed (non-blocking):', err.message);
+  }
+
+  // 1. Snapshot DB — si échec on ne touche pas à git.
+  try {
+    await backupDb(backupPath);
+  } catch (err) {
+    console.error('[backup] DB snapshot failed:', err.message);
+    logResult(false, '', 'DB snapshot: ' + err.message);
+    return;
+  }
+
+  // 2. git add (séparé par fichier, tolère les globs sans match) — exec
+  //    par étape pour être portable Windows/Linux sans chaînage shell.
+  try {
+    await execAsync(git + ' add "' + backupPath.replace(/\\/g, '/') + '"');
+  } catch (err) {
+    console.error('[backup] git add backup failed:', err.message);
+    logResult(false, '', err.message);
+    return;
+  }
+
+  // add JSON legacy : le glob peut ne matcher aucun fichier, on ignore l'erreur.
+  try {
+    await execAsync(git + ' add "' + jsonGlob + '"');
+  } catch (_) { /* no JSON files = OK */ }
+
+  // 3. commit + push. --allow-empty garantit un point dans l'historique
+  //    même si les données n'ont pas changé (indicateur "le job a tourné").
+  try {
+    await execAsync(git + ' commit -m "Auto backup ' + dateKey + '" --allow-empty');
+    const { stdout } = await execAsync(git + ' push');
+    console.log('[backup] Git backup success:', (stdout || '').trim().substring(0, 100));
+    logResult(true, stdout, null);
+  } catch (err) {
+    console.error('[backup] Git commit/push failed:', err.message);
+    logResult(false, '', err.message);
+  }
 }
 
 // ── Scheduler ───────────────────────────────────────────────────────
@@ -172,9 +221,16 @@ function startScheduler({ client, tradingChannel }) {
   });
 }
 
+// Copie défensive du backupLog pour la page /backup-log — évite que
+// le caller mute le state interne par accident.
+function getBackupLog() {
+  return backupLog.slice();
+}
+
 module.exports = {
   startScheduler,
   // Exposés pour tests / déclenchement manuel éventuel.
   sendDailySummary,
   runGitBackup,
+  getBackupLog,
 };

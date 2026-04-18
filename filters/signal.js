@@ -44,6 +44,24 @@ const EXIT_KEYWORDS  = [
   'targets done', 'target hit', 'all targets', 'tp hit', 'sl hit', 'stopped out',
 ];
 
+// Patterns regex pour captures plus flexibles (numéros variables, ordre libre).
+// Complète EXIT_KEYWORDS quand un simple `includes` ne suffit pas :
+//   - "TP2 hit" / "target 3 reached"  (numéros dans le token)
+//   - "out at 158" / "sold at 12.5" / "closed at 3.4"
+// `includesAnyRegex` est appelé après `includesAny(EXIT_KEYWORDS)`.
+const EXIT_REGEX = [
+  /\btp\s*\d+\s*(?:hit|reached|done|fill(?:ed)?)\b/i,
+  /\btarget\s*\d+\s*(?:hit|reached|done|fill(?:ed)?)\b/i,
+  /\b(?:out|sold|closed?)\s+at\b/i,
+];
+
+function matchesAnyRegex(text, patterns) {
+  for (const re of patterns) {
+    if (re.test(text)) return true;
+  }
+  return false;
+}
+
 // Regex pour filtrer les messages "conversationnels" (questions, réactions).
 const CONVO_START_RE = /^(and\s+)?(how|who|what|when|why|did|do|are|is|can|any|anyone|has|have|congrats|gg|nice|good|great|lol|haha|check|look|wow|reminder|just|btw|fyi|ok|okay)\b/i;
 
@@ -79,7 +97,7 @@ function classifySignal(content, customFilters, options) {
   // seul n'a souvent que "TICKER all targets done" sans $).
   if (opts.replyBody) {
     const replyLower = String(opts.replyBody).toLowerCase();
-    if (includesAny(replyLower, EXIT_KEYWORDS)) {
+    if (includesAny(replyLower, EXIT_KEYWORDS) || matchesAnyRegex(replyLower, EXIT_REGEX)) {
       const hasPrice = HAS_PRICE_RE.test(content);
       return {
         type: 'exit',
@@ -120,8 +138,8 @@ function classifySignal(content, customFilters, options) {
     return { type: 'entry', reason: 'Accepted', confidence: hasPrice ? 90 : 70, ticker };
   }
 
-  // 6. Signal de sortie détecté.
-  if (includesAny(lower, EXIT_KEYWORDS)) {
+  // 6. Signal de sortie détecté (substring ou regex).
+  if (includesAny(lower, EXIT_KEYWORDS) || matchesAnyRegex(lower, EXIT_REGEX)) {
     const hasPrice = HAS_PRICE_RE.test(content);
     return { type: 'exit', reason: 'Accepted', confidence: hasPrice ? 90 : 70, ticker };
   }

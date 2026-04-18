@@ -222,9 +222,74 @@ ${sidebarHTML('/stats')}
     });
   }
 
+  // ── Parse tous les targets d un entry (format RF: "Targets $A/B/C") ───────
+  // Retourne un array de numbers triés dans l ordre du message (TP1, TP2...).
+  function parseAllTargets(content) {
+    if (!content) return [];
+    var c = content.replace(/,/g, '.');
+    var m = c.match(/targets?\s+\$?(\d+(?:\.\d+)?(?:\s*\/\s*\$?\d+(?:\.\d+)?)+)/i);
+    if (!m) {
+      // Fallback : un seul target "target $X"
+      var single = c.match(/target\s+\$?(\d+(?:\.\d+)?)/i);
+      return single ? [parseFloat(single[1])] : [];
+    }
+    var parts = m[1].split(/\s*\/\s*/);
+    var out = [];
+    parts.forEach(function(p) {
+      var v = parseFloat(String(p).replace(/\$/g, ''));
+      if (!isNaN(v)) out.push(v);
+    });
+    return out;
+  }
+
+  // Parse stop price ("SL $X", "stop X", "stoploss X").
+  function parseStopPrice(content) {
+    if (!content) return null;
+    var m = content.replace(/,/g, '.').match(/(?:stop|sl|stoploss|stop[-\s]?loss)\s+\$?(\d+(?:\.\d+)?)/i);
+    return m ? parseFloat(m[1]) : null;
+  }
+
+  // Détermine le prix d exit effectif pour un entry+exit donné.
+  // Ordre de priorité :
+  //   1. exit.exit_price stocké (serveur a parsé un prix du content)
+  //   2. "SL hit"                    → stop price de l entry
+  //   3. "all targets done/hit"      → dernier target de l entry (TPmax)
+  //   4. "TP2 hit" / "target 2 hit"  → Nième target
+  //   5. "target hit" / "targets done" générique sans numéro → TP1 (conservateur)
+  //   6. Sinon null (pair non exploitable pour P&L)
+  function deriveExitPrice(entry, exit) {
+    if (exit.exit_price != null) return exit.exit_price;
+    var exitLower = (exit.content || '').toLowerCase();
+    var targets = parseAllTargets(entry.content || '');
+    var stop = parseStopPrice(entry.content || '');
+
+    // SL hit → perte
+    if (/\bsl\s*(?:hit|reached|out)?\b|\bstopped\s+out\b|\bstop(?:loss)?\s+hit\b/.test(exitLower)) {
+      if (stop != null) return stop;
+    }
+    // All targets done → dernier target (TPmax, meilleur scénario)
+    if (/\ball\s+targets?\s+(?:done|hit|reached)\b/.test(exitLower)) {
+      if (targets.length > 0) return targets[targets.length - 1];
+    }
+    // TPn hit / target N hit / target N done → Nième target
+    var tpMatch = exitLower.match(/\btp\s*(\d+)\b|\btarget\s*(\d+)\b/);
+    if (tpMatch) {
+      var n = parseInt(tpMatch[1] || tpMatch[2], 10);
+      if (n > 0 && targets.length >= n) return targets[n - 1];
+    }
+    // Générique "target hit" / "targets done" sans numéro → TP1 conservateur
+    if (/\btargets?\s+(?:hit|done|reached)\b/.test(exitLower)) {
+      if (targets.length > 0) return targets[0];
+    }
+    return null;
+  }
+
   // ── Appariement entry→exit (FIFO par auteur canonique + ticker) ───────────
   // Pourquoi FIFO : permet de gérer "scaling in" (plusieurs entries avant un
   // exit) sans en perdre — chaque exit ferme la plus ancienne entry ouverte.
+  //
+  // Pour les exits sans prix direct (ex: reply RF "all targets done"), on
+  // utilise deriveExitPrice pour remonter au prix de l entry correspondant.
   function computePairs(msgs) {
     var sorted = msgs.slice().sort(function(a, b) { return new Date(a.ts) - new Date(b.ts); });
     var open = {}; // key = "author|ticker" → array of entry msgs (queue)
@@ -238,13 +303,23 @@ ${sidebarHTML('/stats')}
       if (m.type === 'entry' && m.entry_price != null) {
         if (!open[key]) open[key] = [];
         open[key].push(m);
-      } else if (m.type === 'exit' && m.exit_price != null) {
+      } else if (m.type === 'exit') {
         var q = open[key];
         if (q && q.length) {
           var entry = q.shift();
-          var pnl = (m.exit_price - entry.entry_price) / entry.entry_price * 100;
-          var dur = new Date(m.ts) - new Date(entry.ts);
-          pairs.push({ author: auth, ticker: m.ticker, entryMsg: entry, exitMsg: m, pnlPct: pnl, durationMs: dur });
+          var exitPrice = deriveExitPrice(entry, m);
+          if (exitPrice != null && entry.entry_price != null) {
+            var pnl = (exitPrice - entry.entry_price) / entry.entry_price * 100;
+            var dur = new Date(m.ts) - new Date(entry.ts);
+            pairs.push({
+              author: auth, ticker: m.ticker,
+              entryMsg: entry, exitMsg: m,
+              entryPrice: entry.entry_price, exitPrice: exitPrice,
+              pnlPct: pnl, durationMs: dur,
+            });
+          }
+          // exitPrice non dérivable : entry clôturée mais P&L inconnu.
+          // Non comptée dans les stats P&L (mais elle l est dans closure rate).
         }
         // exit sans entry matchée : probablement hors période — ignoré
       }

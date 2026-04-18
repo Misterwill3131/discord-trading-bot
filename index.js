@@ -923,6 +923,17 @@ app.get('/api/messages', requireAuth, (req, res) => {
     var to = new Date(req.query.to).getTime();
     if (!isNaN(to)) msgs = msgs.filter(function(m) { return new Date(m.ts).getTime() <= to; });
   }
+  // Enrichit les messages 'exit' avec exit_price (parsé depuis content) pour
+  // permettre au client de calculer le P&L sans parser côté navigateur.
+  msgs = msgs.map(function(m) {
+    if (m.type === 'exit') {
+      var parsed = extractPrices(m.content || '');
+      if (parsed.exit_price != null) {
+        return Object.assign({}, m, { exit_price: parsed.exit_price });
+      }
+    }
+    return m;
+  });
   res.json(msgs);
 });
 
@@ -1856,7 +1867,30 @@ const STATS_HTML = `<!DOCTYPE html>
   .perf-bar-wrap { width: 80px; height: 8px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 6px; }
   .perf-bar-fill { height: 100%; border-radius: 4px; }
   .perf-ticker { color: #5865f2; font-size: 11px; }
-  @media (max-width: 700px) { #wrap { grid-template-columns: 1fr; } .card-full { grid-column: 1; } }
+  /* P&L / durée numériques mis en avant */
+  .pnl-pos { color: #3ba55d; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .pnl-neg { color: #ed4245; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .pnl-zero { color: #a0a0b0; font-variant-numeric: tabular-nums; }
+  .big-number.pnl-pos { color: #3ba55d; }
+  .big-number.pnl-neg { color: #ed4245; }
+  /* Heatmap 7 jours × 24h */
+  .heatmap { display: grid; grid-template-columns: 32px repeat(24, 1fr); gap: 2px; margin-top: 10px; }
+  .heatmap-hdr { font-size: 9px; color: #a0a0b0; text-align: center; font-variant-numeric: tabular-nums; padding: 2px 0; }
+  .heatmap-daylbl { font-size: 10px; color: #a0a0b0; display: flex; align-items: center; justify-content: flex-end; padding-right: 6px; }
+  .heatmap-cell { height: 18px; border-radius: 2px; background: rgba(255,255,255,0.04); cursor: default; }
+  /* Comparateur */
+  .cmp-ctrls { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 12px; flex-wrap: wrap; }
+  .cmp-ctrls select { background: #1e1f22; color: #fafafa; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 6px 8px; font-family: inherit; font-size: 12px; min-width: 180px; }
+  .cmp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .cmp-col { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 12px 14px; }
+  .cmp-col h4 { margin: 0 0 10px; color: #D649CC; font-size: 14px; font-weight: 700; }
+  .cmp-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  .cmp-row:last-child { border-bottom: none; }
+  .cmp-row .k { color: #a0a0b0; }
+  .cmp-row .v { color: #fafafa; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .cmp-row.best .v { color: #3ba55d; }
+  .cmp-hint { font-size: 11px; color: #a0a0b0; }
+  @media (max-width: 700px) { #wrap { grid-template-columns: 1fr; } .card-full { grid-column: 1; } .heatmap { grid-template-columns: 28px repeat(24, 1fr); } }
 </style>
 </head>
 <body>
@@ -1872,6 +1906,7 @@ ${sidebarHTML('/stats')}
   <button class="btn-refresh" id="btn-refresh">Actualiser</button>
 </div>
 <div id="wrap">
+  <!-- ROW 1 — KPI haut niveau -->
   <div class="card">
     <div class="card-title">Taux acceptation</div>
     <div class="big-number" id="accept-pct">—</div>
@@ -1887,6 +1922,38 @@ ${sidebarHTML('/stats')}
       <div class="stat-badge b-filter"><span class="num" id="cnt-filtered">0</span>Filtre</div>
     </div>
   </div>
+
+  <!-- ROW 2 — KPIs auteur (NEW) -->
+  <div class="card">
+    <div class="card-title">P&amp;L moyen par auteur</div>
+    <div id="pnl-authors"><span style="color:#a0a0b0;font-size:12px;">Chargement...</span></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Durée moyenne entry&nbsp;&rarr;&nbsp;exit</div>
+    <div class="big-number" id="avg-duration">—</div>
+    <div class="big-sub" id="avg-duration-sub">chargement...</div>
+  </div>
+
+  <!-- ROW 3 — Performance par auteur (étendu) -->
+  <div class="card card-full">
+    <div class="card-title">Performance par auteur</div>
+    <div id="author-perf-wrap"><span style="color:#a0a0b0;font-size:12px;">Chargement...</span></div>
+  </div>
+
+  <!-- ROW 4 — Comparateur d'auteurs (NEW) -->
+  <div class="card card-full">
+    <div class="card-title">Comparateur d&#39;auteurs</div>
+    <div class="cmp-ctrls">
+      <select id="cmp-select" multiple size="6"></select>
+      <div class="cmp-hint">
+        Ctrl/Cmd+clic pour en sélectionner jusqu&#39;à 3.<br>
+        Le meilleur score par métrique est mis en vert.
+      </div>
+    </div>
+    <div class="cmp-grid" id="cmp-grid"><span style="color:#a0a0b0;font-size:12px;">Sélectionne au moins 1 auteur.</span></div>
+  </div>
+
+  <!-- ROW 5 — Top bars compacts -->
   <div class="card">
     <div class="card-title">Top 5 auteurs</div>
     <div id="top-authors"></div>
@@ -1895,18 +1962,20 @@ ${sidebarHTML('/stats')}
     <div class="card-title">Top 5 tickers</div>
     <div id="top-tickers"></div>
   </div>
+
+  <!-- ROW 6 — Heatmap succès jour × heure (NEW) -->
   <div class="card card-full">
-    <div class="card-title">Top 10 tickers — taux de succes</div>
-    <div id="ticker-success-wrap"><span style="color:#a0a0b0;font-size:12px;">Chargement...</span></div>
+    <div class="card-title">Heatmap succès — jour &times; heure</div>
+    <div id="heatmap-wrap"><span style="color:#a0a0b0;font-size:12px;">Chargement...</span></div>
   </div>
-  <div class="card card-full">
-    <div class="card-title">Performance par auteur</div>
-    <div id="author-perf-wrap"><span style="color:#a0a0b0;font-size:12px;">Chargement...</span></div>
-  </div>
+
+  <!-- ROW 7 — Volume par heure/jour -->
   <div class="card card-full">
     <div class="card-title" id="vol-chart-title">Volume par heure (24h)</div>
     <div class="hour-chart" id="hour-chart"></div>
   </div>
+
+  <!-- ROW 8 — Analyst Performance 30j -->
   <div class="card card-full">
     <div class="card-title">Analyst Performance — 30 jours</div>
     <div id="perf-chart"><span style="color:#a0a0b0;font-size:12px;">Chargement...</span></div>
@@ -1960,7 +2029,109 @@ ${sidebarHTML('/stats')}
     });
   }
 
-  function renderAuthorPerf(msgs) {
+  // ── Appariement entry→exit (FIFO par auteur canonique + ticker) ───────────
+  // Pourquoi FIFO : permet de gérer "scaling in" (plusieurs entries avant un
+  // exit) sans en perdre — chaque exit ferme la plus ancienne entry ouverte.
+  function computePairs(msgs) {
+    var sorted = msgs.slice().sort(function(a, b) { return new Date(a.ts) - new Date(b.ts); });
+    var open = {}; // key = "author|ticker" → array of entry msgs (queue)
+    var pairs = [];
+    var unpaired = [];
+    sorted.forEach(function(m) {
+      if (!m.author || isBlocked(m.author)) return;
+      if (!m.ticker || !m.passed) return;
+      var auth = canonical(m.author);
+      var key = auth + '|' + m.ticker;
+      if (m.type === 'entry' && m.entry_price != null) {
+        if (!open[key]) open[key] = [];
+        open[key].push(m);
+      } else if (m.type === 'exit' && m.exit_price != null) {
+        var q = open[key];
+        if (q && q.length) {
+          var entry = q.shift();
+          var pnl = (m.exit_price - entry.entry_price) / entry.entry_price * 100;
+          var dur = new Date(m.ts) - new Date(entry.ts);
+          pairs.push({ author: auth, ticker: m.ticker, entryMsg: entry, exitMsg: m, pnlPct: pnl, durationMs: dur });
+        }
+        // exit sans entry matchée : probablement hors période — ignoré
+      }
+    });
+    Object.keys(open).forEach(function(k) { open[k].forEach(function(e) { unpaired.push(e); }); });
+    return { pairs: pairs, unpaired: unpaired };
+  }
+
+  function formatDuration(ms) {
+    if (ms == null || !isFinite(ms) || ms < 0) return '—';
+    var mins = Math.round(ms / 60000);
+    if (mins < 60) return mins + 'm';
+    var hrs = Math.floor(mins / 60);
+    var rm = mins % 60;
+    if (hrs < 24) return hrs + 'h' + (rm ? ' ' + rm + 'm' : '');
+    var days = Math.floor(hrs / 24);
+    var rh = hrs % 24;
+    return days + 'j' + (rh ? ' ' + rh + 'h' : '');
+  }
+
+  function pnlClass(v) { return v > 0 ? 'pnl-pos' : v < 0 ? 'pnl-neg' : 'pnl-zero'; }
+  function pnlFmt(v) { return (v > 0 ? '+' : '') + v.toFixed(1) + '%'; }
+
+  // Regroupe les paires par auteur canonique → { total, avgPnl, avgDur, pairs }
+  function pairsByAuthor(pairs) {
+    var by = {};
+    pairs.forEach(function(p) {
+      if (!by[p.author]) by[p.author] = { count: 0, sumPnl: 0, sumDur: 0, pairs: [] };
+      by[p.author].count++;
+      by[p.author].sumPnl += p.pnlPct;
+      by[p.author].sumDur += p.durationMs;
+      by[p.author].pairs.push(p);
+    });
+    Object.keys(by).forEach(function(a) {
+      by[a].avgPnl = by[a].sumPnl / by[a].count;
+      by[a].avgDur = by[a].sumDur / by[a].count;
+    });
+    return by;
+  }
+
+  function renderPnlByAuthor(pairs) {
+    var wrap = document.getElementById('pnl-authors');
+    var by = pairsByAuthor(pairs);
+    var rows = Object.keys(by).map(function(a) { return [a, by[a].avgPnl, by[a].count]; })
+      .sort(function(x, y) { return y[1] - x[1]; }).slice(0, 5);
+    if (!rows.length) { wrap.innerHTML = '<span style="color:#a0a0b0;font-size:12px;">Aucune paire entry→exit</span>'; return; }
+    var absMax = Math.max.apply(null, rows.map(function(r) { return Math.abs(r[1]); })) || 1;
+    wrap.innerHTML = '';
+    rows.forEach(function(r) {
+      var name = r[0], avg = r[1], n = r[2];
+      var pct = Math.round(Math.abs(avg) / absMax * 100);
+      var color = avg >= 0 ? '#3ba55d' : '#ed4245';
+      var row = document.createElement('div');
+      row.className = 'bar-row';
+      row.innerHTML = '<span class="bar-label" title="' + esc(name) + '">' + esc(name) + '</span>'
+        + '<div class="bar-wrap"><div class="bar-fill" style="width:' + pct + '%;background:' + color + ';"></div></div>'
+        + '<span class="bar-val ' + pnlClass(avg) + '" title="' + n + ' paires">' + pnlFmt(avg) + '</span>';
+      wrap.appendChild(row);
+    });
+  }
+
+  function renderAvgDuration(pairs, unpaired) {
+    var el = document.getElementById('avg-duration');
+    var sub = document.getElementById('avg-duration-sub');
+    if (!pairs.length) {
+      el.textContent = '—';
+      sub.textContent = 'Aucune paire entry→exit' + (unpaired.length ? ' (' + unpaired.length + ' entries encore ouvertes)' : '');
+      return;
+    }
+    var sorted = pairs.slice().sort(function(a, b) { return a.durationMs - b.durationMs; });
+    var sum = pairs.reduce(function(acc, p) { return acc + p.durationMs; }, 0);
+    var avg = sum / pairs.length;
+    var med = sorted[Math.floor(sorted.length / 2)].durationMs;
+    el.textContent = formatDuration(avg);
+    sub.textContent = 'médiane ' + formatDuration(med)
+      + ' • ' + pairs.length + ' paires'
+      + (unpaired.length ? ' • ' + unpaired.length + ' ouvertes' : '');
+  }
+
+  function renderAuthorPerf(msgs, pairs) {
     var wrap = document.getElementById('author-perf-wrap');
     var authorStats = {};
     msgs.forEach(function(m) {
@@ -1973,11 +2144,13 @@ ${sidebarHTML('/stats')}
       if (m.passed) s.accepted++; else s.filtered++;
       if (m.ticker) s.tickers[m.ticker] = (s.tickers[m.ticker] || 0) + 1;
     });
+    var byPair = pairsByAuthor(pairs || []);
     var rows = Object.keys(authorStats).map(function(a) { return [a, authorStats[a]]; })
       .sort(function(x, y) { return y[1].total - x[1].total; }).slice(0, 10);
     if (!rows.length) { wrap.innerHTML = '<span style="color:#a0a0b0;font-size:12px;">Aucune donnee</span>'; return; }
     var html = '<table class="perf-table"><thead><tr>'
-      + '<th>Auteur</th><th>Total</th><th>Acceptes</th><th>Filtres</th><th>Taux</th><th>Ticker top</th>'
+      + '<th>Auteur</th><th>Total</th><th>Acceptes</th><th>Filtres</th><th>Taux</th>'
+      + '<th>Paires</th><th>P&amp;L moy</th><th>Durée moy</th><th>Ticker top</th>'
       + '</tr></thead><tbody>';
     rows.forEach(function(row) {
       var name = row[0], s = row[1];
@@ -1986,17 +2159,181 @@ ${sidebarHTML('/stats')}
       var topTicker = '';
       var topCount = 0;
       Object.keys(s.tickers).forEach(function(t) { if (s.tickers[t] > topCount) { topCount = s.tickers[t]; topTicker = t; } });
+      var pa = byPair[name];
+      var pairCell = pa ? pa.count : '—';
+      var pnlCell = pa ? '<span class="' + pnlClass(pa.avgPnl) + '">' + pnlFmt(pa.avgPnl) + '</span>' : '<span style="color:#4f5660;">—</span>';
+      var durCell = pa ? formatDuration(pa.avgDur) : '<span style="color:#4f5660;">—</span>';
       html += '<tr>'
         + '<td class="perf-author">' + esc(name) + '</td>'
         + '<td>' + s.total + '</td>'
         + '<td class="perf-acc">' + s.accepted + '</td>'
         + '<td class="perf-flt">' + s.filtered + '</td>'
         + '<td><span class="perf-bar-wrap"><span class="perf-bar-fill" style="width:' + rate + '%;background:' + barColor + ';"></span></span>' + rate + '%</td>'
+        + '<td>' + pairCell + '</td>'
+        + '<td>' + pnlCell + '</td>'
+        + '<td>' + durCell + '</td>'
         + '<td class="perf-ticker">' + esc(topTicker) + '</td>'
         + '</tr>';
     });
     html += '</tbody></table>';
     wrap.innerHTML = html;
+  }
+
+  // ── Heatmap 7 jours × 24h, couleur = taux acceptation ─────────────────────
+  function renderHeatmap(msgs) {
+    var wrap = document.getElementById('heatmap-wrap');
+    // grid[day 0=dim..6=sam][hour 0..23] = { total, accepted }
+    var grid = [];
+    for (var d = 0; d < 7; d++) {
+      grid.push([]);
+      for (var h = 0; h < 24; h++) grid[d].push({ total: 0, accepted: 0 });
+    }
+    msgs.forEach(function(m) {
+      if (!m.ts) return;
+      var dt = new Date(m.ts);
+      var dow = dt.getDay(); // 0 = dimanche
+      var hr = dt.getHours();
+      grid[dow][hr].total++;
+      if (m.passed) grid[dow][hr].accepted++;
+    });
+    // Jours affichés L-Sa-Di (lundi en haut, culturel FR)
+    var dayOrder = [1, 2, 3, 4, 5, 6, 0];
+    var dayLabels = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
+    var dayFull = { 0: 'Dim', 1: 'Lun', 2: 'Mar', 3: 'Mer', 4: 'Jeu', 5: 'Ven', 6: 'Sam' };
+    var html = '<div class="heatmap">';
+    // Header : coin vide + 24 heures
+    html += '<div class="heatmap-hdr"></div>';
+    for (var h2 = 0; h2 < 24; h2++) {
+      html += '<div class="heatmap-hdr">' + (h2 % 3 === 0 ? h2 : '') + '</div>';
+    }
+    // Lignes jours
+    dayOrder.forEach(function(dow, idx) {
+      html += '<div class="heatmap-daylbl">' + dayLabels[idx] + '</div>';
+      for (var h3 = 0; h3 < 24; h3++) {
+        var cell = grid[dow][h3];
+        var rate = cell.total ? cell.accepted / cell.total : null;
+        var bg = 'rgba(255,255,255,0.04)';
+        if (cell.total > 0) {
+          // Rouge(0) → orange(0.5) → vert(1)
+          if (rate <= 0.5) {
+            var t = rate / 0.5;
+            var r = Math.round(237 + (250 - 237) * t);
+            var g = Math.round(66 + (166 - 66) * t);
+            var b = Math.round(69 + (26 - 69) * t);
+            bg = 'rgb(' + r + ',' + g + ',' + b + ')';
+          } else {
+            var t2 = (rate - 0.5) / 0.5;
+            var r2 = Math.round(250 + (59 - 250) * t2);
+            var g2 = Math.round(166 + (165 - 166) * t2);
+            var b2 = Math.round(26 + (93 - 26) * t2);
+            bg = 'rgb(' + r2 + ',' + g2 + ',' + b2 + ')';
+          }
+        }
+        var tip = dayFull[dow] + ' ' + h3 + 'h · ' + cell.accepted + '/' + cell.total + (cell.total ? ' (' + Math.round(rate * 100) + '%)' : '');
+        html += '<div class="heatmap-cell" style="background:' + bg + ';" title="' + tip + '"></div>';
+      }
+    });
+    html += '</div>';
+    wrap.innerHTML = html;
+  }
+
+  // ── Comparateur d'auteurs ─────────────────────────────────────────────────
+  var cmpSelected = [];
+  function renderComparateur(msgs, pairs) {
+    var sel = document.getElementById('cmp-select');
+    var grid = document.getElementById('cmp-grid');
+
+    // Collecte auteurs présents dans la période
+    var authorStats = {};
+    msgs.forEach(function(m) {
+      if (!m.author || isBlocked(m.author)) return;
+      var key = canonical(m.author);
+      if (!authorStats[key]) authorStats[key] = { total: 0, accepted: 0, tickers: {} };
+      authorStats[key].total++;
+      if (m.passed) authorStats[key].accepted++;
+      if (m.ticker) authorStats[key].tickers[m.ticker] = (authorStats[key].tickers[m.ticker] || 0) + 1;
+    });
+    var authors = Object.keys(authorStats).sort();
+
+    // Reconstruit le select en préservant la sélection existante
+    var previous = cmpSelected.slice();
+    sel.innerHTML = '';
+    authors.forEach(function(a) {
+      var opt = document.createElement('option');
+      opt.value = a;
+      opt.textContent = a;
+      if (previous.indexOf(a) !== -1) opt.selected = true;
+      sel.appendChild(opt);
+    });
+
+    // Limite dure à 3 — désélectionne les extras au change
+    sel.onchange = function() {
+      var chosen = Array.prototype.map.call(sel.selectedOptions, function(o) { return o.value; });
+      if (chosen.length > 3) {
+        for (var i = 3; i < sel.selectedOptions.length; i++) sel.selectedOptions[i].selected = false;
+        chosen = chosen.slice(0, 3);
+      }
+      cmpSelected = chosen;
+      renderCmpGrid(chosen, authorStats, pairs);
+    };
+
+    // Rendu initial (synchronise cmpSelected avec le DOM au cas où la liste a changé)
+    cmpSelected = previous.filter(function(a) { return authors.indexOf(a) !== -1; });
+    renderCmpGrid(cmpSelected, authorStats, pairs);
+  }
+
+  function renderCmpGrid(chosen, authorStats, pairs) {
+    var grid = document.getElementById('cmp-grid');
+    if (!chosen.length) { grid.innerHTML = '<span style="color:#a0a0b0;font-size:12px;">Sélectionne au moins 1 auteur.</span>'; return; }
+    var byPair = pairsByAuthor(pairs || []);
+
+    // Métriques pour chaque auteur
+    var cards = chosen.map(function(name) {
+      var s = authorStats[name] || { total: 0, accepted: 0, tickers: {} };
+      var rate = s.total ? (s.accepted / s.total) : 0;
+      var pa = byPair[name];
+      var topT = '', topC = 0;
+      Object.keys(s.tickers).forEach(function(t) { if (s.tickers[t] > topC) { topC = s.tickers[t]; topT = t; } });
+      return {
+        name: name,
+        total: s.total,
+        rate: rate,
+        pairs: pa ? pa.count : 0,
+        pnl: pa ? pa.avgPnl : null,
+        dur: pa ? pa.avgDur : null,
+        topTicker: topT,
+      };
+    });
+
+    // Meilleur par métrique → classe .best
+    function bestIdx(key, higher) {
+      var best = -1, bestV = null;
+      cards.forEach(function(c, i) {
+        var v = c[key];
+        if (v == null) return;
+        if (bestV == null || (higher ? v > bestV : v < bestV)) { bestV = v; best = i; }
+      });
+      return best;
+    }
+    var bTotal = bestIdx('total', true);
+    var bRate = bestIdx('rate', true);
+    var bPairs = bestIdx('pairs', true);
+    var bPnl = bestIdx('pnl', true);
+    var bDur = bestIdx('dur', false); // durée plus courte = meilleur
+
+    var html = '';
+    cards.forEach(function(c, i) {
+      html += '<div class="cmp-col">'
+        + '<h4>' + esc(c.name) + '</h4>'
+        + '<div class="cmp-row' + (i === bTotal ? ' best' : '') + '"><span class="k">Signaux</span><span class="v">' + c.total + '</span></div>'
+        + '<div class="cmp-row' + (i === bRate ? ' best' : '') + '"><span class="k">Taux</span><span class="v">' + Math.round(c.rate * 100) + '%</span></div>'
+        + '<div class="cmp-row' + (i === bPairs ? ' best' : '') + '"><span class="k">Paires</span><span class="v">' + c.pairs + '</span></div>'
+        + '<div class="cmp-row' + (i === bPnl && c.pnl != null ? ' best' : '') + '"><span class="k">P&amp;L moy</span><span class="v ' + (c.pnl != null ? pnlClass(c.pnl) : '') + '">' + (c.pnl != null ? pnlFmt(c.pnl) : '—') + '</span></div>'
+        + '<div class="cmp-row' + (i === bDur && c.dur != null ? ' best' : '') + '"><span class="k">Durée moy</span><span class="v">' + (c.dur != null ? formatDuration(c.dur) : '—') + '</span></div>'
+        + '<div class="cmp-row"><span class="k">Top ticker</span><span class="v" style="color:#5865f2;">' + esc(c.topTicker || '—') + '</span></div>'
+        + '</div>';
+    });
+    grid.innerHTML = html;
   }
 
   function renderVolumeChart(msgs) {
@@ -2058,50 +2395,6 @@ ${sidebarHTML('/stats')}
     }
   }
 
-  function renderTickerSuccess(msgs) {
-    var wrap = document.getElementById('ticker-success-wrap');
-    var tickerStats = {};
-    // Sort messages by time ascending so we capture the earliest alert first
-    var sorted = msgs.slice().sort(function(a, b) { return new Date(a.ts) - new Date(b.ts); });
-    sorted.forEach(function(m) {
-      if (!m.ticker) return;
-      if (!tickerStats[m.ticker]) tickerStats[m.ticker] = { total: 0, accepted: 0, firstEntry: null };
-      tickerStats[m.ticker].total++;
-      if (m.passed) {
-        tickerStats[m.ticker].accepted++;
-        // Record entry price from the first accepted alert for this ticker
-        if (tickerStats[m.ticker].firstEntry === null && m.entry_price != null) {
-          tickerStats[m.ticker].firstEntry = m.entry_price;
-        }
-      }
-    });
-    var rows = Object.keys(tickerStats).map(function(t) { return [t, tickerStats[t]]; })
-      .sort(function(a, b) { return b[1].total - a[1].total; }).slice(0, 10);
-    if (!rows.length) { wrap.innerHTML = '<span style="color:#a0a0b0;font-size:12px;">Aucune donnee</span>'; return; }
-    var html = '<table class="perf-table"><thead><tr>'
-      + '<th>#</th><th>Ticker</th><th>Prix entree</th><th>Total</th><th>Acceptes</th><th>Filtres</th><th>Taux succes</th>'
-      + '</tr></thead><tbody>';
-    rows.forEach(function(row, i) {
-      var t = row[0], s = row[1];
-      var rate = s.total ? Math.round(s.accepted / s.total * 100) : 0;
-      var barColor = rate >= 50 ? '#3ba55d' : rate >= 25 ? '#faa61a' : '#ed4245';
-      var entryCell = s.firstEntry != null
-        ? '<span style="color:#faa61a;font-weight:700;">$' + s.firstEntry + '</span>'
-        : '<span style="color:#4f5660;">—</span>';
-      html += '<tr>'
-        + '<td style="color:#a0a0b0;">' + (i + 1) + '</td>'
-        + '<td class="perf-ticker" style="font-weight:700;font-size:13px;">$' + esc(t) + '</td>'
-        + '<td>' + entryCell + '</td>'
-        + '<td>' + s.total + '</td>'
-        + '<td class="perf-acc">' + s.accepted + '</td>'
-        + '<td class="perf-flt">' + (s.total - s.accepted) + '</td>'
-        + '<td><span class="perf-bar-wrap"><span class="perf-bar-fill" style="width:' + rate + '%;background:' + barColor + ';"></span></span>' + rate + '%</td>'
-        + '</tr>';
-    });
-    html += '</tbody></table>';
-    wrap.innerHTML = html;
-  }
-
   function loadStats() {
     var fromTs = periodFromTs();
     var url = '/api/messages' + (fromTs ? '?from=' + encodeURIComponent(fromTs) : '');
@@ -2145,9 +2438,13 @@ ${sidebarHTML('/stats')}
           .sort(function(a,b){ return b[1]-a[1]; }).slice(0,5);
         renderBars('top-tickers', topTickers, '#5865f2');
 
-        renderAuthorPerf(msgs);
+        var paired = computePairs(msgs);
+        renderPnlByAuthor(paired.pairs);
+        renderAvgDuration(paired.pairs, paired.unpaired);
+        renderAuthorPerf(msgs, paired.pairs);
+        renderComparateur(msgs, paired.pairs);
+        renderHeatmap(msgs);
         renderVolumeChart(msgs);
-        renderTickerSuccess(msgs);
       })
       .catch(function(){ document.getElementById('accept-sub').textContent = 'Erreur de chargement'; });
   }
@@ -3224,17 +3521,29 @@ app.get('/api/ticker/:symbol', requireAuth, (req, res) => {
     .sort((a, b) => b.count - a.count)
     .slice(0, 10);
 
-  // Prix d'entrée de la toute première annonce (chronologiquement la plus
-  // ancienne) : on re-trie ASC et on prend le premier 'entry' avec un prix.
+  // Prix d'entrée et de sortie de la toute première annonce
+  // (chronologiquement la plus ancienne) : on re-trie ASC et on prend
+  // le premier 'entry'/'exit' avec un prix. Pour l'exit, on re-parse
+  // le content si le prix n'est pas stocké (logs historiques).
   let firstEntryPrice = null;
   let firstEntryTs = null;
+  let firstExitPrice = null;
+  let firstExitTs = null;
   const byTsAsc = collected.slice().sort((a, b) => (a.ts || '') > (b.ts || '') ? 1 : -1);
   for (const m of byTsAsc) {
-    if (m.passed && m.type === 'entry' && m.entry_price != null) {
+    if (firstEntryPrice == null && m.passed && m.type === 'entry' && m.entry_price != null) {
       firstEntryPrice = m.entry_price;
       firstEntryTs = m.ts;
-      break;
     }
+    if (firstExitPrice == null && m.passed && m.type === 'exit') {
+      const parsed = extractPrices(m.content || '');
+      const price = parsed.exit_price != null ? parsed.exit_price : parsed.entry_price;
+      if (price != null) {
+        firstExitPrice = price;
+        firstExitTs = m.ts;
+      }
+    }
+    if (firstEntryPrice != null && firstExitPrice != null) break;
   }
 
   const signals = collected.slice(0, 200).map(m => ({
@@ -3257,6 +3566,8 @@ app.get('/api/ticker/:symbol', requireAuth, (req, res) => {
     lastSeen,
     firstEntryPrice,
     firstEntryTs,
+    firstExitPrice,
+    firstExitTs,
     distinctAuthors: Object.keys(authorCounts).length,
     breakdown,
     topAuthors,
@@ -3274,7 +3585,7 @@ const TICKER_PAGE_HTML = `<!DOCTYPE html>
 <style>
   ${COMMON_CSS}
   #wrap { padding: 24px 32px; display: flex; flex-direction: column; gap: 20px; }
-  .grid-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+  .grid-stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 16px; }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
   .stat-box { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 16px 20px; }
   .stat-box .num { font-size: 28px; font-weight: 800; color: #fafafa; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
@@ -3335,6 +3646,7 @@ ${sidebarHTML('')}
       <div class="stat-box"><div class="num" id="stat-total">—</div><div class="lbl">Signaux</div></div>
       <div class="stat-box"><div class="num" id="stat-authors">—</div><div class="lbl">Auteurs distincts</div></div>
       <div class="stat-box"><div class="num" id="stat-first-entry">—</div><div class="lbl">Prix d&#39;entrée initial</div></div>
+      <div class="stat-box"><div class="num" id="stat-first-exit">—</div><div class="lbl">Prix de sortie initial</div></div>
       <div class="stat-box"><div class="num" id="stat-first">—</div><div class="lbl">Première mention</div></div>
       <div class="stat-box"><div class="num" id="stat-last">—</div><div class="lbl">Dernière mention</div></div>
     </div>
@@ -3482,6 +3794,7 @@ ${sidebarHTML('')}
         document.getElementById('stat-total').textContent = data.total;
         document.getElementById('stat-authors').textContent = data.distinctAuthors || 0;
         document.getElementById('stat-first-entry').textContent = data.firstEntryPrice != null ? ('$' + Number(data.firstEntryPrice).toFixed(2)) : '—';
+        document.getElementById('stat-first-exit').textContent = data.firstExitPrice != null ? ('$' + Number(data.firstExitPrice).toFixed(2)) : '—';
         document.getElementById('stat-first').textContent = fmtRelDays(data.firstSeen);
         document.getElementById('stat-last').textContent = fmtRelDays(data.lastSeen);
 

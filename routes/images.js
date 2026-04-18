@@ -33,7 +33,7 @@
 const fetch = require('node-fetch');
 const { generateImage, generateProofImage } = require('../canvas/proof');
 const { extractPrices, extractTicker, enrichContent } = require('../utils/prices');
-const { loadDailyFile } = require('../utils/persistence');
+const { getMessagesByTicker } = require('../db/sqlite');
 
 function registerImageRoutes(app, requireAuth, imageState, opts) {
   const messageLog    = opts.messageLog;
@@ -130,36 +130,26 @@ function registerImageRoutes(app, requireAuth, imageState, opts) {
 
   // ── Recherche d'alertes ────────────────────────────────────────────
   // Utilisé par la page /proof-generator pour retrouver l'entry d'un ticker.
+  // Single query DB via l'index (ticker, ts) — remplace la boucle N-jours.
   app.get('/api/find-alert', requireAuth, (req, res) => {
     const ticker = (req.query.ticker || '').toUpperCase().replace('$', '');
     const days = Math.min(parseInt(req.query.days || '30', 10), 90);
     if (!ticker) return res.json({ alerts: [] });
 
-    const alerts = [];
-    for (let i = 0; i < days; i++) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const dateKey = d.toISOString().slice(0, 10);
-      // Jour courant : lire messageLog (fraîcheur) ; jours passés : fichier disque.
-      const msgs = i === 0
-        ? messageLog.filter(m => m.ts && m.ts.slice(0, 10) === dateKey)
-        : loadDailyFile(dateKey);
-      msgs.forEach(m => {
-        if (!m.passed || !m.ticker) return;
-        if (m.ticker.toUpperCase() !== ticker) return;
-        alerts.push({
-          id: m.id,
-          ts: m.ts,
-          author: m.author,
-          content: m.content || m.preview || '',
-          ticker: m.ticker,
-          type: m.type,
-        });
-      });
-    }
-    // Plus récentes d'abord.
-    alerts.sort((a, b) => (b.ts || '') < (a.ts || '') ? -1 : 1);
-    res.json({ ticker, alerts: alerts.slice(0, 20) });
+    const sinceIso = new Date(Date.now() - days * 86400000).toISOString();
+    const rows = getMessagesByTicker(ticker, sinceIso);
+    const alerts = rows
+      .filter(m => m.passed)
+      .slice(0, 20)
+      .map(m => ({
+        id: m.id,
+        ts: m.ts,
+        author: m.author,
+        content: m.content || m.preview || '',
+        ticker: m.ticker,
+        type: m.type,
+      }));
+    res.json({ ticker, alerts });
   });
 
   // ── Health check ───────────────────────────────────────────────────

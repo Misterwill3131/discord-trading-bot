@@ -4,3 +4,9 @@ messages-*.json
 custom-filters.json
 .claude/worktrees/
 *.log
+
+# SQLite database (vit dans DATA_DIR = /data sur Railway, racine en local)
+boom.db
+boom.db-journal
+boom.db-wal
+boom.db-shm

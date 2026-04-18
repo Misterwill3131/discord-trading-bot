@@ -15,23 +15,20 @@
 // le handler Discord sont vues à chaque requête (pas de cache).
 // ─────────────────────────────────────────────────────────────────────
 
-const { loadDailyFile } = require('../utils/persistence');
 const { extractPrices } = require('../utils/prices');
 const { BLOCKED_AUTHORS, getDisplayName } = require('../utils/authors');
+const { getMessagesByDateKey } = require('../db/sqlite');
 
-// Parcours les N derniers jours : jour 0 = messageLog (mémoire, frais),
-// jours suivants = fichier disque. `visit(msgs, dateKey, dayIndex)` reçoit
-// chaque lot une fois. Centralise la dualité mémoire/disque pour éviter
-// de la dupliquer dans chaque handler.
+// Parcours les N derniers jours via la DB (source de vérité). `visit(msgs,
+// dateKey, dayIndex)` reçoit chaque lot une fois. Depuis la migration
+// SQLite plus besoin de distinguer jour 0 (mémoire) vs jours passés
+// (fichier) — chaque logEvent écrit en DB immédiatement.
 function forEachDayOfLog(messageLog, days, visit) {
   for (let i = 0; i < days; i++) {
     const d = new Date();
     d.setDate(d.getDate() - i);
     const dateKey = d.toISOString().slice(0, 10);
-    const msgs = i === 0
-      ? messageLog.filter(m => m.ts && m.ts.slice(0, 10) === dateKey)
-      : loadDailyFile(dateKey);
-    visit(msgs, dateKey, i);
+    visit(getMessagesByDateKey(dateKey), dateKey, i);
   }
 }
 
@@ -56,9 +53,7 @@ function registerAnalyticsRoutes(app, requireAuth, messageLog) {
       d.setDate(d.getDate() - i);
       const dateKey = d.toISOString().slice(0, 10);
       dateLabels.push(dateKey);
-      const msgs = i === 0
-        ? messageLog.filter(m => m.ts && m.ts.slice(0, 10) === dateKey)
-        : loadDailyFile(dateKey);
+      const msgs = getMessagesByDateKey(dateKey);
       msgs.forEach(m => {
         if (!m.passed || !m.author) return;
         if (!authorDayMap[m.author]) authorDayMap[m.author] = {};

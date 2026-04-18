@@ -26,8 +26,8 @@ const fetch = require('node-fetch');
 
 const { BLOCKED_AUTHORS, getDisplayName } = require('../utils/authors');
 const { extractPrices, extractTicker } = require('../utils/prices');
-const { loadDailyFile } = require('../utils/persistence');
 const { classifySignal } = require('../filters/signal');
+const { getMessagesByTicker } = require('../db/sqlite');
 const { customFilters } = require('../state/custom-filters');
 const { messageLog, logEvent } = require('../state/messages');
 const { generateImage, generateProofImage } = require('../canvas/proof');
@@ -97,37 +97,26 @@ async function handleStatsCommand(message, ticker) {
 
 // ── Recherche de l'alerte originale pour un recap ───────────────────
 // Priorité 1 : si c'est une réponse Discord, on prend le message parent.
-// Priorité 2 : on scanne l'historique (30 jours max) pour le dernier
-// signal d'entrée accepté sur ce ticker, antérieur au recap courant.
+// Priorité 2 : single query DB via l'index (ticker, ts), on retient le
+// premier message passed antérieur au recap (getMessagesByTicker trie DESC).
 function findOriginalAlert({ signalTicker, messageCreatedAt, isReply, parentContent, parentAuthor }) {
   if (isReply && parentContent && parentAuthor) {
     return { author: parentAuthor, content: parentContent, ts: null };
   }
 
-  const tickerUpper = signalTicker.toUpperCase();
-  for (let i = 0; i < 30; i++) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    const dk = d.toISOString().slice(0, 10);
-    // Jour 0 = en mémoire (plus frais que le fichier disque pas encore flushé).
-    const msgs = i === 0
-      ? messageLog.filter(m => m.ts && m.ts.slice(0, 10) === dk)
-      : loadDailyFile(dk);
-    const found = msgs.find(m =>
-      m.passed
-      && m.ticker && m.ticker.toUpperCase() === tickerUpper
-      && m.id !== undefined
-      && new Date(m.ts) < messageCreatedAt // doit être STRICTEMENT avant le recap
-    );
-    if (found) {
-      return {
-        author: found.author,
-        content: found.content || found.preview || '',
-        ts: found.ts,
-      };
-    }
-  }
-  return null;
+  const sinceIso = new Date(messageCreatedAt.getTime() - 30 * 86400000).toISOString();
+  const rows = getMessagesByTicker(signalTicker.toUpperCase(), sinceIso);
+  // rows est triée DESC par ts → le premier `passed` antérieur au recap
+  // est bien le dernier signal d'entrée le plus récent.
+  const found = rows.find(m =>
+    m.passed && m.id !== undefined && new Date(m.ts) < messageCreatedAt
+  );
+  if (!found) return null;
+  return {
+    author: found.author,
+    content: found.content || found.preview || '',
+    ts: found.ts,
+  };
 }
 
 // ── POST vers Make.com (pas bloquant — on catch et on log) ──────────

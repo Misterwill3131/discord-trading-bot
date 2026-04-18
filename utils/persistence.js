@@ -1,18 +1,19 @@
 // ─────────────────────────────────────────────────────────────────────
-// utils/persistence.js — I/O disque pour les messages journaliers
+// utils/persistence.js — DATA_DIR + helpers date/time
 // ─────────────────────────────────────────────────────────────────────
-// Centralise la lecture/écriture des fichiers `messages-YYYY-MM-DD.json`
-// et expose DATA_DIR (utilisé par d'autres modules pour des fichiers
-// profit, filtres, backups, etc.).
+// Depuis la migration SQLite (db/sqlite.js), ce module ne gère plus
+// la persistence des messages — il reste utilisé pour :
 //
-// Exporte :
-//   DATA_DIR              — /data sur Railway, racine du projet en local
-//   MAX_LOG               — nombre max de messages gardés en mémoire
-//   todayKey()            — clé date "YYYY-MM-DD" fuseau America/New_York
-//   loadDailyFile(key)    — lit messages-{key}.json (retourne [] si absent)
-//   saveDailyFile(k, arr) — écrit messages-{key}.json
-//   loadInitialMessages() — messages du jour, tronqués à MAX_LOG
-//   saveTodayMessages(a)  — raccourci saveDailyFile(todayKey(), a)
+//   DATA_DIR   — chemin racine des fichiers de données (Railway `/data`
+//                en prod, racine projet en local). Utilisé par sqlite,
+//                config-overrides, profit/counter, jobs.
+//   MAX_LOG    — cap du cache messageLog en mémoire.
+//   todayKey() — clé date "YYYY-MM-DD" fuseau America/New_York, utilisée
+//                comme index de regroupement dans plusieurs modules.
+//
+// Les anciennes fonctions loadDailyFile / saveDailyFile / loadInitial-
+// Messages / saveTodayMessages ont été supprimées — remplacées par les
+// queries DB (voir db/sqlite.js).
 // ─────────────────────────────────────────────────────────────────────
 
 const fs = require('fs');
@@ -23,8 +24,9 @@ const path = require('path');
 // vers la racine du projet.
 const DATA_DIR = fs.existsSync('/data') ? '/data' : path.resolve(__dirname, '..');
 
-// Limite de messages conservés en RAM. Le dashboard charge MAX_LOG au
-// démarrage, les plus anciens sont tombés lors d'un nouveau logEvent.
+// Limite de messages conservés en RAM (cache de state/messages.js). Le
+// dashboard /api/messages et les commandes !top/!stats lisent ce cache
+// pour ne pas taper la DB à chaque requête chaude.
 const MAX_LOG = 200;
 
 // La journée "trading" commence à 23h55 ET : on décale +5min pour que
@@ -34,49 +36,8 @@ function todayKey() {
     .toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
-function loadDailyFile(dateKey) {
-  try {
-    const filePath = path.join(DATA_DIR, 'messages-' + dateKey + '.json');
-    if (fs.existsSync(filePath)) {
-      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    }
-  } catch (e) {
-    console.error('[daily] Failed to load messages-' + dateKey + '.json:', e.message);
-  }
-  return [];
-}
-
-function saveDailyFile(dateKey, messages) {
-  try {
-    const filePath = path.join(DATA_DIR, 'messages-' + dateKey + '.json');
-    fs.writeFileSync(filePath, JSON.stringify(messages, null, 2), 'utf8');
-  } catch (e) {
-    console.error('[daily] Failed to save messages-' + dateKey + '.json:', e.message);
-  }
-}
-
-// Appelée une seule fois au démarrage pour peupler messageLog.
-function loadInitialMessages() {
-  try {
-    const today = loadDailyFile(todayKey());
-    return today.slice(0, MAX_LOG);
-  } catch (e) {
-    // En cas d'erreur inattendue on démarre sur un log vide — le bot
-    // continue à logger les nouveaux messages normalement.
-  }
-  return [];
-}
-
-function saveTodayMessages(msgs) {
-  saveDailyFile(todayKey(), msgs);
-}
-
 module.exports = {
   DATA_DIR,
   MAX_LOG,
   todayKey,
-  loadDailyFile,
-  saveDailyFile,
-  loadInitialMessages,
-  saveTodayMessages,
 };

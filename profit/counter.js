@@ -1,0 +1,322 @@
+// ─────────────────────────────────────────────────────────────────────
+// profit/counter.js — Compteur journalier de profits + rapports Discord
+// ─────────────────────────────────────────────────────────────────────
+// Regroupe TOUTE la logique liée au compteur de profits (canal #profits) :
+//
+//   Parsing          countProfitEntries, hasProfitPattern, profitFiltersMatch
+//   Persistence      loadProfitData, saveProfitData, loadProfitMessages,
+//                    saveProfitMessages, saveProfitFilters
+//   Business         addProfitMessage, getProfitRecord, buildProfitSummaryMsg
+//   Daily summary    sendDailyProfitSummary (écrit dans #profits à 20:00 EDT)
+//   State            profitFilters (mutable), mode silencieux, dernier
+//                    message de résumé posté (pour !delete-report)
+//
+// Dépendances externes injectées via setters :
+//   setDiscordClient(client)        — le client discord.js pour envoyer
+//   setProfitsChannelId(id)         — l'ID du salon #profits
+//
+// Pourquoi un gros module : tous ces morceaux mutent/lisent profitFilters,
+// partagent les constantes PROFIT_PATTERN/MILESTONES, et leur découpage
+// artificiel créerait plus de friction que de clarté. ~320 lignes reste
+// lisible d'un coup d'œil.
+// ─────────────────────────────────────────────────────────────────────
+
+const fs = require('fs');
+const path = require('path');
+const { DATA_DIR, todayKey } = require('../utils/persistence');
+
+// ── Constantes partagées ─────────────────────────────────────────────
+
+// Paliers de félicitations (non utilisés actuellement — gardés pour
+// compat avec d'anciennes versions qui taguaient les jalons).
+const PROFIT_MILESTONES = [10, 25, 50, 100, 150, 200];
+
+// Reconnait "0.34-0.55", "1.20 to 4.00", ".97 -- 3.05", "18.60–19.90".
+// Les points leading (.97) sont tolérés (notation trader informelle).
+const PROFIT_PATTERN = /\.?\d+(?:\.\d+)?\s*(?:[-–]+|to)\s*\.?\d+(?:\.\d+)?/gi;
+
+// Tronque les extraits stockés dans profit-messages-*.json pour éviter
+// d'enregistrer des pavés entiers dans le JSON de review.
+const PROFIT_PHRASE_MAX = 120;
+
+const PROFIT_FILTERS_PATH = path.join(DATA_DIR, 'profit-filters.json');
+
+// ── Pure parsers ─────────────────────────────────────────────────────
+
+function countProfitEntries(content) {
+  if (!content || !content.trim()) return 0;
+  const matches = content.match(PROFIT_PATTERN);
+  return matches ? matches.length : 0;
+}
+
+function hasProfitPattern(content) {
+  return PROFIT_PATTERN.test(content);
+}
+
+function truncatePhrase(s) {
+  const str = String(s || '').trim();
+  return str.length > PROFIT_PHRASE_MAX ? str.slice(0, PROFIT_PHRASE_MAX) : str;
+}
+
+// Retourne true si `content` contient une des phrases de `list`
+// (case-insensitive, substring). Utilisé pour les filtres learned.
+function profitFiltersMatch(list, content) {
+  if (!content || !list || !list.length) return false;
+  const lower = String(content).toLowerCase();
+  for (const phrase of list) {
+    if (!phrase) continue;
+    if (lower.includes(String(phrase).toLowerCase())) return true;
+  }
+  return false;
+}
+
+// ── Persistence I/O ──────────────────────────────────────────────────
+
+function loadProfitData(dateKey) {
+  try {
+    const filePath = path.join(DATA_DIR, 'profits-' + dateKey + '.json');
+    if (fs.existsSync(filePath)) {
+      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    }
+  } catch (e) {
+    console.error('[profits] Failed to load profits-' + dateKey + '.json:', e.message);
+  }
+  return { count: 0, milestones: [] };
+}
+
+function saveProfitData(dateKey, data) {
+  try {
+    const filePath = path.join(DATA_DIR, 'profits-' + dateKey + '.json');
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[profits] Failed to save profits-' + dateKey + '.json:', e.message);
+  }
+}
+
+function loadProfitMessages(dateKey) {
+  try {
+    const filePath = path.join(DATA_DIR, 'profit-messages-' + dateKey + '.json');
+    if (fs.existsSync(filePath)) {
+      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    }
+  } catch (e) {
+    console.error('[profits-msg] Failed to load profit-messages-' + dateKey + '.json:', e.message);
+  }
+  return [];
+}
+
+function saveProfitMessages(dateKey, msgs) {
+  try {
+    const filePath = path.join(DATA_DIR, 'profit-messages-' + dateKey + '.json');
+    fs.writeFileSync(filePath, JSON.stringify(msgs, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[profits-msg] Failed to save profit-messages-' + dateKey + '.json:', e.message);
+  }
+}
+
+function loadProfitFilters() {
+  try {
+    if (fs.existsSync(PROFIT_FILTERS_PATH)) {
+      const data = JSON.parse(fs.readFileSync(PROFIT_FILTERS_PATH, 'utf8'));
+      return {
+        blocked: Array.isArray(data.blocked) ? data.blocked : [],
+        allowed: Array.isArray(data.allowed) ? data.allowed : [],
+      };
+    }
+  } catch (e) {
+    console.error('[profit-filters] Failed to load profit-filters.json:', e.message);
+  }
+  return { blocked: [], allowed: [] };
+}
+
+function saveProfitFilters() {
+  try {
+    fs.writeFileSync(PROFIT_FILTERS_PATH, JSON.stringify(profitFilters, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[profit-filters] Failed to save profit-filters.json:', e.message);
+  }
+}
+
+// ── État mutable ─────────────────────────────────────────────────────
+
+// Singleton — référence stable, les consommateurs mutent profitFilters.blocked
+// / profitFilters.allowed puis appellent saveProfitFilters().
+const profitFilters = loadProfitFilters();
+
+// Mode "bot silencieux" dans #profits : désactive l'envoi automatique du
+// daily summary. Utile pour débug ou pendant la config.
+let profitsBotSilent = false;
+
+// Dernier résumé journalier posté — permet à la commande !delete-report
+// de retrouver le message exact même si d'autres messages sont postés après.
+let lastProfitSummaryMessageId = null;
+let lastProfitSummaryDate = null;
+
+// Dépendances Discord injectées par index.js au démarrage.
+let _client = null;
+let _profitsChannelId = null;
+
+// ── Injection des dépendances Discord ───────────────────────────────
+
+function setDiscordClient(client) { _client = client; }
+function setProfitsChannelId(id) { _profitsChannelId = id; }
+
+// ── Getters/setters pour les routes ────────────────────────────────
+
+function getBotSilent() { return profitsBotSilent; }
+function setBotSilent(val) { profitsBotSilent = !!val; }
+
+function getLastSummaryMessageId() { return lastProfitSummaryMessageId; }
+function clearLastSummaryMessageId() { lastProfitSummaryMessageId = null; }
+
+function getLastSummaryDate() { return lastProfitSummaryDate; }
+function setLastSummaryDate(d) { lastProfitSummaryDate = d; }
+
+// ── Business logic ───────────────────────────────────────────────────
+
+// Incrémente le compteur du jour en parsant `content` pour y trouver
+// des ranges de prix. Retourne le nouveau total. Mutation silencieuse —
+// l'appelant décide s'il poste quelque chose sur Discord.
+async function addProfitMessage(content) {
+  const dateKey = todayKey();
+  const data = loadProfitData(dateKey);
+  if (!data.milestones) data.milestones = [];
+  const entries = countProfitEntries(content);
+  data.count = (data.count || 0) + entries;
+  saveProfitData(dateKey, data);
+  console.log('[profits] +' + entries + ' profit(s) — total: ' + data.count);
+  return data.count;
+}
+
+// Parcourt les 90 derniers jours pour trouver le meilleur total. Valeur
+// plancher 109 = record historique avant l'introduction du tracking (on
+// ne veut pas afficher un "record" ridicule pendant les premiers jours).
+function getProfitRecord() {
+  let recordCount = 109;
+  let recordDate = null;
+  for (let i = 0; i < 90; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dateKey = d.toISOString().slice(0, 10);
+    const data = loadProfitData(dateKey);
+    if ((data.count || 0) > recordCount) {
+      recordCount = data.count;
+      recordDate = dateKey;
+    }
+  }
+  return { count: recordCount, date: recordDate };
+}
+
+// Construit le texte Markdown du rapport journalier : total du jour +
+// comparaison hier + chart ASCII des 7 derniers jours ouvrés + record all-time.
+function buildProfitSummaryMsg() {
+  const dateKey = todayKey();
+  const data = loadProfitData(dateKey);
+  const todayCount = data.count || 0;
+  const record = getProfitRecord();
+
+  // Chart 7 jours ouvrés (skip samedi/dimanche — marchés fermés).
+  const days7 = [];
+  const cursor = new Date();
+  while (days7.length < 7) {
+    const dk = cursor.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    const [y, m, day] = dk.split('-').map(Number);
+    const dow = new Date(y, m - 1, day).getDay(); // 0=dimanche, 6=samedi
+    if (dow !== 0 && dow !== 6) {
+      days7.unshift({ date: dk, count: loadProfitData(dk).count || 0 });
+    }
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  const max7 = Math.max.apply(null, days7.map(d => d.count)) || 1;
+  const chart = days7.map(d => {
+    const bars = Math.round((d.count / max7) * 8);
+    const bar = '█'.repeat(bars) + '░'.repeat(8 - bars);
+    const label = d.date.slice(5); // MM-DD
+    const isToday = d.date === dateKey;
+    return (isToday ? '**' : '') + '`' + label + '` ' + bar + ' ' + d.count + (isToday ? ' ← today**' : '');
+  }).join('\n');
+
+  const isNewRecord = todayCount > 0 && todayCount >= record.count && dateKey === record.date;
+  const recordLine = isNewRecord
+    ? '\n\n🏆 **NEW ALL-TIME RECORD! ' + todayCount + ' profits!** 🏆'
+    : '\n\n📊 All-time record: **' + record.count + '** profits (' + record.date + ')';
+
+  // Comparaison hier (cumule toutes les dates ouvrées, incluant si hier = weekend
+  // alors on lit le count du samedi/dimanche — en pratique généralement 0).
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayCount = loadProfitData(yesterday.toLocaleDateString('en-CA', { timeZone: 'America/New_York' })).count || 0;
+  let comparison = '';
+  if (yesterdayCount > 0) {
+    const diff = todayCount - yesterdayCount;
+    if (diff > 0) comparison = ' (📈 +' + diff + ' vs yesterday)';
+    else if (diff < 0) comparison = ' (📉 ' + diff + ' vs yesterday)';
+    else comparison = ' (➡️ same as yesterday)';
+  }
+
+  return '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
+    + '📊 **Daily Profit Report**\n'
+    + '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'
+    + '🔥 **' + todayCount + '** profits posted today' + comparison + '\n\n'
+    + '**Last 7 days:**\n' + chart
+    + recordLine + '\n\n'
+    + '-# Keep posting your wins! Every profit counts 💪';
+}
+
+// Envoie le rapport journalier dans #profits. No-op si :
+//   - PROFITS_CHANNEL_ID n'est pas configuré
+//   - Le client Discord n'est pas injecté
+//   - Le mode silencieux est activé (toggle via l'API)
+async function sendDailyProfitSummary() {
+  if (!_profitsChannelId || !_client || profitsBotSilent) return;
+  try {
+    const ch = _client.channels.cache.get(_profitsChannelId);
+    if (!ch || !ch.send) return;
+    const sent = await ch.send(buildProfitSummaryMsg());
+    lastProfitSummaryMessageId = sent.id;
+    console.log('[profits] Daily summary posted');
+  } catch (e) {
+    console.error('[profits] Summary error:', e.message);
+  }
+}
+
+module.exports = {
+  // Constantes
+  PROFIT_MILESTONES,
+  PROFIT_PATTERN,
+  PROFIT_PHRASE_MAX,
+
+  // Parsers
+  countProfitEntries,
+  hasProfitPattern,
+  truncatePhrase,
+  profitFiltersMatch,
+
+  // Persistence
+  loadProfitData,
+  saveProfitData,
+  loadProfitMessages,
+  saveProfitMessages,
+  saveProfitFilters,
+
+  // State (mutable reference)
+  profitFilters,
+
+  // Business logic
+  addProfitMessage,
+  getProfitRecord,
+  buildProfitSummaryMsg,
+  sendDailyProfitSummary,
+
+  // Discord injection
+  setDiscordClient,
+  setProfitsChannelId,
+
+  // Accessors
+  getBotSilent,
+  setBotSilent,
+  getLastSummaryMessageId,
+  clearLastSummaryMessageId,
+  getLastSummaryDate,
+  setLastSummaryDate,
+};

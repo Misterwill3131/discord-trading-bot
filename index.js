@@ -3224,6 +3224,19 @@ app.get('/api/ticker/:symbol', requireAuth, (req, res) => {
     .sort((a, b) => b.count - a.count)
     .slice(0, 10);
 
+  // Prix d'entrée de la toute première annonce (chronologiquement la plus
+  // ancienne) : on re-trie ASC et on prend le premier 'entry' avec un prix.
+  let firstEntryPrice = null;
+  let firstEntryTs = null;
+  const byTsAsc = collected.slice().sort((a, b) => (a.ts || '') > (b.ts || '') ? 1 : -1);
+  for (const m of byTsAsc) {
+    if (m.passed && m.type === 'entry' && m.entry_price != null) {
+      firstEntryPrice = m.entry_price;
+      firstEntryTs = m.ts;
+      break;
+    }
+  }
+
   const signals = collected.slice(0, 200).map(m => ({
     id: m.id,
     ts: m.ts,
@@ -3242,6 +3255,8 @@ app.get('/api/ticker/:symbol', requireAuth, (req, res) => {
     total: collected.length,
     firstSeen,
     lastSeen,
+    firstEntryPrice,
+    firstEntryTs,
     distinctAuthors: Object.keys(authorCounts).length,
     breakdown,
     topAuthors,
@@ -3259,7 +3274,7 @@ const TICKER_PAGE_HTML = `<!DOCTYPE html>
 <style>
   ${COMMON_CSS}
   #wrap { padding: 24px 32px; display: flex; flex-direction: column; gap: 20px; }
-  .grid-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .grid-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
   .stat-box { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 16px 20px; }
   .stat-box .num { font-size: 28px; font-weight: 800; color: #fafafa; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
@@ -3319,6 +3334,7 @@ ${sidebarHTML('')}
     <div class="grid-stats">
       <div class="stat-box"><div class="num" id="stat-total">—</div><div class="lbl">Signaux</div></div>
       <div class="stat-box"><div class="num" id="stat-authors">—</div><div class="lbl">Auteurs distincts</div></div>
+      <div class="stat-box"><div class="num" id="stat-first-entry">—</div><div class="lbl">Prix d&#39;entrée initial</div></div>
       <div class="stat-box"><div class="num" id="stat-first">—</div><div class="lbl">Première mention</div></div>
       <div class="stat-box"><div class="num" id="stat-last">—</div><div class="lbl">Dernière mention</div></div>
     </div>
@@ -3465,6 +3481,7 @@ ${sidebarHTML('')}
 
         document.getElementById('stat-total').textContent = data.total;
         document.getElementById('stat-authors').textContent = data.distinctAuthors || 0;
+        document.getElementById('stat-first-entry').textContent = data.firstEntryPrice != null ? ('$' + Number(data.firstEntryPrice).toFixed(2)) : '—';
         document.getElementById('stat-first').textContent = fmtRelDays(data.firstSeen);
         document.getElementById('stat-last').textContent = fmtRelDays(data.lastSeen);
 
@@ -5013,53 +5030,73 @@ function getNewsEmoji(title) {
   return '📰';
 }
 
-// ── News filter ──
-// Whitelist — au moins un de ces mots doit être présent dans le titre
+// ── News filter — focus exclusif actualité économique US ──
+// Whitelist : au moins un de ces mots doit être présent dans titre+description.
 const NEWS_KEYWORDS = [
-  // Banques centrales & politique monétaire
+  // ─── Réserve fédérale & politique monétaire US ───
   'fed', 'federal reserve', 'fomc', 'powell', 'inflation', 'cpi', 'pce', 'ppi',
-  'interest rate', 'rate cut', 'rate hike', 'rate decision', 'central bank',
-  'quantitative', 'balance sheet', 'ecb', 'lagarde', 'boj', 'boe', 'monetary policy',
-  // Macro-économie
+  'interest rate', 'rate cut', 'rate hike', 'rate decision',
+  'quantitative', 'balance sheet', 'monetary policy',
+  // ─── Macro-économie US ───
   'gdp', 'jobs report', 'nonfarm', 'payroll', 'unemployment', 'jobless claims',
   'pmi', 'ism', 'retail sales', 'consumer confidence', 'consumer sentiment',
   'housing starts', 'durable goods', 'trade balance', 'recession', 'soft landing',
   'stagflation', 'deficit', 'debt ceiling', 'credit rating', 'downgrade',
-  // Événements marché structurels (pas variations quotidiennes)
-  'stock market', 'wall street', 'circuit breaker', 'market halt',
-  'volatility', 'vix', 'margin call', 'short squeeze', 'flash crash',
-  // Résultats d'entreprises
+  // ─── Marchés US (indices & structure) ───
+  'wall street', 'stock market', 'nyse', 'nasdaq', 's&p', 'spx', 'dow jones',
+  'russell', 'circuit breaker', 'market halt', 'vix', 'volatility',
+  'short squeeze', 'flash crash', 'margin call',
+  // ─── Résultats d'entreprises ───
   'earnings', 'eps', 'revenue', 'guidance', 'outlook',
   'beats estimates', 'misses estimates', 'profit warning', 'ipo', 'buyback',
   'dividend', 'merger', 'acquisition', 'layoffs', 'restructuring',
-  // Grandes capitalisations
+  // ─── Grandes capitalisations US ───
   'tesla', 'apple', 'nvidia', 'amazon', 'google', 'alphabet', 'meta', 'microsoft',
   'berkshire', 'jpmorgan', 'goldman sachs', 'morgan stanley', 'blackrock',
   'exxon', 'chevron', 'palantir', 'openai', 'anthropic',
-  // Trésorerie & obligations
+  // ─── Trésorerie US & obligations ───
   'treasury', 'yield', 't-bill', 'bond', '10-year', '2-year', 'yield curve',
-  'spread', 'auction', 'debt',
-  // Matières premières
-  'oil', 'crude', 'wti', 'brent', 'opec', 'gold', 'silver', 'copper', 'natural gas', 'commodity',
-  // Crypto
+  'spread', 'auction',
+  // ─── Matières premières (impact direct économie US) ───
+  'oil', 'crude', 'wti', 'brent', 'opec', 'gold', 'silver', 'copper',
+  'natural gas', 'commodity',
+  // ─── Crypto (marchés US) ───
   'bitcoin', 'btc', 'ethereum', 'crypto',
-  // Forex
-  'dollar', 'dxy', 'usd', 'eur/usd', 'currency', 'forex',
-  // Politique & géopolitique
-  'trump', 'biden', 'harris', 'white house', 'congress', 'senate', 'president',
-  'executive order', 'government shutdown', 'election', 'legislation',
+  // ─── Dollar US ───
+  'dollar', 'dxy', 'usd',
+  // ─── Politique US (impact économique) ───
+  'trump', 'biden', 'white house', 'congress', 'senate',
+  'executive order', 'government shutdown', 'legislation',
+  // ─── Entourage & administration Trump ───
+  'vance', 'musk', 'administration', 'maga', 'oval office',
+  // ─── Politique commerciale US ───
   'tariff', 'trade war', 'trade deal', 'sanction', 'embargo', 'export ban',
-  'chip ban', 'trade deficit', 'geopolitical', 'war', 'conflict', 'china',
-  'ukraine', 'middle east', 'opec+',
+  'chip ban', 'trade deficit',
+  // ─── Sujets géopolitiques récurrents dans l'actu Trump ───
+  // (Trump commente souvent ces dossiers ; on les garde pour ne pas
+  // manquer ses déclarations qui déplacent les marchés US.)
+  'iran', 'israel', 'ukraine', 'russia', 'china', 'putin', 'xi jinping',
+  'netanyahu', 'middle east',
+  // ─── Mentions US explicites ───
+  'united states', 'u.s.', 'u.s ', 'american economy', 'american jobs',
 ];
 
-// Blacklist — bloque même si un keyword whitelist est présent
+// Blacklist : bloque même si un keyword whitelist est présent.
 const NEWS_BLOCKED = [
+  // Sports & divertissement
   'sport', 'football', 'soccer', 'basketball', 'nba', 'nfl', 'mlb', 'tennis',
   'olympic', 'fifa', 'world cup', 'celebrity', 'kardashian', 'hollywood',
   'movie', 'film', 'actor', 'actress', 'grammy', 'oscar', 'emmy',
   'entertainment', 'reality tv', 'concert', 'album', 'music', 'gaming',
   'video game', 'esport',
+  // Banques centrales non-US (même si le titre contient un keyword whitelist)
+  'ecb', 'european central bank', 'lagarde',
+  'boj', 'bank of japan', 'ueda',
+  'boe', 'bank of england', 'bailey',
+  'pboc', 'people\'s bank of china',
+  'snb', 'swiss national bank',
+  'rbnz', 'reserve bank of new zealand',
+  'rba', 'reserve bank of australia',
 ];
 
 // Bloque les titres de variation d'index quotidienne (ex: "Nasdaq drops 1.4%")

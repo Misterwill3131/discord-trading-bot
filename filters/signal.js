@@ -32,8 +32,17 @@ const BLOCKED_KEYWORDS = [
 ];
 
 // Mots-clés qui classifient un message comme entrée/sortie.
-const ENTRY_KEYWORDS = ['entree', 'entry', 'long', 'scalp'];
-const EXIT_KEYWORDS  = ['sortie', 'exit', 'stop'];
+// RF utilise "buy only above $X" ou "buy above $X" pour signaler ses
+// entrées (format distinct des autres analystes).
+const ENTRY_KEYWORDS = ['entree', 'entry', 'long', 'scalp', 'buy only above', 'buy above'];
+// RF clôture ses trades par un reply "TICKER all targets done ✅" ou
+// "TICKER SL hit" — on reconnaît ces marqueurs explicites pour tagger
+// type='exit' au lieu de neutral. 'tp hit' / 'target hit' couvrent
+// aussi des variantes utilisées par d'autres analystes.
+const EXIT_KEYWORDS  = [
+  'sortie', 'exit', 'stop',
+  'targets done', 'target hit', 'all targets', 'tp hit', 'sl hit', 'stopped out',
+];
 
 // Regex pour filtrer les messages "conversationnels" (questions, réactions).
 const CONVO_START_RE = /^(and\s+)?(how|who|what|when|why|did|do|are|is|can|any|anyone|has|have|congrats|gg|nice|good|great|lol|haha|check|look|wow|reminder|just|btw|fyi|ok|okay)\b/i;
@@ -53,12 +62,33 @@ function includesAny(lower, phrases) {
   return false;
 }
 
-function classifySignal(content, customFilters) {
+function classifySignal(content, customFilters, options) {
   if (!content) return { type: null, reason: 'No content', confidence: 90, ticker: null };
 
   const lower = content.toLowerCase();
   const ticker = detectTicker(content);
   const cf = customFilters || { allowed: [], blocked: [] };
+  const opts = options || {};
+
+  // Pré-check : si on a un `replyBody` (contenu non-mergé d'une réponse
+  // Discord) et qu'il contient des mots-clés d'exit, on force type='exit'.
+  // Raison : pour un reply, le parent est l'entrée d'origine et le reply
+  // est la clôture. Le merged contient les deux — sans ce pré-check,
+  // ENTRY_KEYWORDS matcherait en premier (parent) et on perdrait le fait
+  // que c'est une clôture. Le ticker vient toujours du merged (le reply
+  // seul n'a souvent que "TICKER all targets done" sans $).
+  if (opts.replyBody) {
+    const replyLower = String(opts.replyBody).toLowerCase();
+    if (includesAny(replyLower, EXIT_KEYWORDS)) {
+      const hasPrice = HAS_PRICE_RE.test(content);
+      return {
+        type: 'exit',
+        reason: 'Reply exit',
+        confidence: hasPrice ? 90 : 70,
+        ticker,
+      };
+    }
+  }
 
   // 1. Whitelist custom — priorité absolue (correction de faux-négatifs
   //    par un humain via le dashboard /config).

@@ -67,9 +67,18 @@ function extractPrices(content) {
     if (em) entry = parseFloat(em[1]);
   }
 
+  // Priorité 2b — Format RF : "buy only above $X" ou "buy above $X".
+  // Le seuil "above" est le prix d'entrée (trigger breakout).
+  if (!entry) {
+    const em = c.match(/buy\s+(?:only\s+)?above\s+\$?(\d+(?:\.\d+)?)/i);
+    if (em) entry = parseFloat(em[1]);
+  }
+
   // Priorité 3 — Mots-clés de sortie/cible.
+  // Pour RF : "Targets $6.14/6.78/7.44" — on prend le PREMIER (TP1,
+  // le plus conservateur). La regex matche "Targets" (pluriel) aussi.
   if (!target) {
-    const xm = c.match(/(?:target|tp|out\s+at|exit\s+at|sold?\s+at|sortie|objectif)\s+\$?(\d+(?:\.\d+)?)/i);
+    const xm = c.match(/(?:targets?|tp|out\s+at|exit\s+at|sold?\s+at|sortie|objectif)\s+\$?(\d+(?:\.\d+)?)/i);
     if (xm) target = parseFloat(xm[1]);
   }
 

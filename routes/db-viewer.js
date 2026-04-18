@@ -19,6 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const { db, getDbStats } = require('../db/sqlite');
+const { reclassifyAllMessages } = require('../db/reclassify');
 const { DB_VIEWER_HTML } = require('../pages/db-viewer');
 
 // Cap sur le nombre de lignes renvoyées. Protège à la fois :
@@ -69,6 +70,24 @@ function registerDbViewerRoutes(app, requireAuth) {
     try {
       res.json(getDbStats());
     } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Reclassification de masse : ré-exécute le classifier actuel sur tous
+  // les messages en DB. Opération atomique (transaction SQLite). À utiliser
+  // après un changement de filters/signal.js ou utils/prices.js qui affecte
+  // la logique de tagging. Retourne les stats (updated, transitions).
+  //
+  // Pas de paramètre — on reclasse TOUT. Comme c'est destructif (overwrite
+  // type/reason/ticker/entry_price), derrière requireAuth + méthode POST.
+  app.post('/api/reclassify', requireAuth, (_req, res) => {
+    try {
+      const stats = reclassifyAllMessages();
+      console.log('[reclassify] ' + stats.updated + '/' + stats.total + ' updated, transitions:', stats.transitions);
+      res.json(stats);
+    } catch (e) {
+      console.error('[reclassify] failed:', e.message);
       res.status(500).json({ error: e.message });
     }
   });

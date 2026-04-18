@@ -127,6 +127,12 @@ ${sidebarHTML('/stats')}
     <div id="author-perf-wrap"><span style="color:#a0a0b0;font-size:12px;">Chargement...</span></div>
   </div>
 
+  <!-- ROW 3b — Alertes par analyste (entries + closed + rate) -->
+  <div class="card card-full">
+    <div class="card-title">Alertes par analyste — taux de clôture</div>
+    <div id="alert-closure-wrap"><span style="color:#a0a0b0;font-size:12px;">Chargement...</span></div>
+  </div>
+
   <!-- ROW 4 — Comparateur d'auteurs (NEW) -->
   <div class="card card-full">
     <div class="card-title">Comparateur d&#39;auteurs</div>
@@ -316,6 +322,103 @@ ${sidebarHTML('/stats')}
     sub.textContent = 'médiane ' + formatDuration(med)
       + ' • ' + pairs.length + ' paires'
       + (unpaired.length ? ' • ' + unpaired.length + ' ouvertes' : '');
+  }
+
+  // ── Alertes par analyste : taux de clôture ─────────────────────────
+  // Pour chaque auteur canonique, on compte ses entries et combien ont
+  // un exit subséquent du même auteur sur le même ticker. Contrairement
+  // à computePairs qui exige entry_price ET exit_price, ici on se
+  // contente de l EXISTENCE d un exit (message type="exit") — plus
+  // tolérant aux cas où le parser n a pas extrait un prix (ex: reply
+  // RF "all targets done" sans prix).
+  function renderAlertClosureRate(msgs) {
+    var wrap = document.getElementById('alert-closure-wrap');
+
+    // Trie ASC pour parcourir chronologiquement et apparier FIFO.
+    var sorted = msgs.slice().sort(function(a, b) { return new Date(a.ts) - new Date(b.ts); });
+
+    // Par auteur canonique : total entries + nombre closed (entry avec exit suivant).
+    // Implémentation : on maintient un Set d'entries ouvertes par (author, ticker).
+    //   entry rencontré → push dans le set
+    //   exit rencontré  → pop la plus ancienne entry ouverte, la compte comme "closed"
+    //   fin → ce qui reste dans le set = entries encore "open"
+    var openByKey = {};           // "author|ticker" → [entry objects]
+    var stats = {};               // author → { entries, closed, open, tickers: Set }
+
+    function getStats(a) {
+      if (!stats[a]) stats[a] = { entries: 0, closed: 0, open: 0, tickers: {} };
+      return stats[a];
+    }
+
+    sorted.forEach(function(m) {
+      if (!m.author || isBlocked(m.author)) return;
+      if (!m.ticker || !m.passed) return;
+      var author = canonical(m.author);
+      var key = author + '|' + m.ticker;
+
+      if (m.type === 'entry') {
+        if (!openByKey[key]) openByKey[key] = [];
+        openByKey[key].push(m);
+        var s = getStats(author);
+        s.entries++;
+        s.tickers[m.ticker] = (s.tickers[m.ticker] || 0) + 1;
+      } else if (m.type === 'exit') {
+        var q = openByKey[key];
+        if (q && q.length) {
+          q.shift(); // la plus ancienne entry ouverte est maintenant close
+          getStats(author).closed++;
+        }
+        // exit orphelin (entry hors fenêtre) : ignoré, ne compte pas comme closed.
+      }
+    });
+
+    // Ce qui reste ouvert après le parcours = entries non-clôturées.
+    Object.keys(openByKey).forEach(function(k) {
+      var q = openByKey[k];
+      if (!q || !q.length) return;
+      var author = k.split('|')[0];
+      getStats(author).open += q.length;
+    });
+
+    var rows = Object.keys(stats).map(function(a) { return [a, stats[a]]; })
+      .sort(function(x, y) { return y[1].entries - x[1].entries; });
+
+    if (!rows.length) {
+      wrap.innerHTML = '<span style="color:#a0a0b0;font-size:12px;">Aucune entrée trackée sur la période.</span>';
+      return;
+    }
+
+    var html = '<table class="perf-table"><thead><tr>'
+      + '<th>Analyste</th>'
+      + '<th>Alertes (entries)</th>'
+      + '<th>Clôturées</th>'
+      + '<th>Ouvertes</th>'
+      + '<th>Taux clôture</th>'
+      + '<th>Ticker top</th>'
+      + '</tr></thead><tbody>';
+
+    rows.forEach(function(row) {
+      var name = row[0], s = row[1];
+      var rate = s.entries ? Math.round(s.closed / s.entries * 100) : 0;
+      // Couleur : ≥70% vert, ≥40% orange, sinon rouge. Arbitraire mais
+      // cohérent avec la convention d'autres tables du dashboard.
+      var barColor = rate >= 70 ? '#3ba55d' : rate >= 40 ? '#faa61a' : '#ed4245';
+      var topTicker = '';
+      var topCount = 0;
+      Object.keys(s.tickers).forEach(function(t) {
+        if (s.tickers[t] > topCount) { topCount = s.tickers[t]; topTicker = t; }
+      });
+      html += '<tr>'
+        + '<td class="perf-author">' + esc(name) + '</td>'
+        + '<td>' + s.entries + '</td>'
+        + '<td class="perf-acc">' + s.closed + '</td>'
+        + '<td class="perf-flt">' + s.open + '</td>'
+        + '<td><span class="perf-bar-wrap"><span class="perf-bar-fill" style="width:' + rate + '%;background:' + barColor + ';"></span></span>' + rate + '%</td>'
+        + '<td class="perf-ticker">' + esc(topTicker) + '</td>'
+        + '</tr>';
+    });
+    html += '</tbody></table>';
+    wrap.innerHTML = html;
   }
 
   function renderAuthorPerf(msgs, pairs) {
@@ -629,6 +732,7 @@ ${sidebarHTML('/stats')}
         renderPnlByAuthor(paired.pairs);
         renderAvgDuration(paired.pairs, paired.unpaired);
         renderAuthorPerf(msgs, paired.pairs);
+        renderAlertClosureRate(msgs);
         renderComparateur(msgs, paired.pairs);
         renderHeatmap(msgs);
         renderVolumeChart(msgs);

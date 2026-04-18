@@ -210,7 +210,13 @@ function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhoo
     };
 
     // ── Classification + logging ─────────────────────────────────────
-    const result = classifySignal(classifyContent, customFilters);
+    // On passe `replyBody` (le contenu du reply seul, pas mergé) pour que
+    // le classifier détecte un exit si le reply contient "targets done" /
+    // "SL hit" / etc. — sinon le parent (entrée d'origine) matcherait
+    // ENTRY_KEYWORDS en premier et on perdrait la nature clôture du reply.
+    const result = classifySignal(classifyContent, customFilters, {
+      replyBody: isReply ? content : null,
+    });
     const filterType = result.type;
     const filterReason = result.reason;
     const signalConfidence = result.confidence;

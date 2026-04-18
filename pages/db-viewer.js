@@ -88,6 +88,14 @@ const DB_VIEWER_HTML = `<!DOCTYPE html>
   .stats-table td.num { text-align: right; color: #fbbf24; font-variant-numeric: tabular-nums; font-weight: 600; }
   .stats-table td.empty { color: #4f545c; }
   .stats-table td.range { color: #80848e; font-size: 11px; font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; }
+  .admin-actions { margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.06); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .btn-reclassify { background: rgba(250,166,26,0.1); border: 1px solid rgba(250,166,26,0.3); color: #fbbf24; border-radius: 6px; padding: 7px 14px; cursor: pointer; font-size: 12px; font-weight: 600; }
+  .btn-reclassify:hover { background: rgba(250,166,26,0.2); }
+  .btn-reclassify:disabled { opacity: 0.5; cursor: wait; }
+  .admin-hint { font-size: 11px; color: #80848e; }
+  .reclassify-status { font-size: 12px; font-weight: 600; }
+  .reclassify-status.ok { color: #3ba55d; }
+  .reclassify-status.err { color: #ed4245; }
   .presets { display: flex; flex-wrap: wrap; gap: 8px; }
   .preset-btn { background: rgba(88,101,242,0.1); border: 1px solid rgba(88,101,242,0.3); color: #a5b4fc; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; }
   .preset-btn:hover { background: rgba(88,101,242,0.2); color: #c7d2fe; }
@@ -122,6 +130,11 @@ ${sidebarHTML('/db-viewer')}
   <div class="stats-card" id="stats-card">
     <h3>📊 État de la base</h3>
     <div id="stats-content" style="color:#80848e;font-size:12px;">Chargement…</div>
+    <div class="admin-actions">
+      <button class="btn-reclassify" id="btn-reclassify">🔄 Reclasser tous les messages</button>
+      <span class="admin-hint">Ré-applique le classifier actuel sur l&#39;historique DB (après modif de filters/signal ou utils/prices).</span>
+      <span class="reclassify-status" id="reclassify-status"></span>
+    </div>
   </div>
   <div class="presets" id="presets"></div>
   <textarea class="sql-area" id="sql" spellcheck="false" placeholder="SELECT * FROM messages ORDER BY ts DESC LIMIT 10">SELECT COUNT(*) AS total FROM messages</textarea>
@@ -175,6 +188,39 @@ ${sidebarHTML('/db-viewer')}
     });
   }
   loadStats();
+
+  // ── Reclassify button ──────────────────────────────────────────────
+  var reclassifyBtn = document.getElementById('btn-reclassify');
+  var reclassifyStatus = document.getElementById('reclassify-status');
+  if (reclassifyBtn) {
+    reclassifyBtn.addEventListener('click', function() {
+      if (!confirm('Reclasser TOUS les messages en base ? Cette opération overwrite type/reason/ticker/entry_price selon le classifier actuel. Irréversible sans restore backup.')) return;
+
+      reclassifyBtn.disabled = true;
+      reclassifyStatus.className = 'reclassify-status';
+      reclassifyStatus.textContent = 'En cours...';
+
+      fetch('/api/reclassify', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          reclassifyBtn.disabled = false;
+          if (data.error) {
+            reclassifyStatus.className = 'reclassify-status err';
+            reclassifyStatus.textContent = 'Erreur: ' + data.error;
+            return;
+          }
+          reclassifyStatus.className = 'reclassify-status ok';
+          reclassifyStatus.textContent = data.updated + '/' + data.total + ' updated';
+          // Refresh stats panel to show new counts.
+          loadStats();
+        })
+        .catch(function(e) {
+          reclassifyBtn.disabled = false;
+          reclassifyStatus.className = 'reclassify-status err';
+          reclassifyStatus.textContent = 'Erreur réseau: ' + e.message;
+        });
+    });
+  }
 
   // Rend les boutons presets.
   PRESETS.forEach(function(p) {

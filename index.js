@@ -56,7 +56,7 @@ const NEWS_CHANNEL_ID    = process.env.NEWS_CHANNEL_ID || '';
 const PORT               = process.env.PORT || 3000;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
-  : 'https://discord-trading-bot-production-f159.up.railway.app';
+  : 'https://templeofboom.up.railway.app';
 
 // ── Serveur HTTP ───────────────────────────────────────────────────
 const app = express();

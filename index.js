@@ -58,6 +58,7 @@ app.use(express.urlencoded({ extended: false }));
 
 // Auth + pages statiques en premier (ne nécessitent aucun state runtime).
 registerAuthRoutes(app);
+app.get('/', (_req, res) => res.redirect('/dashboard'));
 registerPageRoutes(app, requireAuth);
 
 // APIs lectures/écritures sur l'état partagé.

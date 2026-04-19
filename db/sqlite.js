@@ -135,6 +135,39 @@ db.exec(`
     buffer BLOB NOT NULL             -- PNG bytes
   );
   CREATE INDEX IF NOT EXISTS idx_gallery_items_ts ON gallery_items(ts);
+
+  -- Positions ouvertes par le trading engine. Une ligne = un signal
+  -- transformé en ordre. Lifecycle :
+  --   pending   → bracket envoyé à IBKR, pas encore fillé
+  --   open      → parent order fillé
+  --   closed    → TP, trailing SL ou exit manuel déclenché
+  --   cancelled → limit order expiré (timeout) ou annulation explicite
+  --   error     → erreur broker ou désynchro au boot (bloque le trading)
+  CREATE TABLE IF NOT EXISTS positions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker          TEXT NOT NULL,
+    author          TEXT NOT NULL,
+    entry_price     REAL NOT NULL,
+    quantity        INTEGER NOT NULL,
+    sl_price        REAL,
+    tp_price        REAL,
+    ibkr_parent_id  TEXT,
+    ibkr_tp_id      TEXT,
+    ibkr_sl_id      TEXT,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    opened_at       TEXT,
+    closed_at       TEXT,
+    close_reason    TEXT,
+    fill_price      REAL,
+    exit_price      REAL,
+    pnl             REAL,
+    raw_signal      TEXT,
+    error_message   TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_positions_ticker_status ON positions(ticker, status);
+  CREATE INDEX IF NOT EXISTS idx_positions_author_status ON positions(author, status);
+  CREATE INDEX IF NOT EXISTS idx_positions_status        ON positions(status);
 `);
 
 // ── Prepared statements (réutilisables, plus rapides) ────────────────
@@ -560,6 +593,127 @@ function trimGalleryItems(keep) {
 }
 
 // ═════════════════════════════════════════════════════════════════════
+//  Positions — lifecycle d'un trade (pending → open → closed/cancelled)
+// ═════════════════════════════════════════════════════════════════════
+
+const stmtPositionInsert = db.prepare(`
+  INSERT INTO positions
+    (ticker, author, entry_price, quantity, sl_price, tp_price,
+     ibkr_parent_id, ibkr_tp_id, ibkr_sl_id, raw_signal, status)
+  VALUES
+    (@ticker, @author, @entry_price, @quantity, @sl_price, @tp_price,
+     @ibkr_parent_id, @ibkr_tp_id, @ibkr_sl_id, @raw_signal, 'pending')
+`);
+
+const stmtPositionUpdateIds = db.prepare(`
+  UPDATE positions SET
+    ibkr_parent_id = @ibkr_parent_id,
+    ibkr_tp_id     = @ibkr_tp_id,
+    ibkr_sl_id     = @ibkr_sl_id
+  WHERE id = @id
+`);
+
+const stmtPositionMarkOpen = db.prepare(`
+  UPDATE positions SET status='open', fill_price=@fill_price, opened_at=@opened_at WHERE id=@id
+`);
+
+const stmtPositionMarkClosed = db.prepare(`
+  UPDATE positions SET
+    status='closed',
+    close_reason=@close_reason,
+    exit_price=@exit_price,
+    closed_at=@closed_at,
+    pnl=@pnl
+  WHERE id=@id
+`);
+
+const stmtPositionMarkCancelled = db.prepare(`
+  UPDATE positions SET status='cancelled', closed_at=@closed_at WHERE id=@id
+`);
+
+const stmtPositionMarkError = db.prepare(`
+  UPDATE positions SET status='error', error_message=@msg, closed_at=datetime('now') WHERE id=@id
+`);
+
+const stmtOpenPositions = db.prepare(`
+  SELECT * FROM positions WHERE status IN ('pending', 'open') ORDER BY created_at DESC
+`);
+
+const stmtCountOpen = db.prepare(`
+  SELECT COUNT(*) AS n FROM positions WHERE status IN ('pending', 'open')
+`);
+
+const stmtPositionByTickerAuthorOpen = db.prepare(`
+  SELECT * FROM positions
+  WHERE ticker = ? AND author = ? AND status IN ('pending', 'open')
+  ORDER BY created_at DESC LIMIT 1
+`);
+
+const stmtPositionByIbkrParent = db.prepare(`
+  SELECT * FROM positions WHERE ibkr_parent_id = ? LIMIT 1
+`);
+
+const stmtPositionHistory = db.prepare(`
+  SELECT * FROM positions ORDER BY created_at DESC LIMIT ?
+`);
+
+function insertPosition(p) {
+  const info = stmtPositionInsert.run({
+    ticker:         p.ticker,
+    author:         p.author,
+    entry_price:    p.entry_price,
+    quantity:       p.quantity,
+    sl_price:       p.sl_price != null ? p.sl_price : null,
+    tp_price:       p.tp_price != null ? p.tp_price : null,
+    ibkr_parent_id: p.ibkr_parent_id || null,
+    ibkr_tp_id:     p.ibkr_tp_id || null,
+    ibkr_sl_id:     p.ibkr_sl_id || null,
+    raw_signal:     p.raw_signal || null,
+  });
+  return info.lastInsertRowid;
+}
+
+function updatePositionOrderIds(id, ids) {
+  stmtPositionUpdateIds.run({
+    id,
+    ibkr_parent_id: ids.ibkr_parent_id || null,
+    ibkr_tp_id:     ids.ibkr_tp_id || null,
+    ibkr_sl_id:     ids.ibkr_sl_id || null,
+  });
+}
+
+function markPositionOpen(id, { fill_price, opened_at }) {
+  stmtPositionMarkOpen.run({ id, fill_price, opened_at });
+}
+
+function markPositionClosed(id, { close_reason, exit_price, closed_at, pnl }) {
+  stmtPositionMarkClosed.run({ id, close_reason, exit_price, closed_at, pnl });
+}
+
+function markPositionCancelled(id, { closed_at }) {
+  stmtPositionMarkCancelled.run({ id, closed_at });
+}
+
+function markPositionError(id, msg) {
+  stmtPositionMarkError.run({ id, msg: msg || '' });
+}
+
+function getOpenPositions() { return stmtOpenPositions.all(); }
+function countOpenPositions() { return stmtCountOpen.get().n; }
+
+function getPositionByTickerAndAuthor(ticker, author) {
+  return stmtPositionByTickerAuthorOpen.get(ticker, author) || null;
+}
+
+function getPositionByIbkrParentId(parentId) {
+  return stmtPositionByIbkrParent.get(parentId) || null;
+}
+
+function getPositionHistory(limit = 100) {
+  return stmtPositionHistory.all(limit);
+}
+
+// ═════════════════════════════════════════════════════════════════════
 //  Stats — diagnostic global (taille fichier, count + range par table)
 // ═════════════════════════════════════════════════════════════════════
 
@@ -571,6 +725,7 @@ const TIME_COLUMNS = {
   profit_messages:       'ts',
   news_items:            'ts',
   gallery_items:         'ts',
+  positions:             'created_at',
   profit_filter_phrases: null,
   settings:              null,
 };
@@ -675,6 +830,19 @@ module.exports = {
   insertGalleryItem,
   getRecentGalleryItems,
   trimGalleryItems,
+
+  // positions (trading)
+  insertPosition,
+  updatePositionOrderIds,
+  markPositionOpen,
+  markPositionClosed,
+  markPositionCancelled,
+  markPositionError,
+  getOpenPositions,
+  countOpenPositions,
+  getPositionByTickerAndAuthor,
+  getPositionByIbkrParentId,
+  getPositionHistory,
 
   // backup
   backupDb,

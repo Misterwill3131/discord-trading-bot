@@ -45,13 +45,9 @@ function parseCookies(cookieHeader) {
   return result;
 }
 
-// Middleware Express : bloque la requête si le cookie session est absent
-// ou invalide. Redirige vers /login pour une expérience humaine plutôt
-// que renvoyer un 401 sec (le dashboard est consulté par le navigateur).
-function requireAuth(req, res, next) {
-  const cookies = parseCookies(req.headers.cookie);
-  if (cookies[SESSION_COOKIE_NAME] === SESSION_TOKEN) return next();
-  res.redirect('/login');
+// Middleware désactivé — accès libre au dashboard sans mot de passe.
+function requireAuth(_req, _res, next) {
+  return next();
 }
 
 // Enregistre les routes /login (GET + POST) sur l'app Express.

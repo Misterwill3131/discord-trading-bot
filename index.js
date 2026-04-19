@@ -177,4 +177,16 @@ client.once('ready', () => {
   newsPoller.startPolling({ client, channelId: NEWS_CHANNEL_ID });
 });
 
-client.login(DISCORD_TOKEN);
+// Defensive login : un token invalide/absent ne doit pas tuer le process
+// (le HTTP dashboard reste utile pour reconfigurer, consulter les logs, etc).
+if (!DISCORD_TOKEN) {
+  console.warn('[discord] DISCORD_TOKEN absent — skipping Discord login. HTTP dashboard only.');
+} else {
+  try {
+    Promise.resolve(client.login(DISCORD_TOKEN)).catch(err => {
+      console.error('[discord] login failed:', err.message);
+    });
+  } catch (err) {
+    console.error('[discord] login threw synchronously:', err.message);
+  }
+}

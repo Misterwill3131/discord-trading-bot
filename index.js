@@ -20,6 +20,10 @@ const { Client, GatewayIntentBits } = require('discord.js');
 
 // Modules utilisés à la racine — state partagé, routes, handlers, jobs.
 const { requireAuth, registerAuthRoutes } = require('./auth/session');
+const {
+  requireTradingAuth,
+  registerTradingAuthRoutes,
+} = require('./auth/trading-session');
 const { setDiscordClient: setCanvasDiscordClient } = require('./canvas/proof');
 const { registerTradingHandler } = require('./discord/handler');
 const { registerDiscordCommands } = require('./discord/commands');
@@ -119,8 +123,11 @@ tradingBroker.on('orderStatus', (event) => {
   catch (err) { console.error('[trading] handleOrderEvent error:', err.message); }
 });
 
-// Register trading dashboard routes.
-registerTradingRoutes(app, requireAuth, { tradingEngine, tradingBroker });
+// Register trading dashboard routes — protected by a dedicated
+// TRADING_PASSWORD (see auth/trading-session.js), independent of the
+// main dashboard auth. If TRADING_PASSWORD is unset, /trading returns 503.
+registerTradingAuthRoutes(app);
+registerTradingRoutes(app, requireTradingAuth, { tradingEngine, tradingBroker });
 
 // Reconcile at boot (live only). If mismatch → force kill-switch OFF.
 (async () => {

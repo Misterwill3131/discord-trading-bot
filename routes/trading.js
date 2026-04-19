@@ -11,7 +11,9 @@
 //   POST /api/trading/panic            → close all positions + disable
 //   POST /api/trading/kill-switch      → toggle tradingEnabled
 //
-// Tout sous requireAuth comme le reste du dashboard.
+// Toutes les routes sous `requireTradingAuth` (auth/trading-session.js) —
+// indépendant de l'auth dashboard principale. Paramètre `requireAuth` de
+// la fonction = nom historique, mais le caller passe `requireTradingAuth`.
 // ─────────────────────────────────────────────────────────────────────
 
 const {

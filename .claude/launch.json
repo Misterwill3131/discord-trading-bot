@@ -21,12 +21,13 @@
     {
       "name": "trading-dashboard-check",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["index.js"],
+      "runtimeArgs": ["C:/Users/willi/Documents/GitHub/discord-trading-bot/index.js"],
       "port": 3100,
       "autoPort": false,
       "env": {
         "PORT": "3100",
-        "DATA_DIR": "C:/Users/willi/AppData/Local/Temp/trading-preview-check"
+        "DATA_DIR": "C:/Users/willi/AppData/Local/Temp/trading-preview-check",
+        "TRADING_PASSWORD": "test-pass-123"
       }
     }
   ]

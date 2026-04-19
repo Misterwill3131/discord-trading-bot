@@ -137,7 +137,7 @@ async function sendToMakeWebhook(makeWebhookUrl, payload) {
 // ─────────────────────────────────────────────────────────────────────
 // Handler principal — enregistre le listener sur client.on('messageCreate')
 // ─────────────────────────────────────────────────────────────────────
-function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhookUrl }) {
+function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhookUrl, tradingEngine }) {
   client.on('messageCreate', async (message) => {
     // Bots OK uniquement s'ils viennent d'un webhook (Make, bridge, etc).
     if (message.author.bot && !message.webhookId) return;
@@ -243,6 +243,32 @@ function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhoo
       logEvent(authorName, channelName, content, null, 'Auteur autorise (contenu filtre)', extraWithSignal);
     } else {
       logEvent(authorName, channelName, content, filterType, filterReason, extraWithSignal);
+    }
+
+    // ── Trading engine hook (entries: classifier said 'entry' + full signal) ──
+    if (tradingEngine
+        && filterType === 'entry'
+        && signalTicker
+        && pricesForLog.entry_price != null
+        && pricesForLog.target_price != null) {
+      tradingEngine.onEntry({
+        ticker: signalTicker.toUpperCase(),
+        entry_price: pricesForLog.entry_price,
+        target_price: pricesForLog.target_price,
+        author: authorName,
+        raw_content: content,
+        ts: message.createdAt.toISOString(),
+      }).catch(err => console.error('[trading] onEntry error:', err.message));
+    }
+
+    // ── Trading engine hook (exits: classifier said 'exit' + ticker) ──
+    // Author-match check lives inside engine.onExit.
+    if (tradingEngine && filterType === 'exit' && signalTicker) {
+      tradingEngine.onExit({
+        ticker: signalTicker.toUpperCase(),
+        author: authorName,
+        content,
+      }).catch(err => console.error('[trading] onExit error:', err.message));
     }
 
     const sendType = filterType || 'neutral';

@@ -40,6 +40,13 @@ const { registerBackupLogRoutes } = require('./routes/backup-log');
 const imageState = require('./state/images');
 const { messageLog } = require('./state/messages');
 
+// Trading engine — broker, market data, engine orchestrator.
+const { loadTradingConfig, saveTradingConfig, getSecrets: getTradingSecrets } = require('./trading/config');
+const { createMarketData } = require('./trading/marketdata');
+const { createBroker } = require('./trading/broker');
+const { createEngine: createTradingEngine } = require('./trading/engine');
+const { registerTradingRoutes } = require('./routes/trading');
+
 // ── Configuration env ──────────────────────────────────────────────
 const DISCORD_TOKEN      = process.env.DISCORD_TOKEN;
 const MAKE_WEBHOOK_URL   = process.env.MAKE_WEBHOOK_URL;
@@ -83,6 +90,59 @@ registerBackupLogRoutes(app, requireAuth);
 profitCounter.setProfitsChannelId(PROFITS_CHANNEL_ID);
 registerProfitRoutes(app, requireAuth);
 
+// ── Trading engine bootstrap ───────────────────────────────────────
+const tradingSecrets = getTradingSecrets();
+const tradingMarketData = createMarketData({
+  keyId: tradingSecrets.alpacaKeyId,
+  secretKey: tradingSecrets.alpacaSecretKey,
+});
+const tradingInitialCfg = loadTradingConfig();
+const tradingBroker = createBroker({
+  mode: tradingInitialCfg.mode,
+  marketData: tradingMarketData,
+  initialEquity: 100000, // paper default; ignored by IBKR
+  ibkr: {
+    host: tradingSecrets.ibkrHost,
+    port: tradingSecrets.ibkrPort,
+    clientId: tradingSecrets.ibkrClientId,
+  },
+});
+const tradingEngine = createTradingEngine({
+  config: loadTradingConfig,     // function — re-read each call
+  marketData: tradingMarketData,
+  broker: tradingBroker,
+});
+
+// Wire broker events → engine.
+tradingBroker.on('orderStatus', (event) => {
+  try { tradingEngine.handleOrderEvent(event); }
+  catch (err) { console.error('[trading] handleOrderEvent error:', err.message); }
+});
+
+// Register trading dashboard routes.
+registerTradingRoutes(app, requireAuth, { tradingEngine, tradingBroker });
+
+// Reconcile at boot (live only). If mismatch → force kill-switch OFF.
+(async () => {
+  if (tradingInitialCfg.mode === 'live') {
+    try {
+      if (typeof tradingBroker.connect === 'function') await tradingBroker.connect();
+      const r = await tradingEngine.reconcile();
+      if (!r.ok) {
+        console.error('[trading] reconcile failed → disabling trading');
+        saveTradingConfig({ tradingEnabled: false });
+      } else {
+        console.log('[trading] reconcile ok');
+      }
+    } catch (err) {
+      console.error('[trading] boot reconcile error:', err.message);
+      saveTradingConfig({ tradingEnabled: false });
+    }
+  } else {
+    console.log('[trading] paper mode — skipping reconcile');
+  }
+})();
+
 app.listen(PORT, () => console.log('Server running on port ' + PORT));
 
 // ── Client Discord ─────────────────────────────────────────────────
@@ -107,6 +167,7 @@ registerTradingHandler(client, {
   tradingChannel: TRADING_CHANNEL,
   railwayUrl: RAILWAY_URL,
   makeWebhookUrl: MAKE_WEBHOOK_URL,
+  tradingEngine,
 });
 startScheduler({ client, tradingChannel: TRADING_CHANNEL });
 
@@ -117,4 +178,16 @@ client.once('ready', () => {
   newsPoller.startPolling({ client, channelId: NEWS_CHANNEL_ID });
 });
 
-client.login(DISCORD_TOKEN);
+// Defensive login : un token invalide/absent ne doit pas tuer le process
+// (le HTTP dashboard reste utile pour reconfigurer, consulter les logs, etc).
+if (!DISCORD_TOKEN) {
+  console.warn('[discord] DISCORD_TOKEN absent — skipping Discord login. HTTP dashboard only.');
+} else {
+  try {
+    Promise.resolve(client.login(DISCORD_TOKEN)).catch(err => {
+      console.error('[discord] login failed:', err.message);
+    });
+  } catch (err) {
+    console.error('[discord] login threw synchronously:', err.message);
+  }
+}

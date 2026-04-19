@@ -17,6 +17,17 @@
         "DISCORD_TOKEN": "REMPLACER_PAR_TON_TOKEN",
         "MAKE_WEBHOOK_URL": "REMPLACER_PAR_TON_WEBHOOK"
       }
+    },
+    {
+      "name": "trading-dashboard-check",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["index.js"],
+      "port": 3100,
+      "autoPort": false,
+      "env": {
+        "PORT": "3100",
+        "DATA_DIR": "C:/Users/willi/AppData/Local/Temp/trading-preview-check"
+      }
     }
   ]
 }

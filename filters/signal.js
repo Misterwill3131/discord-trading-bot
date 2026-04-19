@@ -38,9 +38,10 @@ const ENTRY_KEYWORDS = ['entree', 'entry', 'long', 'scalp', 'buy only above', 'b
 // RF clôture ses trades par un reply "TICKER all targets done ✅" ou
 // "TICKER SL hit" — on reconnaît ces marqueurs explicites pour tagger
 // type='exit' au lieu de neutral. 'tp hit' / 'target hit' couvrent
-// aussi des variantes utilisées par d'autres analystes.
+// aussi des variantes utilisées par d'autres analystes. 'cut' est
+// utilisé par le trading engine pour déclencher une sortie manuelle.
 const EXIT_KEYWORDS  = [
-  'sortie', 'exit', 'stop',
+  'sortie', 'exit', 'stop', 'cut',
   'targets done', 'target hit', 'all targets', 'tp hit', 'sl hit', 'stopped out',
 ];
 

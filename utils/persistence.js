@@ -21,8 +21,10 @@ const path = require('path');
 
 // Sur Railway `/data` est un volume persistant ; en local on écrit à
 // côté de index.js. `path.resolve(__dirname, '..')` remonte de utils/
-// vers la racine du projet.
-const DATA_DIR = fs.existsSync('/data') ? '/data' : path.resolve(__dirname, '..');
+// vers la racine du projet. `DATA_DIR` env var surcharge tout — utilisé
+// par les tests pour isoler leur DB dans un tmp dir.
+const DATA_DIR = process.env.DATA_DIR
+  || (fs.existsSync('/data') ? '/data' : path.resolve(__dirname, '..'));
 
 // Limite de messages conservés en RAM (cache de state/messages.js). Le
 // dashboard /api/messages et les commandes !top/!stats lisent ce cache

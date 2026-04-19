@@ -12,6 +12,169 @@
 
 ---
 
+## Task 0: IBKR connection spike (de-risk before building)
+
+**Files:**
+- Create: `trading/_spike.js` (deleted at end of task)
+- Create: `docs/trading-ibgateway-setup.md` (kept)
+
+Goal: confirm the `@stoqey/ib` lib can connect to an IB Gateway paper account and read the account summary. If this doesn't work, we pivot before investing in 13 more tasks. No orders are placed.
+
+This task has a **human step** (install + configure IB Gateway) that can't be scripted. Document it first, then run the spike.
+
+- [ ] **Step 1: Install @stoqey/ib early (normally done in Task 1)**
+
+```bash
+npm install @stoqey/ib
+```
+
+- [ ] **Step 2: Download and install IB Gateway**
+
+Open [https://www.interactivebrokers.com/en/trading/ibgateway-latest.php](https://www.interactivebrokers.com/en/trading/ibgateway-latest.php) → download IB Gateway (latest stable) for your OS.
+
+Install and launch. On the login window, choose **IB API** (not FIX CTCI) and select **Paper Trading** (not Live).
+
+Sign in with your IBKR paper account credentials. If you don't have a paper account yet, log in at [ibkr.com](https://www.interactivebrokers.com/), go to Client Portal → Settings → Paper Trading Account → create one. Credentials are generally the same as your live login (paper mode is toggled at gateway launch).
+
+- [ ] **Step 3: Enable API access in IB Gateway**
+
+In the Gateway window:
+
+- Menu: **Configure → Settings → API → Settings**
+- Check: **Enable ActiveX and Socket Clients**
+- **Socket port**: `7497` (paper) — note this, we'll use it below
+- **Trusted IPs**: add `127.0.0.1`
+- **Read-Only API**: **uncheck** (we need to place orders later)
+- Click OK and keep Gateway running.
+
+- [ ] **Step 4: Write the spike script**
+
+Create `trading/_spike.js`:
+
+```js
+// Minimal IBKR connection spike. Delete after Task 0 passes.
+// Connects → reads NetLiquidation → disconnects. No orders.
+const { IBApi, EventName } = require('@stoqey/ib');
+
+const HOST = process.env.IBKR_HOST || '127.0.0.1';
+const PORT = parseInt(process.env.IBKR_PORT || '7497', 10);
+const CLIENT_ID = parseInt(process.env.IBKR_CLIENT_ID || '1', 10);
+
+const api = new IBApi({ host: HOST, port: PORT, clientId: CLIENT_ID });
+
+let gotSummary = false;
+const timeout = setTimeout(() => {
+  console.error('TIMEOUT — no response after 10s. Check Gateway is running and API is enabled.');
+  try { api.disconnect(); } catch (_) {}
+  process.exit(2);
+}, 10_000);
+
+api.on(EventName.error, (err, code, reqId) => {
+  // Informational errors ≤ 2000 are not fatal. Real errors usually > 2000.
+  console.log('[ibkr event] error:', { code, reqId, msg: (err && err.message) || err });
+});
+
+api.on(EventName.connected, () => {
+  console.log('[ibkr] connected to', HOST + ':' + PORT);
+  api.reqAccountSummary(9001, 'All', 'NetLiquidation,TotalCashValue');
+});
+
+api.on(EventName.accountSummary, (_reqId, account, tag, value, currency) => {
+  console.log('[ibkr] accountSummary:', { account, tag, value, currency });
+  if (tag === 'NetLiquidation') gotSummary = true;
+});
+
+api.on(EventName.accountSummaryEnd, () => {
+  clearTimeout(timeout);
+  console.log('[ibkr] accountSummaryEnd — success:', gotSummary);
+  api.disconnect();
+  process.exit(gotSummary ? 0 : 1);
+});
+
+api.connect();
+```
+
+- [ ] **Step 5: Run the spike**
+
+With IB Gateway running and logged into paper:
+
+```bash
+node trading/_spike.js
+```
+
+Expected output (with a paper account):
+
+```
+[ibkr] connected to 127.0.0.1:7497
+[ibkr] accountSummary: { account: 'DUxxxxxx', tag: 'NetLiquidation', value: '1000000.00', currency: 'USD' }
+[ibkr] accountSummary: { account: 'DUxxxxxx', tag: 'TotalCashValue', value: '1000000.00', currency: 'USD' }
+[ibkr] accountSummaryEnd — success: true
+```
+
+Exit code: `0`.
+
+If the script hangs for 10s and prints `TIMEOUT`:
+- Verify IB Gateway is logged in and not in "reconnecting" state.
+- Verify the port number matches (paper=7497, live=7496).
+- Verify `127.0.0.1` is in the Trusted IPs list and you clicked OK.
+- Try `netstat -an | grep 7497` — should show LISTEN on that port.
+
+If the script prints an error like `API client is not eligible` or `Socket connection broken`: the Gateway's Read-Only API checkbox is still on, or API clients aren't enabled at all.
+
+- [ ] **Step 6: Write the setup doc (for future self/deploys)**
+
+Create `docs/trading-ibgateway-setup.md`:
+
+```markdown
+# IB Gateway Setup (local, paper)
+
+## Install
+1. Download IB Gateway: https://www.interactivebrokers.com/en/trading/ibgateway-latest.php
+2. Install for your OS. On first launch, choose **IB API** + **Paper Trading**.
+
+## Configure API
+In Gateway: **Configure → Settings → API → Settings**
+- Enable ActiveX and Socket Clients: **ON**
+- Socket port: `7497` (paper) — use `7496` when switching to live
+- Trusted IPs: `127.0.0.1` (or add your bot's source IP if remote)
+- Read-Only API: **OFF** (we place orders)
+- Master API client ID: leave empty
+
+## Smoke test
+```bash
+node trading/_spike.js
+```
+Expect `NetLiquidation` to be printed.
+
+## Environment
+```bash
+export IBKR_HOST=127.0.0.1
+export IBKR_PORT=7497
+export IBKR_CLIENT_ID=1
+```
+
+## Notes
+- Gateway logs out after ~24 hours. IBKR offers an auto-login with Mosaic, but for bot use the typical pattern is a supervisor that restarts the Gateway daily and re-authenticates with 2FA.
+- When you switch to a live account, change the login type to **Live** at Gateway launch and set `IBKR_PORT=7496`.
+```
+
+- [ ] **Step 7: Delete the spike (we only needed it to validate the stack)**
+
+```bash
+rm trading/_spike.js
+```
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add package.json package-lock.json docs/trading-ibgateway-setup.md
+git commit -m "Validate IBKR paper connection + add Gateway setup doc"
+```
+
+**Gate:** do not proceed to Task 1 unless Step 5 printed a NetLiquidation value. If the spike failed, stop and re-design: likely options are (a) switch to CPAPI REST with OAuth, or (b) host IB Gateway on a VPS and add firewall rules.
+
+---
+
 ## Task 1: Bootstrap — dependencies, env, test runner
 
 **Files:**
@@ -25,7 +188,7 @@
 npm install @stoqey/ib
 ```
 
-Expected: adds `"@stoqey/ib": "^1.x.x"` to dependencies in `package.json`.
+Expected: adds `"@stoqey/ib": "^1.x.x"` to dependencies in `package.json`. If Task 0 already installed it, this is a no-op.
 
 - [ ] **Step 2: Add test script to package.json**
 
@@ -2598,6 +2761,7 @@ git commit -m "Add trading ops doc covering IB Gateway + rollout plan"
 ## Self-review notes
 
 - **Spec coverage**
+  - IBKR connection spike (Task 0) ✔
   - Trading config (Task 2) ✔
   - Indicators (Task 3) ✔
   - Market data (Task 4) ✔

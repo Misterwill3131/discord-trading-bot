@@ -33,7 +33,7 @@ const BLOCKED_KEYWORDS = [
 
 // Mots-clés qui classifient un message comme entrée/sortie.
 const ENTRY_KEYWORDS = ['entree', 'entry', 'long', 'scalp'];
-const EXIT_KEYWORDS  = ['sortie', 'exit', 'stop'];
+const EXIT_KEYWORDS  = ['sortie', 'exit', 'stop', 'cut'];
 
 // Regex pour filtrer les messages "conversationnels" (questions, réactions).
 const CONVO_START_RE = /^(and\s+)?(how|who|what|when|why|did|do|are|is|can|any|anyone|has|have|congrats|gg|nice|good|great|lol|haha|check|look|wow|reminder|just|btw|fyi|ok|okay)\b/i;

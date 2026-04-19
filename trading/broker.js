@@ -118,11 +118,166 @@ class PaperBroker extends EventEmitter {
   }
 }
 
-// ── IBKRBroker — stub, implemented in Task 7 ─────────────────────────
+// ── IBKRBroker — via @stoqey/ib ──────────────────────────────────────
+// Nécessite un IB Gateway (ou TWS) qui tourne et écoute sur `port`.
+// Paper (Gateway) : 4002. Live (Gateway) : 4001.
+//
+// Pas de tests unitaires ici : logique fine (composer les objets du SDK).
+// Validation en paper manuel.
+//
+// @stoqey/ib spécifiques :
+//   • `new Stock(ticker, 'SMART', 'USD')` → contrat actions US
+//   • `Order` est un *plain object* (pas un constructeur)
+//   • `OrderAction.BUY/SELL`, `OrderType.MKT/LMT/TRAIL` sont des string enums
+//   • `orderStatus` event: (orderId, status, filled, remaining, avgFillPrice, ...)
 class IBKRBroker extends EventEmitter {
-  constructor() {
+  constructor({ host = '127.0.0.1', port = 4002, clientId = 1 } = {}) {
     super();
-    throw new Error('IBKRBroker not yet implemented — see Task 7');
+    const ib = require('@stoqey/ib');
+    this._ib = ib;
+    this.api = new ib.IBApi({ host, port, clientId });
+    this._nextId = 1000;
+    this._account = { equity: 0, cash: 0 };
+    this._ordersByParent = new Map();
+    this._connected = false;
+  }
+
+  async connect() {
+    if (this._connected) return;
+    const { EventName } = this._ib;
+    await new Promise((resolve, reject) => {
+      const onConnected = () => { this.api.off(EventName.error, onError); resolve(); };
+      const onError = (err) => { this.api.off(EventName.connected, onConnected); reject(err); };
+      this.api.once(EventName.connected, onConnected);
+      this.api.once(EventName.error, onError);
+      this.api.connect();
+    });
+    this._connected = true;
+
+    this.api.on(EventName.orderStatus, (orderId, status, _filled, _remaining, avgFillPrice) => {
+      let kind = null, ticker = null, qty = null;
+      for (const [pid, info] of this._ordersByParent.entries()) {
+        if (pid === orderId) { kind = 'parent'; ticker = info.ticker; qty = info.qty; break; }
+        if (info.tpId === orderId) { kind = 'tp'; ticker = info.ticker; qty = info.qty; break; }
+        if (info.slId === orderId) { kind = 'sl'; ticker = info.ticker; qty = info.qty; break; }
+      }
+      this.emit('orderStatus', { orderId: String(orderId), status, kind, ticker, qty, avgFillPrice });
+    });
+
+    this.api.on(EventName.accountSummary, (_reqId, _account, tag, value) => {
+      if (tag === 'NetLiquidation') this._account.equity = parseFloat(value);
+      if (tag === 'TotalCashValue') this._account.cash = parseFloat(value);
+    });
+    this.api.reqAccountSummary(1, 'All', 'NetLiquidation,TotalCashValue');
+  }
+
+  _id() { return this._nextId++; }
+
+  _stockContract(ticker) {
+    return new this._ib.Stock(ticker, 'SMART', 'USD');
+  }
+
+  async placeBracket({ ticker, qty, orderType, entryPrice, tpPrice, trailPct }) {
+    await this.connect();
+    const { OrderAction, OrderType } = this._ib;
+    const contract = this._stockContract(ticker);
+    const parentId = this._id();
+    const tpId = this._id();
+    const slId = this._id();
+
+    const parent = {
+      action: OrderAction.BUY,
+      totalQuantity: qty,
+      orderType: orderType === 'market' ? OrderType.MKT : OrderType.LMT,
+      orderId: parentId,
+      transmit: false,
+    };
+    if (orderType !== 'market') parent.lmtPrice = entryPrice;
+
+    const tp = {
+      action: OrderAction.SELL,
+      totalQuantity: qty,
+      orderType: OrderType.LMT,
+      lmtPrice: tpPrice,
+      parentId,
+      orderId: tpId,
+      transmit: false,
+    };
+
+    const sl = {
+      action: OrderAction.SELL,
+      totalQuantity: qty,
+      orderType: OrderType.TRAIL,
+      trailingPercent: trailPct,
+      parentId,
+      orderId: slId,
+      transmit: true,
+    };
+
+    this._ordersByParent.set(parentId, { ticker, qty, tpId, slId });
+
+    this.api.placeOrder(parentId, contract, parent);
+    this.api.placeOrder(tpId, contract, tp);
+    this.api.placeOrder(slId, contract, sl);
+
+    return { parentId: String(parentId), tpId: String(tpId), slId: String(slId) };
+  }
+
+  async closePosition(ticker, qty) {
+    await this.connect();
+    const { OrderAction, OrderType } = this._ib;
+    // 1. Cancel bracket enfants du ticker.
+    for (const [, info] of this._ordersByParent.entries()) {
+      if (info.ticker !== ticker) continue;
+      try { this.api.cancelOrder(info.tpId); } catch (_) {}
+      try { this.api.cancelOrder(info.slId); } catch (_) {}
+    }
+    // 2. Market SELL pour fermer — qty fournie par le caller (engine.onExit).
+    if (!qty || qty <= 0) return { exitId: null };
+    const contract = this._stockContract(ticker);
+    const exitId = this._id();
+    this.api.placeOrder(exitId, contract, {
+      action: OrderAction.SELL,
+      totalQuantity: qty,
+      orderType: OrderType.MKT,
+      orderId: exitId,
+      transmit: true,
+    });
+    return { exitId: String(exitId) };
+  }
+
+  async cancelOrder(orderId) {
+    await this.connect();
+    this.api.cancelOrder(Number(orderId));
+  }
+
+  async getAccount() {
+    return { equity: this._account.equity, cash: this._account.cash };
+  }
+
+  async getOpenPositions() {
+    const { EventName } = this._ib;
+    return new Promise((resolve) => {
+      const positions = [];
+      const handler = (_account, contract, pos, avgCost) => {
+        positions.push({ ticker: contract.symbol, qty: pos, avgCost });
+      };
+      const done = () => {
+        this.api.off(EventName.position, handler);
+        this.api.off(EventName.positionEnd, done);
+        resolve(positions);
+      };
+      this.api.on(EventName.position, handler);
+      this.api.once(EventName.positionEnd, done);
+      this.api.reqPositions();
+    });
+  }
+
+  async disconnect() {
+    if (this._connected) {
+      this.api.disconnect();
+      this._connected = false;
+    }
   }
 }
 

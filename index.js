@@ -160,8 +160,11 @@ registerTradingRoutes(app, requireTradingAuth, { tradingEngine, tradingBroker })
 // Reconcile at boot (live only). If mismatch → force kill-switch OFF.
 (async () => {
   if (tradingInitialCfg.mode === 'live') {
+    console.log('[trading] boot: mode=live, connecting to IBKR gateway at '
+      + tradingSecrets.ibkrHost + ':' + tradingSecrets.ibkrPort + '...');
     try {
       if (typeof tradingBroker.connect === 'function') await tradingBroker.connect();
+      console.log('[trading] boot: connected, running reconcile...');
       const r = await tradingEngine.reconcile();
       if (!r.ok) {
         console.error('[trading] reconcile failed → disabling trading');

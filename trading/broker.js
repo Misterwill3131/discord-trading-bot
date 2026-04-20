@@ -135,6 +135,8 @@ class IBKRBroker extends EventEmitter {
     super();
     const ib = require('@stoqey/ib');
     this._ib = ib;
+    this._host = host;
+    this._port = port;
     this.api = new ib.IBApi({ host, port, clientId });
     this._nextId = 1000;
     this._account = { equity: 0, cash: 0 };
@@ -145,12 +147,29 @@ class IBKRBroker extends EventEmitter {
   async connect() {
     if (this._connected) return;
     const { EventName } = this._ib;
+    const host = this._host;
+    const port = this._port;
+    console.log('[ibkr] connecting to ' + host + ':' + port + ' ...');
     await new Promise((resolve, reject) => {
-      const onConnected = () => { this.api.off(EventName.error, onError); resolve(); };
-      const onError = (err) => { this.api.off(EventName.connected, onConnected); reject(err); };
+      let timeoutHandle;
+      const cleanup = () => {
+        this.api.off(EventName.connected, onConnected);
+        this.api.off(EventName.error, onError);
+        clearTimeout(timeoutHandle);
+      };
+      const onConnected = () => { cleanup(); console.log('[ibkr] connected'); resolve(); };
+      const onError = (err) => {
+        cleanup();
+        reject(new Error('IBKR connect error: ' + (err && err.message ? err.message : err)));
+      };
       this.api.once(EventName.connected, onConnected);
       this.api.once(EventName.error, onError);
       this.api.connect();
+      timeoutHandle = setTimeout(() => {
+        cleanup();
+        reject(new Error('IBKR connect timeout after 10s — gateway unreachable at ' + host + ':' + port));
+      }, 10000);
+      timeoutHandle.unref && timeoutHandle.unref();
     });
     this._connected = true;
 

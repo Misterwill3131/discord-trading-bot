@@ -100,21 +100,26 @@ registerProfitRoutes(app, requireAuth);
 
 // ── Trading engine bootstrap ───────────────────────────────────────
 const tradingSecrets = getTradingSecrets();
-const tradingMarketData = createMarketData({
-  keyId: tradingSecrets.alpacaKeyId,
-  secretKey: tradingSecrets.alpacaSecretKey,
-});
 const tradingInitialCfg = loadTradingConfig();
+// Broker (IBKRBroker en live, PaperBroker en paper). Créé AVANT marketdata
+// pour qu'en mode live le marketdata puisse utiliser le même broker IBKR
+// comme source de bougies (plus de dépendance Alpaca).
 const tradingBroker = createBroker({
   mode: tradingInitialCfg.mode,
-  marketData: tradingMarketData,
-  initialEquity: 100000, // paper default; ignored by IBKR
+  initialEquity: 100000, // paper default; ignored par IBKR
   ibkr: {
     host: tradingSecrets.ibkrHost,
     port: tradingSecrets.ibkrPort,
     clientId: tradingSecrets.ibkrClientId,
   },
+  // marketData est injecté plus bas pour éviter la dépendance circulaire.
 });
+const tradingMarketData = createMarketData({ broker: tradingBroker });
+// PaperBroker utilise marketData pour ses simulations de fill — en live,
+// IBKRBroker ignore ce champ.
+if (tradingBroker && 'marketData' in tradingBroker) {
+  tradingBroker.marketData = tradingMarketData;
+}
 
 // Discord notifier : closure late-bound sur `client` (créé plus bas).
 // Silencieux si client pas prêt ou TRADING_ALERTS_CHANNEL_ID absent.

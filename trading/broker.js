@@ -282,12 +282,98 @@ class IBKRBroker extends EventEmitter {
     });
   }
 
+  // Récupère les bougies historiques via IBKR (remplace la fetch Alpaca).
+  // `timeframe` accepte le format IBKR direct ('5 mins', '1 hour') ou Alpaca-style
+  // ('5Min', '1Hour') qu'on traduit.
+  // Retourne un array `[{t, o, h, l, c, v}]` compatible avec indicators.js.
+  async getHistoricalBars(ticker, timeframe = '5 mins', limit = 50) {
+    await this.connect();
+    const { EventName } = this._ib;
+    const contract = this._stockContract(ticker);
+    const reqId = this._id();
+
+    // Traduction Alpaca → IBKR si besoin.
+    const barSize = _normalizeTimeframe(timeframe);
+    // 1 D couvre 78 bars de 5min en RTH, largement suffisant pour 50 bars.
+    const duration = '1 D';
+
+    return new Promise((resolve, reject) => {
+      const bars = [];
+      let timeoutHandle;
+
+      const cleanup = () => {
+        this.api.off(EventName.historicalData, onData);
+        this.api.off(EventName.historicalDataEnd, onEnd);
+        this.api.off(EventName.error, onError);
+        clearTimeout(timeoutHandle);
+      };
+
+      const onData = (id, time, open, high, low, close, volume) => {
+        if (id !== reqId) return;
+        // Filtre les lignes "finished" (event.time === 'finished') qu'IBKR emet parfois.
+        if (typeof time === 'string' && time.startsWith('finished')) return;
+        bars.push({ t: time, o: open, h: high, l: low, c: close, v: volume });
+      };
+
+      const onEnd = (id) => {
+        if (id !== reqId) return;
+        cleanup();
+        resolve(bars.slice(-limit));
+      };
+
+      const onError = (err, code, errReqId) => {
+        if (errReqId !== reqId) return;
+        cleanup();
+        reject(new Error('IBKR historicalData error (code ' + code + '): ' + (err && err.message ? err.message : err)));
+      };
+
+      this.api.on(EventName.historicalData, onData);
+      this.api.on(EventName.historicalDataEnd, onEnd);
+      this.api.on(EventName.error, onError);
+
+      this.api.reqHistoricalData(
+        reqId,
+        contract,
+        '',             // endDateTime = maintenant
+        duration,       // '1 D'
+        barSize,        // '5 mins'
+        'TRADES',       // whatToShow
+        1,              // useRTH (1 = régulier seulement)
+        1,              // formatDate
+        false,          // keepUpToDate
+        []              // chartOptions
+      );
+
+      timeoutHandle = setTimeout(() => {
+        cleanup();
+        reject(new Error('IBKR historicalData timeout after 15s'));
+      }, 15000);
+      timeoutHandle.unref && timeoutHandle.unref();
+    });
+  }
+
   async disconnect() {
     if (this._connected) {
       this.api.disconnect();
       this._connected = false;
     }
   }
+}
+
+// Traduit un timeframe style Alpaca ('5Min') vers le format IBKR ('5 mins').
+// Accepte aussi le format IBKR direct ('5 mins', '1 hour').
+function _normalizeTimeframe(tf) {
+  if (!tf) return '5 mins';
+  // Déjà en format IBKR ?
+  if (/\s(mins?|hours?|day|week|month)\b/i.test(tf)) return tf;
+  const m = /^(\d+)(Min|Hour|Day)s?$/i.exec(tf);
+  if (!m) return '5 mins';
+  const n = parseInt(m[1], 10);
+  const unit = m[2].toLowerCase();
+  if (unit === 'min')  return n + ' ' + (n === 1 ? 'min' : 'mins');
+  if (unit === 'hour') return n + ' ' + (n === 1 ? 'hour' : 'hours');
+  if (unit === 'day')  return n + ' day';
+  return '5 mins';
 }
 
 function createBroker({ mode, marketData, initialEquity, ibkr }) {

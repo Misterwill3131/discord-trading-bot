@@ -57,6 +57,7 @@ const MAKE_WEBHOOK_URL   = process.env.MAKE_WEBHOOK_URL;
 const TRADING_CHANNEL    = process.env.TRADING_CHANNEL || 'trading-floor';
 const PROFITS_CHANNEL_ID = process.env.PROFITS_CHANNEL_ID || '';
 const NEWS_CHANNEL_ID    = process.env.NEWS_CHANNEL_ID || '';
+const TRADING_ALERTS_CHANNEL_ID = process.env.TRADING_ALERTS_CHANNEL_ID || '';
 const PORT               = process.env.PORT || 3000;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
@@ -111,10 +112,27 @@ const tradingBroker = createBroker({
     clientId: tradingSecrets.ibkrClientId,
   },
 });
+
+// Discord notifier : closure late-bound sur `client` (créé plus bas).
+// Silencieux si client pas prêt ou si TRADING_ALERTS_CHANNEL_ID absent.
+let discordClientRef = null;
+async function sendTradingAlert(message) {
+  if (!discordClientRef || !discordClientRef.isReady() || !TRADING_ALERTS_CHANNEL_ID) return;
+  try {
+    const ch = await discordClientRef.channels.fetch(TRADING_ALERTS_CHANNEL_ID);
+    if (ch && ch.isTextBased && ch.isTextBased()) {
+      await ch.send(message);
+    }
+  } catch (err) {
+    console.error('[trading] alert send failed:', err.message);
+  }
+}
+
 const tradingEngine = createTradingEngine({
   config: loadTradingConfig,     // function — re-read each call
   marketData: tradingMarketData,
   broker: tradingBroker,
+  notifier: sendTradingAlert,
 });
 
 // Wire broker events → engine.
@@ -162,9 +180,10 @@ const client = new Client({
 });
 
 // Injection du client dans les modules qui en ont besoin (mentions
-// dans canvas, daily summary dans profit).
+// dans canvas, daily summary dans profit, alertes trading).
 setCanvasDiscordClient(client);
 profitCounter.setDiscordClient(client);
+discordClientRef = client;  // active sendTradingAlert()
 
 // Listeners + scheduler. Les helpers internes font eux-mêmes leur
 // `client.once('ready')` si nécessaire — pas de ordre requis ici.

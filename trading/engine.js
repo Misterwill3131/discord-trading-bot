@@ -29,8 +29,15 @@ const {
 
 const EXIT_KEYWORDS = ['exit', 'sortie', 'stop', 'cut'];
 
-function createEngine({ config, marketData, broker, now = () => new Date(), logger = console }) {
+function createEngine({ config, marketData, broker, now = () => new Date(), logger = console, notifier = null }) {
   const cfg = () => (typeof config === 'function' ? config() : config);
+
+  // Notifier : fonction optionnelle `(message: string) => void` qui envoie
+  // une alerte (ex : Discord channel). No-op silencieux si absent.
+  function notify(message) {
+    if (!notifier) return;
+    try { notifier(message); } catch (err) { logger.error('[trading] notifier error:', err.message); }
+  }
 
   async function onEntry(signal) {
     const c = cfg();
@@ -119,9 +126,19 @@ function createEngine({ config, marketData, broker, now = () => new Date(), logg
         if (row && row.status === 'pending') {
           broker.cancelOrder(orderResult.parentId).catch(() => {});
           markPositionCancelled(row.id, { closed_at: now().toISOString() });
+          notify('❌ **CANCEL** $' + signal.ticker + ' (limit timeout ' + (c.limitOrderTimeoutMin || 30) + 'min)');
         }
       }, timeoutMs).unref();
     }
+
+    notify(
+      '📥 **' + orderType.toUpperCase() + ' ENTRY** $' + signal.ticker + '\n'
+      + '• Author: ' + signal.author + '\n'
+      + '• Qty: ' + qty + ' @ entry ' + signal.entry_price + '\n'
+      + '• TP: ' + signal.target_price + ' (+' + ((signal.target_price/signal.entry_price - 1) * 100).toFixed(2) + '%)\n'
+      + '• SL: trailing ' + c.trailingStopPct + '% (' + slPrice.toFixed(2) + ' initial)\n'
+      + '• Risk: ' + (account.equity * c.riskPerTradePct / 100).toFixed(2)
+    );
 
     return { placed: true, positionId, qty, orderType };
   }
@@ -184,11 +201,13 @@ function createEngine({ config, marketData, broker, now = () => new Date(), logg
             fill_price: event.avgFillPrice,
             opened_at: now().toISOString(),
           });
+          notify('✅ **FILLED** $' + row.ticker + ' ' + row.quantity + ' @ ' + event.avgFillPrice);
         }
       } else if (event.status === 'Cancelled' || event.status === 'Rejected') {
         const row = getPositionByIbkrParentId(String(event.orderId));
         if (row && row.status === 'pending') {
           markPositionCancelled(row.id, { closed_at: now().toISOString() });
+          notify('❌ **' + event.status.toUpperCase() + '** $' + row.ticker + ' (parent order)');
         }
       }
       return;
@@ -201,13 +220,21 @@ function createEngine({ config, marketData, broker, now = () => new Date(), logg
         const exit = event.avgFillPrice;
         const entry = row.fill_price != null ? row.fill_price : row.entry_price;
         const pnl = (exit - entry) * row.quantity;
+        const reason = event.kind === 'tp' ? 'tp' :
+                       event.kind === 'sl' ? 'sl' : 'manual_exit';
         markPositionClosed(row.id, {
-          close_reason: event.kind === 'tp' ? 'tp' :
-                        event.kind === 'sl' ? 'sl' : 'manual_exit',
+          close_reason: reason,
           exit_price: exit,
           closed_at: now().toISOString(),
           pnl,
         });
+        const emoji = pnl > 0 ? '💰' : (pnl < 0 ? '🛑' : '⏹️');
+        const pctLabel = entry ? ((exit / entry - 1) * 100).toFixed(2) + '%' : '';
+        notify(
+          emoji + ' **' + reason.toUpperCase() + '** $' + row.ticker + '\n'
+          + '• Exit ' + exit + ' (entry ' + entry + ', ' + pctLabel + ')\n'
+          + '• P&L: ' + pnl.toFixed(2)
+        );
       }
       return;
     }

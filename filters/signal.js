@@ -149,6 +149,19 @@ function classifySignal(content, customFilters, options) {
     return { type: 'entry', reason: 'Implicit entry (stop-loss)', confidence: hasPrice ? 75 : 60, ticker };
   }
 
+  // 5c. Entrée implicite — ticker + prix adjacent (format casual).
+  // Ex: "GLND 5.2!", "$NVDA 140 oversold", "AAPL 250 breakout".
+  // Max 10 chars non-digit/non-period entre le ticker et le prix, pour
+  // éviter "SPY was great last week at 420" (prix trop éloigné).
+  // `ticker` vient de detectTicker (TICKER_IGNORE filtré), garantissant
+  // qu'un mot courant comme "ALERT 250" ne passe pas.
+  if (ticker) {
+    const TICKER_ADJACENT_PRICE_RE = /(?:\$[A-Z]{1,6}|\b[A-Z]{2,5})\b[^\d.a-z\n]{0,10}\$?(?:\d+(?:\.\d+)?|\.\d+)/;
+    if (TICKER_ADJACENT_PRICE_RE.test(content)) {
+      return { type: 'entry', reason: 'Implicit entry (ticker+price)', confidence: 55, ticker };
+    }
+  }
+
   // 6. Signal de sortie détecté (substring ou regex).
   if (includesAny(lower, EXIT_KEYWORDS) || matchesAnyRegex(lower, EXIT_REGEX)) {
     const hasPrice = HAS_PRICE_RE.test(content);

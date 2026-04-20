@@ -269,19 +269,20 @@ function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhoo
           + targetPx.toFixed(4) + ' (entry=' + entryPx + ', stop=' + stopPx + ')');
       }
 
-      if (entryPx != null && targetPx != null) {
+      // Target reste optionnel — en mode 'trail-only' il n'est pas envoyé
+      // à IBKR (seul le trailing stop sert de sortie). L'engine vérifie
+      // la validité selon le mode config.
+      if (entryPx != null) {
         tradingEngine.onEntry({
           ticker: signalTicker.toUpperCase(),
           entry_price: entryPx,
-          target_price: targetPx,
+          target_price: targetPx,   // peut être null → engine décide
           author: authorName,
           raw_content: content,
           ts: message.createdAt.toISOString(),
         }).catch(err => console.error('[trading] onEntry error:', err.message));
       } else {
-        console.log('[trading] $' + signalTicker + ' ENTRY signal skipped — missing '
-          + (entryPx == null ? 'entry_price ' : '')
-          + (targetPx == null ? 'target_price' : '')
+        console.log('[trading] $' + signalTicker + ' ENTRY signal skipped — no entry_price found'
           + ' (content: ' + content.slice(0, 80) + ')');
       }
     }

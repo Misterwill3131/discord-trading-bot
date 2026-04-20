@@ -22,8 +22,24 @@
 // Mots courts qui ressemblent à un ticker mais n'en sont pas. Étendre
 // au besoin si on observe des faux-positifs dans les logs.
 const TICKER_IGNORE = new Set([
+  // Mots de base
   'I', 'A', 'THE', 'AND', 'OR', 'TO', 'IN', 'AT', 'ON',
-  'BY', 'FOR', 'OF', 'UP', 'OK',
+  'BY', 'FOR', 'OF', 'UP', 'OK', 'IS', 'IT', 'AM', 'BE',
+  'AN', 'AS', 'IF', 'SO', 'NO', 'DO', 'GO', 'HE', 'SHE',
+  'WE', 'ME', 'MY', 'US', 'WHO', 'WHY', 'HOW', 'OUR',
+  // Mots courants du chat trading
+  'BUY', 'SELL', 'NEW', 'HIGH', 'LOW', 'LOSS', 'GAIN', 'RED',
+  'OUT', 'DAY', 'WEEK', 'YEAR', 'ALL', 'ANY', 'MORE', 'ONLY',
+  'EVEN', 'TOO', 'THIS', 'THAT', 'WITH', 'FROM', 'JUST',
+  'NOT', 'NOW', 'BUT', 'YET', 'SEE', 'RUN', 'HIT', 'WAS',
+  'WERE', 'BEEN', 'HAVE', 'HAS', 'HAD', 'WILL', 'CAN',
+  'SHOULD', 'WOULD', 'COULD', 'MAY', 'JUST', 'BIG',
+  'ALERT', 'BREAK', 'NEWS', 'PLAY', 'SETUP', 'TIME',
+  'CALL', 'PUT', 'FAST', 'SLOW', 'OPEN', 'CLOSE', 'LIVE',
+  'PRICE', 'PROFIT', 'CASH', 'LOOK', 'NICE', 'GOOD',
+  // Acronymes financiers fréquents (pas des tickers actions)
+  'CEO', 'CFO', 'SEC', 'IPO', 'CPI', 'FED', 'FOMC', 'ETF',
+  'PE', 'EPS', 'ROI', 'YTD', 'QOQ', 'YOY', 'ATH', 'PM', 'AM',
 ]);
 
 // Pattern de nombre qui accepte : "0.46", ".46", "46", "46.5".
@@ -99,12 +115,12 @@ function extractPrices(content) {
     }
   }
 
-  // Priorité 6 — Ticker + prix isolé (format informel) : "$GMEX .46$" ou
-  // "$GMEX 0.46". N'applique ce fallback que si aucun entry n'a été trouvé
-  // par les priorités précédentes. `[^\d.]*` (exclut le point) pour ne pas
-  // manger le `.` de `.46`. `\$?` avant/après pour "$0.46" et "0.46$".
+  // Priorité 6 — Ticker + prix adjacent (format casual) : "$GMEX .46$",
+  // "GLND 5.2", "NVDA 140". Accepte le ticker avec ou sans `$` devant.
+  // `[^\d.]*` (exclut le point) pour ne pas manger le `.` de `.46`.
+  // `\$?` avant/après pour "$0.46" et "0.46$".
   if (!entry) {
-    const im = c.match(new RegExp(`\\$[A-Z]{1,6}\\b[^\\d.]*\\$?(${NUM})\\$?`, 'i'));
+    const im = c.match(new RegExp(`(?:\\$[A-Z]{1,6}|\\b[A-Z]{2,5})\\b[^\\d.]{0,10}\\$?(${NUM})\\$?`));
     if (im) entry = parseFloat(im[1]);
   }
 

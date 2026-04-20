@@ -90,6 +90,16 @@ function createEngine({ config, marketData, broker, now = () => new Date(), logg
       return { skipped: 'technical', detail: { rsi, ema20, ema9, lastPrice } };
     }
 
+    // takeProfitMode : 'trail-only' (défaut) n'envoie pas d'ordre TP fixe,
+    // la sortie se fait uniquement via le trailing stop. 'fixed' place un
+    // ordre limit au target_price du signal. Check tôt pour éviter d'insérer
+    // une position "pending" qu'on abandonnerait ensuite.
+    const useFixedTP = c.takeProfitMode === 'fixed';
+    if (useFixedTP && signal.target_price == null) {
+      logger.log(tag, 'SKIP: no target_price (takeProfitMode=fixed requires target)');
+      return { skipped: 'no_target_fixed_mode' };
+    }
+
     const toleranceMult = 1 + (c.tolerancePct / 100);
     const orderType = lastPrice <= signal.entry_price * toleranceMult ? 'market' : 'limit';
 
@@ -117,11 +127,6 @@ function createEngine({ config, marketData, broker, now = () => new Date(), logg
       tp_price: signal.target_price,
       raw_signal: JSON.stringify(signal),
     });
-
-    // takeProfitMode : 'trail-only' (défaut) n'envoie pas d'ordre TP fixe,
-    // la sortie se fait uniquement via le trailing stop. 'fixed' place un
-    // ordre limit au target_price du signal (comportement pré-2026-04-20).
-    const useFixedTP = c.takeProfitMode === 'fixed';
 
     let orderResult;
     try {

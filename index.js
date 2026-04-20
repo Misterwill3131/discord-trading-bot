@@ -157,7 +157,12 @@ tradingBroker.on('orderStatus', (event) => {
 registerTradingAuthRoutes(app);
 registerTradingRoutes(app, requireTradingAuth, { tradingEngine, tradingBroker });
 
-// Reconcile at boot (live only). If mismatch → force kill-switch OFF.
+// Reconcile at boot (live only). Un échec est loggé mais NE désactive PAS
+// le trading — l'utilisateur a demandé de garder tradingEnabled sticky pour
+// éviter de devoir re-toggler manuellement après chaque panne transitoire
+// du gateway. Si un mismatch DB/IBKR est détecté, les positions affectées
+// sont déjà marquées 'error' dans reconcile(). Les nouvelles entries peuvent
+// toujours se placer. Utiliser le kill-switch ou panic button pour arrêter.
 (async () => {
   if (tradingInitialCfg.mode === 'live') {
     console.log('[trading] boot: mode=live, connecting to IBKR gateway at '
@@ -167,14 +172,12 @@ registerTradingRoutes(app, requireTradingAuth, { tradingEngine, tradingBroker })
       console.log('[trading] boot: connected, running reconcile...');
       const r = await tradingEngine.reconcile();
       if (!r.ok) {
-        console.error('[trading] reconcile failed → disabling trading');
-        saveTradingConfig({ tradingEnabled: false });
+        console.error('[trading] reconcile failed — trading stays ENABLED (user preference)', r.mismatches || r.reason);
       } else {
         console.log('[trading] reconcile ok');
       }
     } catch (err) {
-      console.error('[trading] boot reconcile error:', err.message);
-      saveTradingConfig({ tradingEnabled: false });
+      console.error('[trading] boot reconcile error (gateway unreachable?) — trading stays ENABLED:', err.message);
     }
   } else {
     console.log('[trading] paper mode — skipping reconcile');

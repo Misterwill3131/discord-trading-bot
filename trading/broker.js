@@ -329,7 +329,6 @@ class IBKRBroker extends EventEmitter {
 
       const onData = (id, time, open, high, low, close, volume) => {
         if (id !== reqId) return;
-        // Filtre les lignes "finished" (event.time === 'finished') qu'IBKR emet parfois.
         if (typeof time === 'string' && time.startsWith('finished')) return;
         bars.push({ t: time, o: open, h: high, l: low, c: close, v: volume });
       };
@@ -341,15 +340,24 @@ class IBKRBroker extends EventEmitter {
       };
 
       const onError = (err, code, errReqId) => {
+        // Log les erreurs IBKR de debug — filtre que par reqId ni les codes
+        // importants (200, 162, 354, 322, 10167) pour voir ce qui se passe.
+        if (errReqId === reqId || [200, 162, 354, 322, 10167, 10168].includes(code)) {
+          console.error('[ibkr] error code=' + code + ' reqId=' + errReqId
+            + ' msg=' + (err && err.message ? err.message : err));
+        }
         if (errReqId !== reqId) return;
         cleanup();
-        reject(new Error('IBKR historicalData error (code ' + code + '): ' + (err && err.message ? err.message : err)));
+        reject(new Error('IBKR historicalData error (code ' + code + ') for ' + ticker
+          + ': ' + (err && err.message ? err.message : err)));
       };
 
       this.api.on(EventName.historicalData, onData);
       this.api.on(EventName.historicalDataEnd, onEnd);
       this.api.on(EventName.error, onError);
 
+      // useRTH=0 : include extended hours. Certains tickers illiquides n'ont
+      // pas assez de bars en RTH pour 20+ candles (nécessaires à EMA20).
       this.api.reqHistoricalData(
         reqId,
         contract,
@@ -357,7 +365,7 @@ class IBKRBroker extends EventEmitter {
         duration,       // '1 D'
         barSize,        // '5 mins'
         'TRADES',       // whatToShow
-        1,              // useRTH (1 = régulier seulement)
+        0,              // useRTH=0 (inclut pre/post market)
         1,              // formatDate
         false,          // keepUpToDate
         []              // chartOptions
@@ -365,8 +373,9 @@ class IBKRBroker extends EventEmitter {
 
       timeoutHandle = setTimeout(() => {
         cleanup();
-        reject(new Error('IBKR historicalData timeout after 15s'));
-      }, 15000);
+        reject(new Error('IBKR historicalData timeout after 20s for ' + ticker
+          + ' — check market data subscription or ticker validity'));
+      }, 20000);
       timeoutHandle.unref && timeoutHandle.unref();
     });
   }

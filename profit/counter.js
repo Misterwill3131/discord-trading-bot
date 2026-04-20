@@ -40,14 +40,26 @@ const PROFIT_PHRASE_MAX = 120;
 
 // ── Pure parsers ─────────────────────────────────────────────────────
 
+// Strip les motifs numériques qui ressemblent à des ranges mais n'en
+// sont pas : heures (14:30-15:45), dates (2026-04-20), numéros de
+// téléphone US (1-800-555-1234), ZIP+4 (90210-1234). Sans ça, un post
+// comme "trade entre 14:30-15:00" gonfle le compteur de +1 à +2.
+function stripNonProfitNumerics(content) {
+  return String(content || '')
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, ' ')      // times 14:30, 09:30:00
+    .replace(/\b\d{4}-\d{1,2}(?:-\d{1,2})?\b/g, ' ')    // dates 2026-04 ou 2026-04-20
+    .replace(/\b\d{1,3}-\d{3}-\d{4}\b/g, ' ')           // phone 1-800-555-1234
+    .replace(/\b\d{5}-\d{4}\b/g, ' ');                  // ZIP+4 90210-1234
+}
+
 function countProfitEntries(content) {
   if (!content || !content.trim()) return 0;
-  const matches = content.match(PROFIT_PATTERN);
+  const matches = stripNonProfitNumerics(content).match(PROFIT_PATTERN);
   return matches ? matches.length : 0;
 }
 
 function hasProfitPattern(content) {
-  return PROFIT_PATTERN.test(content);
+  return PROFIT_PATTERN.test(stripNonProfitNumerics(content));
 }
 
 function truncatePhrase(s) {

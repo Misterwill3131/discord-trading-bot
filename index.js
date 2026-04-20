@@ -57,7 +57,10 @@ const MAKE_WEBHOOK_URL   = process.env.MAKE_WEBHOOK_URL;
 const TRADING_CHANNEL    = process.env.TRADING_CHANNEL || 'trading-floor';
 const PROFITS_CHANNEL_ID = process.env.PROFITS_CHANNEL_ID || '';
 const NEWS_CHANNEL_ID    = process.env.NEWS_CHANNEL_ID || '';
-const TRADING_ALERTS_CHANNEL_ID = process.env.TRADING_ALERTS_CHANNEL_ID || '';
+// Alertes push via ntfy.sh (gratuit, pas de compte). Format de topic :
+// https://ntfy.sh/<topic>. Laisse vide pour désactiver les alertes.
+const NTFY_TOPIC         = process.env.NTFY_TOPIC || '';
+const NTFY_SERVER        = process.env.NTFY_SERVER || 'https://ntfy.sh';
 const PORT               = process.env.PORT || 3000;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
@@ -113,18 +116,30 @@ const tradingBroker = createBroker({
   },
 });
 
-// Discord notifier : closure late-bound sur `client` (créé plus bas).
-// Silencieux si client pas prêt ou si TRADING_ALERTS_CHANNEL_ID absent.
-let discordClientRef = null;
+// Push notifier via ntfy.sh — HTTP POST simple, pas de compte requis.
+// Le topic est un secret choisi par l'utilisateur (ex: 'boom-trades-x7k2m9'),
+// partagé entre le bot (POST) et l'app mobile ntfy (abonnement).
+// Silencieux si NTFY_TOPIC absent.
+const pushFetch = require('node-fetch');
 async function sendTradingAlert(message) {
-  if (!discordClientRef || !discordClientRef.isReady() || !TRADING_ALERTS_CHANNEL_ID) return;
+  if (!NTFY_TOPIC) return;
   try {
-    const ch = await discordClientRef.channels.fetch(TRADING_ALERTS_CHANNEL_ID);
-    if (ch && ch.isTextBased && ch.isTextBased()) {
-      await ch.send(message);
-    }
+    // Première ligne du message = titre, reste = body (ntfy convention).
+    const lines = message.split('\n');
+    const title = lines[0].replace(/[*_`]/g, '').slice(0, 100);
+    const body = lines.slice(1).join('\n').replace(/[*_`]/g, '').trim();
+    await pushFetch(NTFY_SERVER + '/' + encodeURIComponent(NTFY_TOPIC), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Title': title,
+        'Priority': 'default',
+        'Tags': 'chart_with_upwards_trend',
+      },
+      body: body || title,
+    });
   } catch (err) {
-    console.error('[trading] alert send failed:', err.message);
+    console.error('[trading] ntfy send failed:', err.message);
   }
 }
 
@@ -180,10 +195,9 @@ const client = new Client({
 });
 
 // Injection du client dans les modules qui en ont besoin (mentions
-// dans canvas, daily summary dans profit, alertes trading).
+// dans canvas, daily summary dans profit).
 setCanvasDiscordClient(client);
 profitCounter.setDiscordClient(client);
-discordClientRef = client;  // active sendTradingAlert()
 
 // Listeners + scheduler. Les helpers internes font eux-mêmes leur
 // `client.once('ready')` si nécessaire — pas de ordre requis ici.

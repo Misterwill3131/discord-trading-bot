@@ -351,12 +351,11 @@ class IBKRBroker extends EventEmitter {
       };
 
       const onError = (err, code, errReqId) => {
-        // Log les erreurs IBKR de debug — filtre que par reqId ni les codes
-        // importants (200, 162, 354, 322, 10167) pour voir ce qui se passe.
-        if (errReqId === reqId || [200, 162, 354, 322, 10167, 10168].includes(code)) {
-          console.error('[ibkr] error code=' + code + ' reqId=' + errReqId
-            + ' msg=' + (err && err.message ? err.message : err));
-        }
+        // Log TOUTES les erreurs IBKR en debug — le filtrage par reqId
+        // plus bas ne doit pas masquer des erreurs qui pourraient être
+        // liées (parfois errReqId est -1 pour des erreurs générales).
+        console.error('[ibkr] error code=' + code + ' reqId=' + errReqId
+          + ' msg=' + (err && err.message ? err.message : err));
         if (errReqId !== reqId) return;
         cleanup();
         reject(new Error('IBKR historicalData error (code ' + code + ') for ' + ticker
@@ -367,15 +366,18 @@ class IBKRBroker extends EventEmitter {
       this.api.on(EventName.historicalDataEnd, onEnd);
       this.api.on(EventName.error, onError);
 
-      // useRTH=0 : include extended hours. Certains tickers illiquides n'ont
-      // pas assez de bars en RTH pour 20+ candles (nécessaires à EMA20).
+      // MIDPOINT : ne nécessite pas d'abonnement TRADES market data (gratuit
+      // pour les paper accounts). Pour le RSI/EMA on utilise midprice comme
+      // close — même signal directionnel que TRADES sur bars 5min.
+      // useRTH=0 inclut les pre/post market pour que les tickers illiquides
+      // aient assez de bars pour EMA20.
       this.api.reqHistoricalData(
         reqId,
         contract,
         '',             // endDateTime = maintenant
         duration,       // '1 D'
         barSize,        // '5 mins'
-        'TRADES',       // whatToShow
+        'MIDPOINT',     // whatToShow — gratuit, pas besoin de trade data sub
         0,              // useRTH=0 (inclut pre/post market)
         1,              // formatDate
         false,          // keepUpToDate
@@ -385,7 +387,7 @@ class IBKRBroker extends EventEmitter {
       timeoutHandle = setTimeout(() => {
         cleanup();
         reject(new Error('IBKR historicalData timeout after 20s for ' + ticker
-          + ' — check market data subscription or ticker validity'));
+          + ' — ticker may be invalid or gateway slow to respond'));
       }, 20000);
       timeoutHandle.unref && timeoutHandle.unref();
     });

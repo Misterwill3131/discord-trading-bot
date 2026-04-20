@@ -54,8 +54,21 @@ function registerTradingRoutes(app, requireAuth, { tradingEngine, tradingBroker 
     for (const k of allowedKeys) {
       if (k in (req.body || {})) partial[k] = req.body[k];
     }
+
+    // Le broker (Paper/IBKR) est instancié au boot et ne peut pas être
+    // swappé à chaud — un changement de mode doit donc forcer un restart
+    // du process pour que le bon broker soit créé au prochain démarrage.
+    const before = loadTradingConfig();
     const updated = saveTradingConfig(partial);
-    res.json({ config: updated });
+    const modeChanged = partial.mode !== undefined && partial.mode !== before.mode;
+    res.json({ config: updated, restartingForMode: modeChanged });
+
+    if (modeChanged) {
+      console.log('[trading] mode changed ' + before.mode + ' → ' + updated.mode + ', exiting for restart');
+      // Laisse 500ms pour que la réponse HTTP parte avant que le process meure.
+      // Railway redémarre automatiquement le service avec la nouvelle config.
+      setTimeout(() => process.exit(0), 500);
+    }
   });
 
   app.post('/api/trading/positions/:id/close', requireAuth, async (req, res) => {

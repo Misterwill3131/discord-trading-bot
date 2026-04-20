@@ -247,20 +247,41 @@ function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhoo
 
     // ── Trading engine hook (entries: classifier said 'entry' + full signal) ──
     if (tradingEngine && filterType === 'entry' && signalTicker) {
-      if (pricesForLog.entry_price != null && pricesForLog.target_price != null) {
+      let entryPx = pricesForLog.entry_price;
+      let targetPx = pricesForLog.target_price;
+      let stopPx = pricesForLog.stop_price;
+
+      // Heuristique : si l'entry est sub-dollar mais le stop est un entier
+      // à 2+ chiffres, l'utilisateur a probablement écrit "43" pour "0.43"
+      // (raccourci courant dans les chats trading). On normalise /100.
+      if (stopPx != null && entryPx != null && entryPx < 1 && Number.isInteger(stopPx) && stopPx > 10) {
+        const normalized = stopPx / 100;
+        console.log('[trading] $' + signalTicker + ' stop normalized ' + stopPx + ' → ' + normalized + ' (sub-dollar entry heuristic)');
+        stopPx = normalized;
+      }
+
+      // Target absent mais stop connu → on le dérive d'un ratio 2:1.
+      // Ex: entry=0.46, stop=0.43 → risque=0.03, target=0.46+2*0.03=0.52.
+      if (entryPx != null && targetPx == null && stopPx != null && stopPx < entryPx) {
+        const risk = entryPx - stopPx;
+        targetPx = entryPx + 2 * risk;
+        console.log('[trading] $' + signalTicker + ' target derived (2:1 R:R) from stop: '
+          + targetPx.toFixed(4) + ' (entry=' + entryPx + ', stop=' + stopPx + ')');
+      }
+
+      if (entryPx != null && targetPx != null) {
         tradingEngine.onEntry({
           ticker: signalTicker.toUpperCase(),
-          entry_price: pricesForLog.entry_price,
-          target_price: pricesForLog.target_price,
+          entry_price: entryPx,
+          target_price: targetPx,
           author: authorName,
           raw_content: content,
           ts: message.createdAt.toISOString(),
         }).catch(err => console.error('[trading] onEntry error:', err.message));
       } else {
-        // Entry signal but missing entry or target price → engine requires both.
         console.log('[trading] $' + signalTicker + ' ENTRY signal skipped — missing '
-          + (pricesForLog.entry_price == null ? 'entry_price ' : '')
-          + (pricesForLog.target_price == null ? 'target_price' : '')
+          + (entryPx == null ? 'entry_price ' : '')
+          + (targetPx == null ? 'target_price' : '')
           + ' (content: ' + content.slice(0, 80) + ')');
       }
     }

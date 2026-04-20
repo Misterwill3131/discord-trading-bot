@@ -139,6 +139,16 @@ function classifySignal(content, customFilters, options) {
     return { type: 'entry', reason: 'Accepted', confidence: hasPrice ? 90 : 70, ticker };
   }
 
+  // 5b. Entrée implicite — présence d'un stop-loss avec un prix.
+  // Ex: "$GMEX .46$ s.l 43" n'a pas de mot d'entrée mais le SL prouve
+  // que le trader a ouvert une position. On capture aussi "sl X",
+  // "stop X", "stoploss X", "stop-loss X" avec un prix après.
+  const STOP_WITH_PRICE_RE = /(?:^|\s)(?:stop[-\s]?loss|stoploss|s\.?l|stop)\s+\$?(?:\d+(?:\.\d+)?|\.\d+)/i;
+  if (STOP_WITH_PRICE_RE.test(content)) {
+    const hasPrice = HAS_PRICE_RE.test(content);
+    return { type: 'entry', reason: 'Implicit entry (stop-loss)', confidence: hasPrice ? 75 : 60, ticker };
+  }
+
   // 6. Signal de sortie détecté (substring ou regex).
   if (includesAny(lower, EXIT_KEYWORDS) || matchesAnyRegex(lower, EXIT_REGEX)) {
     const hasPrice = HAS_PRICE_RE.test(content);

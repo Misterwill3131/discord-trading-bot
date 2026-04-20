@@ -26,6 +26,10 @@ const TICKER_IGNORE = new Set([
   'BY', 'FOR', 'OF', 'UP', 'OK',
 ]);
 
+// Pattern de nombre qui accepte : "0.46", ".46", "46", "46.5".
+// Utilisé comme fragment dans toutes les regex de prix.
+const NUM = '(?:\\d+(?:\\.\\d+)?|\\.\\d+)';
+
 // Retourne tous les prix extraits d'un message. `exit_price === target_price`
 // est conservé pour compat ascendante (ancien code qui lit `exit_price`).
 function extractPrices(content) {
@@ -40,7 +44,7 @@ function extractPrices(content) {
   let stop = null;
 
   // Priorité 1 — Ticker + range : "$TSLA 150.00-155.00" ou "NCT 2.60-4.06".
-  const rangeM = c.match(/(?:\$?[A-Z]{1,6}\s+)\$?(\d+(?:\.\d+)?)\s*[-\u2013]\s*\$?(\d+(?:\.\d+)?)/i);
+  const rangeM = c.match(new RegExp(`(?:\\$?[A-Z]{1,6}\\s+)\\$?(${NUM})\\s*[-\\u2013]\\s*\\$?(${NUM})`, 'i'));
   if (rangeM) {
     const a = parseFloat(rangeM[1]);
     const b = parseFloat(rangeM[2]);
@@ -52,7 +56,7 @@ function extractPrices(content) {
   // "3.43-4.32". On ancre au début et à la fin pour éviter de matcher
   // un range à l'intérieur d'une phrase.
   if (!entry) {
-    const standaloneRange = c.match(/^\s*\$?(\d+(?:\.\d+)?)\s*[-\u2013]\s*\$?(\d+(?:\.\d+)?)\s*$/);
+    const standaloneRange = c.match(new RegExp(`^\\s*\\$?(${NUM})\\s*[-\\u2013]\\s*\\$?(${NUM})\\s*$`));
     if (standaloneRange) {
       const a = parseFloat(standaloneRange[1]);
       const b = parseFloat(standaloneRange[2]);
@@ -63,38 +67,45 @@ function extractPrices(content) {
 
   // Priorité 2 — Mots-clés d'entrée.
   if (!entry) {
-    const em = c.match(/(?:in\s+at|entry|bought?|long\s+at|achat|entree)\s+\$?(\d+(?:\.\d+)?)/i);
+    const em = c.match(new RegExp(`(?:in\\s+at|entry|bought?|long\\s+at|achat|entree)\\s+\\$?(${NUM})`, 'i'));
     if (em) entry = parseFloat(em[1]);
   }
 
   // Priorité 2b — Format RF : "buy only above $X" ou "buy above $X".
-  // Le seuil "above" est le prix d'entrée (trigger breakout).
   if (!entry) {
-    const em = c.match(/buy\s+(?:only\s+)?above\s+\$?(\d+(?:\.\d+)?)/i);
+    const em = c.match(new RegExp(`buy\\s+(?:only\\s+)?above\\s+\\$?(${NUM})`, 'i'));
     if (em) entry = parseFloat(em[1]);
   }
 
   // Priorité 3 — Mots-clés de sortie/cible.
-  // Pour RF : "Targets $6.14/6.78/7.44" — on prend le PREMIER (TP1,
-  // le plus conservateur). La regex matche "Targets" (pluriel) aussi.
   if (!target) {
-    const xm = c.match(/(?:targets?|tp|out\s+at|exit\s+at|sold?\s+at|sortie|objectif)\s+\$?(\d+(?:\.\d+)?)/i);
+    const xm = c.match(new RegExp(`(?:targets?|tp|out\\s+at|exit\\s+at|sold?\\s+at|sortie|objectif)\\s+\\$?(${NUM})`, 'i'));
     if (xm) target = parseFloat(xm[1]);
   }
 
-  // Priorité 4 — Stop loss.
-  const sm = c.match(/(?:stop|sl|stoploss|stop[-\s]?loss)\s+\$?(\d+(?:\.\d+)?)/i);
+  // Priorité 4 — Stop loss. Reconnaît : "stop 43", "sl 43", "s.l 43",
+  // "stoploss 43", "stop loss 43", "stop-loss 43".
+  const sm = c.match(new RegExp(`(?:stop[-\\s]?loss|stoploss|s\\.?l|stop)\\s+\\$?(${NUM})`, 'i'));
   if (sm) stop = parseFloat(sm[1]);
 
   // Priorité 5 — Séparateurs "..." ou " to " : "2.50...3.50", "2.50 to 3.50".
   if (!entry || !target) {
-    const lm = c.match(/\$?(\d+(?:\.\d+)?)\s*(?:\.{2,}|\bto\b)\s*\$?(\d+(?:\.\d+)?)/i);
+    const lm = c.match(new RegExp(`\\$?(${NUM})\\s*(?:\\.{2,}|\\bto\\b)\\s*\\$?(${NUM})`, 'i'));
     if (lm) {
       const a = parseFloat(lm[1]);
       const b = parseFloat(lm[2]);
       if (!entry)  entry  = Math.min(a, b);
       if (!target) target = Math.max(a, b);
     }
+  }
+
+  // Priorité 6 — Ticker + prix isolé (format informel) : "$GMEX .46$" ou
+  // "$GMEX 0.46". N'applique ce fallback que si aucun entry n'a été trouvé
+  // par les priorités précédentes. `[^\d.]*` (exclut le point) pour ne pas
+  // manger le `.` de `.46`. `\$?` avant/après pour "$0.46" et "0.46$".
+  if (!entry) {
+    const im = c.match(new RegExp(`\\$[A-Z]{1,6}\\b[^\\d.]*\\$?(${NUM})\\$?`, 'i'));
+    if (im) entry = parseFloat(im[1]);
   }
 
   // Gain % calculé uniquement si on a les deux bornes et que l'entrée n'est pas nulle.

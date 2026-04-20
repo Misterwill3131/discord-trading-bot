@@ -49,10 +49,14 @@ function saveTradingConfig(partial) {
 
 function getSecrets() {
   return {
-    alpacaKeyId: process.env.ALPACA_KEY_ID || '',
-    alpacaSecretKey: process.env.ALPACA_SECRET_KEY || '',
+    alpacaKeyId: process.env.ALPACA_KEY_ID || '',       // deprecated, kept for back-compat
+    alpacaSecretKey: process.env.ALPACA_SECRET_KEY || '', // deprecated
     ibkrHost: process.env.IBKR_HOST || '127.0.0.1',
-    ibkrPort: parseInt(process.env.IBKR_PORT || '4002', 10),
+    // Port par défaut : 4004 (socat) si on tourne derrière l'image
+    // gnzsnz/ib-gateway. En connexion directe TWS/IB Gateway locale,
+    // utiliser 7497 (TWS paper), 7496 (TWS live), 4002 (IBGW paper),
+    // 4001 (IBGW live). Sur Railway avec gnzsnz, c'est 4004 paper.
+    ibkrPort: parseInt(process.env.IBKR_PORT || '4004', 10),
     ibkrClientId: parseInt(process.env.IBKR_CLIENT_ID || '1', 10),
   };
 }

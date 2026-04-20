@@ -46,6 +46,26 @@ const TICKER_IGNORE = new Set([
 // Utilisé comme fragment dans toutes les regex de prix.
 const NUM = '(?:\\d+(?:\\.\\d+)?|\\.\\d+)';
 
+// Nettoie les métadonnées Discord qui perturbent le parsing :
+//   - mentions de rôles/users/channels/emojis : <@123>, <@&123>, <#123>, <:name:123>, <a:name:123>
+//   - préfixe reply : "> *Replying to X [message](url)*\n"
+//   - liens discord : https://discord.com/channels/.../.../...
+// À appeler AVANT extractPrices / detectTicker pour éviter les faux positifs
+// sur des Discord IDs (18-19 chiffres) ou noms d'utilisateurs.
+function stripDiscordMeta(text) {
+  if (!text) return text;
+  return text
+    // Préfixe reply "> *Replying to ... [message](url)*"
+    .replace(/^>\s*\*?Replying to[^\n]*(?:\n|$)/im, '')
+    // Tags Discord (mentions, emojis, salons) : <@123>, <@!123>, <@&123>, <#123>, <:name:id>, <a:name:id>
+    .replace(/<[@#&!a]?:?[^>]+>/g, '')
+    // Liens discord.com
+    .replace(/https?:\/\/(?:www\.)?discord(?:app)?\.com\/\S+/gi, '')
+    // Espaces multiples collapse
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // Retourne tous les prix extraits d'un message. `exit_price === target_price`
 // est conservé pour compat ascendante (ancien code qui lit `exit_price`).
 function extractPrices(content) {
@@ -53,8 +73,10 @@ function extractPrices(content) {
     return { entry_price: null, target_price: null, stop_price: null, exit_price: null, gain_pct: null };
   }
 
-  // Normalise virgules → points (la regex \d+\.\d+ ne matche pas les virgules).
-  const c = content.replace(/,/g, '.');
+  // Nettoie les métadonnées Discord. Remplace virgule → point UNIQUEMENT
+  // dans les nombres (format EU "0,46") pour ne pas transformer
+  // "BULL, broke 7" en "BULL. broke 7" (le `.` casserait le parsing).
+  const c = stripDiscordMeta(content).replace(/(\d),(\d)/g, '$1.$2');
   let entry = null;
   let target = null;
   let stop = null;
@@ -115,12 +137,23 @@ function extractPrices(content) {
     }
   }
 
-  // Priorité 6 — Ticker + prix adjacent (format casual) : "$GMEX .46$",
-  // "GLND 5.2", "NVDA 140". Accepte le ticker avec ou sans `$` devant.
-  // `[^\d.]*` (exclut le point) pour ne pas manger le `.` de `.46`.
-  // `\$?` avant/après pour "$0.46" et "0.46$".
+  // Priorité 5b — Pattern "breaks X for Y" (breakout conditionnel).
+  // Ex: "scalping once it breaks 0.83 for 0.99" → entry=0.83, target=0.99.
+  if (!entry && !target) {
+    const bm = c.match(new RegExp(`breaks?\\s+\\$?(${NUM})\\s+(?:for|to)\\s+\\$?(${NUM})`, 'i'));
+    if (bm) {
+      entry  = parseFloat(bm[1]);
+      target = parseFloat(bm[2]);
+    }
+  }
+
+  // Priorité 6 — Ticker + prix "proche" (format casual) : "$GMEX .46$",
+  // "GLND 5.2", "$Fchl high risk .23". `\$?` avant/après pour "$0.46" et
+  // "0.46$". `$TICKER` est insensible à la casse (Discord tolère "$Fchl").
+  // Gap de 30 chars max pour capturer "$Fchl high risk .23" (11 chars) sans
+  // attraper des prix éloignés de 50+ chars dans une longue phrase.
   if (!entry) {
-    const im = c.match(new RegExp(`(?:\\$[A-Z]{1,6}|\\b[A-Z]{2,5})\\b[^\\d.]{0,10}\\$?(${NUM})\\$?`));
+    const im = c.match(new RegExp(`(?:\\$[A-Za-z]{1,6}|\\b[A-Z]{2,5})\\b[^\\d.]{0,30}\\$?(${NUM})\\$?`));
     if (im) entry = parseFloat(im[1]);
   }
 
@@ -142,16 +175,19 @@ function extractTicker(content) {
 }
 
 // Version recommandée : filtre les mots courts usuels via TICKER_IGNORE.
+// Strip les métadonnées Discord avant la détection pour éviter les faux
+// positifs sur les usernames mentionnés dans "> *Replying to X*".
 function detectTicker(content) {
   if (!content) return null;
+  const clean = stripDiscordMeta(content);
 
   // $TICKER a priorité absolue (format non-ambigu).
-  const m1 = content.match(/\$([A-Z]{1,6})/i);
+  const m1 = clean.match(/\$([A-Z]{1,6})/i);
   if (m1) return m1[1].toUpperCase();
 
   // Fallback : premier mot 2-5 lettres majuscules qui n'est pas dans
   // TICKER_IGNORE. Les mots 6 lettres sont exclus (trop de faux-positifs).
-  const m2 = content.match(/\b([A-Z]{2,5})\b/g);
+  const m2 = clean.match(/\b([A-Z]{2,5})\b/g);
   if (m2) {
     for (const t of m2) {
       if (!TICKER_IGNORE.has(t)) return t;
@@ -174,5 +210,6 @@ module.exports = {
   extractTicker,
   detectTicker,
   enrichContent,
+  stripDiscordMeta,
   TICKER_IGNORE,
 };

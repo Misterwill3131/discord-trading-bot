@@ -25,7 +25,7 @@
 const fetch = require('node-fetch');
 
 const { BLOCKED_AUTHORS, getDisplayName } = require('../utils/authors');
-const { extractPrices, extractTicker } = require('../utils/prices');
+const { extractPrices, extractTicker, stripDiscordMeta } = require('../utils/prices');
 const { classifySignal } = require('../filters/signal');
 const { getMessagesByTicker } = require('../db/sqlite');
 const { customFilters } = require('../state/custom-filters');
@@ -197,9 +197,14 @@ function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhoo
     // Pour la classification, on fusionne parent + reply : si quelqu'un
     // répond "3.43-4.32" à un message "$TSLA entry 3", la réponse seule
     // n'a ni ticker ni contexte — le parent donne les deux.
-    const classifyContent = isReply && parentContent
-      ? parentContent + ' ' + content
-      : content;
+    // Strip les métadonnées Discord (mentions, emojis, "Replying to X")
+    // avant la classification — évite que "Replying to ZZ" fasse détecter
+    // "ZZ" comme ticker au lieu du vrai ticker plus loin dans le message.
+    const cleanContent = stripDiscordMeta(content);
+    const cleanParent = isReply && parentContent ? stripDiscordMeta(parentContent) : null;
+    const classifyContent = cleanParent
+      ? cleanParent + ' ' + cleanContent
+      : cleanContent;
 
     const extra = {
       isReply,

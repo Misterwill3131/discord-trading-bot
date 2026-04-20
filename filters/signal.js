@@ -149,14 +149,15 @@ function classifySignal(content, customFilters, options) {
     return { type: 'entry', reason: 'Implicit entry (stop-loss)', confidence: hasPrice ? 75 : 60, ticker };
   }
 
-  // 5c. Entrée implicite — ticker + prix adjacent (format casual).
-  // Ex: "GLND 5.2!", "$NVDA 140 oversold", "AAPL 250 breakout".
-  // Max 10 chars non-digit/non-period entre le ticker et le prix, pour
-  // éviter "SPY was great last week at 420" (prix trop éloigné).
-  // `ticker` vient de detectTicker (TICKER_IGNORE filtré), garantissant
-  // qu'un mot courant comme "ALERT 250" ne passe pas.
+  // 5c. Entrée implicite — ticker + un prix dans la suite du message.
+  // Ex: "GLND 5.2!", "$NVDA 140 oversold", "$Fchl high risk .23".
+  // `ticker` vient de detectTicker (TICKER_IGNORE filtré + Discord meta
+  // strippée), garantissant qu'un mot courant ou un username en "Replying
+  // to X" ne déclenche pas. 30 chars max entre ticker et prix pour
+  // capturer du texte court entre les deux mais pas un prix isolé à 50+
+  // chars de distance.
   if (ticker) {
-    const TICKER_ADJACENT_PRICE_RE = /(?:\$[A-Z]{1,6}|\b[A-Z]{2,5})\b[^\d.a-z\n]{0,10}\$?(?:\d+(?:\.\d+)?|\.\d+)/;
+    const TICKER_ADJACENT_PRICE_RE = /(?:\$[A-Za-z]{1,6}|\b[A-Z]{2,5})\b[^\d.]{0,30}\$?(?:\d+(?:\.\d+)?|\.\d+)/;
     if (TICKER_ADJACENT_PRICE_RE.test(content)) {
       return { type: 'entry', reason: 'Implicit entry (ticker+price)', confidence: 55, ticker };
     }

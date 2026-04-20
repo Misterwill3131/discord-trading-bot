@@ -188,6 +188,17 @@ class IBKRBroker extends EventEmitter {
       if (tag === 'TotalCashValue') this._account.cash = parseFloat(value);
     });
     this.api.reqAccountSummary(1, 'All', 'NetLiquidation,TotalCashValue');
+
+    // Compte paper sans abonnement live → forcer le flux DELAYED (gratuit,
+    // ~15-20min de retard). Sans ce call, IBKR peut silencieusement ignorer
+    // les requêtes historiques sur certains tickers → timeout.
+    // 1=LIVE (nécessite abonnement), 2=FROZEN, 3=DELAYED, 4=DELAYED_FROZEN.
+    try {
+      this.api.reqMarketDataType(3);
+      console.log('[ibkr] market data type set to DELAYED (paper account)');
+    } catch (err) {
+      console.error('[ibkr] reqMarketDataType failed:', err.message);
+    }
   }
 
   _id() { return this._nextId++; }

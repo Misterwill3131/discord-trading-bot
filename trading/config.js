@@ -23,6 +23,14 @@ const DEFAULTS = Object.freeze({
   limitOrderTimeoutMin: 30,
   authorWhitelist: [],
   tfMinutes: 5,
+  // Stratégie de prise de profit :
+  //   'trail-only' — pas d'ordre TP fixe. Sortie uniquement via trailing
+  //                  stop (qui monte avec le prix) → on laisse courir
+  //                  les gains. Défaut.
+  //   'fixed'      — ordre limit TP au target_price du signal. Ferme
+  //                  dès que le target est atteint, même si le prix
+  //                  pourrait continuer à monter.
+  takeProfitMode: 'trail-only',
 });
 
 function loadTradingConfig() {

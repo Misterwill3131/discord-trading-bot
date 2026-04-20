@@ -48,7 +48,7 @@ class PaperBroker extends EventEmitter {
 
   async placeBracket({ ticker, qty, orderType, entryPrice, tpPrice, trailPct }) {
     const parentId = this._id();
-    const tpId = this._id();
+    const tpId = tpPrice != null ? this._id() : null;
     const slId = this._id();
     const current = await this._lastPrice(ticker);
     const fillPrice = orderType === 'market' ? current : entryPrice;
@@ -61,7 +61,7 @@ class PaperBroker extends EventEmitter {
     };
     this.positions.set(parentId, pos);
     this.orders.set(parentId, { parentId, kind: 'parent', ticker, qty, status: 'PendingSubmit' });
-    this.orders.set(tpId,     { parentId, kind: 'tp',     ticker, qty, status: 'PendingSubmit' });
+    if (tpId) this.orders.set(tpId, { parentId, kind: 'tp', ticker, qty, status: 'PendingSubmit' });
     this.orders.set(slId,     { parentId, kind: 'sl',     ticker, qty, status: 'PendingSubmit' });
 
     const shouldFill = orderType === 'market'
@@ -86,7 +86,7 @@ class PaperBroker extends EventEmitter {
       if (pos.ticker !== ticker || pos.status === 'closed') continue;
       pos.status = 'closed';
       const exitPrice = await this._lastPrice(ticker);
-      this.orders.get(pos.tpId).status = 'Cancelled';
+      if (pos.tpId) this.orders.get(pos.tpId).status = 'Cancelled';
       this.orders.get(pos.slId).status = 'Cancelled';
       setImmediate(() => {
         this.emit('orderStatus', {
@@ -182,7 +182,7 @@ class IBKRBroker extends EventEmitter {
     const { OrderAction, OrderType } = this._ib;
     const contract = this._stockContract(ticker);
     const parentId = this._id();
-    const tpId = this._id();
+    const tpId = tpPrice != null ? this._id() : null;
     const slId = this._id();
 
     const parent = {
@@ -194,16 +194,7 @@ class IBKRBroker extends EventEmitter {
     };
     if (orderType !== 'market') parent.lmtPrice = entryPrice;
 
-    const tp = {
-      action: OrderAction.SELL,
-      totalQuantity: qty,
-      orderType: OrderType.LMT,
-      lmtPrice: tpPrice,
-      parentId,
-      orderId: tpId,
-      transmit: false,
-    };
-
+    // trailing stop — dernier child, transmit:true pour trigger le bracket.
     const sl = {
       action: OrderAction.SELL,
       totalQuantity: qty,
@@ -217,10 +208,28 @@ class IBKRBroker extends EventEmitter {
     this._ordersByParent.set(parentId, { ticker, qty, tpId, slId });
 
     this.api.placeOrder(parentId, contract, parent);
-    this.api.placeOrder(tpId, contract, tp);
+
+    // TP optionnel : si tpPrice fourni, place l'ordre limit entre parent et SL.
+    if (tpId) {
+      const tp = {
+        action: OrderAction.SELL,
+        totalQuantity: qty,
+        orderType: OrderType.LMT,
+        lmtPrice: tpPrice,
+        parentId,
+        orderId: tpId,
+        transmit: false,
+      };
+      this.api.placeOrder(tpId, contract, tp);
+    }
+
     this.api.placeOrder(slId, contract, sl);
 
-    return { parentId: String(parentId), tpId: String(tpId), slId: String(slId) };
+    return {
+      parentId: String(parentId),
+      tpId: tpId != null ? String(tpId) : null,
+      slId: String(slId),
+    };
   }
 
   async closePosition(ticker, qty) {

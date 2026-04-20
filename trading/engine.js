@@ -118,6 +118,11 @@ function createEngine({ config, marketData, broker, now = () => new Date(), logg
       raw_signal: JSON.stringify(signal),
     });
 
+    // takeProfitMode : 'trail-only' (défaut) n'envoie pas d'ordre TP fixe,
+    // la sortie se fait uniquement via le trailing stop. 'fixed' place un
+    // ordre limit au target_price du signal (comportement pré-2026-04-20).
+    const useFixedTP = c.takeProfitMode === 'fixed';
+
     let orderResult;
     try {
       orderResult = await broker.placeBracket({
@@ -125,7 +130,7 @@ function createEngine({ config, marketData, broker, now = () => new Date(), logg
         qty,
         orderType,
         entryPrice: signal.entry_price,
-        tpPrice: signal.target_price,
+        tpPrice: useFixedTP ? signal.target_price : null,
         trailPct: c.trailingStopPct,
       });
     } catch (err) {

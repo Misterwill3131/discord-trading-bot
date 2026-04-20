@@ -78,6 +78,7 @@ function renderTradingPage() {
       <label>Risk per trade (%)</label><input type="number" step="0.05" name="riskPerTradePct" />
       <label>Tolerance (%)</label><input type="number" step="0.1" name="tolerancePct" />
       <label>Trailing stop (%)</label><input type="number" step="0.1" name="trailingStopPct" />
+      <label>Take profit mode</label><select name="takeProfitMode"><option value="trail-only">trail-only (let winners run)</option><option value="fixed">fixed (close at signal target)</option></select>
       <label>Max concurrent positions</label><input type="number" step="1" name="maxConcurrentPositions" />
       <label>Limit order timeout (min)</label><input type="number" step="1" name="limitOrderTimeoutMin" />
       <label>Timeframe (minutes)</label><input type="number" step="1" name="tfMinutes" />
@@ -176,6 +177,7 @@ function renderTradingPage() {
     form.riskPerTradePct.value = cfg.riskPerTradePct;
     form.tolerancePct.value = cfg.tolerancePct;
     form.trailingStopPct.value = cfg.trailingStopPct;
+    form.takeProfitMode.value = cfg.takeProfitMode || 'trail-only';
     form.maxConcurrentPositions.value = cfg.maxConcurrentPositions;
     form.limitOrderTimeoutMin.value = cfg.limitOrderTimeoutMin;
     form.tfMinutes.value = cfg.tfMinutes;
@@ -191,6 +193,7 @@ function renderTradingPage() {
       riskPerTradePct: parseFloat(form.riskPerTradePct.value),
       tolerancePct: parseFloat(form.tolerancePct.value),
       trailingStopPct: parseFloat(form.trailingStopPct.value),
+      takeProfitMode: form.takeProfitMode.value,
       maxConcurrentPositions: parseInt(form.maxConcurrentPositions.value, 10),
       limitOrderTimeoutMin: parseInt(form.limitOrderTimeoutMin.value, 10),
       tfMinutes: parseInt(form.tfMinutes.value, 10),

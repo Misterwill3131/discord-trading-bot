@@ -21,12 +21,14 @@ function mockConfig(overrides = {}) {
     riskPerTradePct: 1.0,
     tolerancePct: 2.0,
     trailingStopPct: 7.0,
-    // High cap in tests so max_positions doesn't mask other assertions —
-    // the production default is 5, tested explicitly elsewhere if needed.
+    // High cap in tests so max_positions doesn't mask other assertions.
     maxConcurrentPositions: 100,
     limitOrderTimeoutMin: 30,
     authorWhitelist: [],
     tfMinutes: 5,
+    // Tests pre-date takeProfitMode and expect tpPrice forwarded to broker.
+    // Production default is 'trail-only'; use 'fixed' here for back-compat.
+    takeProfitMode: 'fixed',
   }, overrides);
 }
 

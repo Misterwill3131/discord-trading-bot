@@ -48,7 +48,7 @@ function registerTradingRoutes(app, requireAuth, { tradingEngine, tradingBroker 
     const allowedKeys = [
       'tradingEnabled', 'mode', 'riskPerTradePct', 'tolerancePct',
       'trailingStopPct', 'maxConcurrentPositions', 'limitOrderTimeoutMin',
-      'authorWhitelist', 'tfMinutes',
+      'authorWhitelist', 'tfMinutes', 'takeProfitMode',
     ];
     const partial = {};
     for (const k of allowedKeys) {

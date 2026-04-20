@@ -202,11 +202,16 @@ function startScheduler({ client, tradingChannel }) {
         sendDailySummary(client, tradingChannel);
       }
 
-      // 20:00 EDT → résumé profits. EDT = UTC-4 (été) ou UTC-5 (hiver),
-      // donc 20:00 EDT = 00:00 UTC (été) ou 01:00 UTC (hiver).
+      // 20:00 EDT → résumé profits (lundi-vendredi uniquement, fuseau NY).
+      // Le weekend on skip : pas de marché US ouvert donc pas de profits à
+      // rapporter. EDT = UTC-4 (été) ou UTC-5 (hiver), donc 20:00 EDT =
+      // 00:00 UTC (été) ou 01:00 UTC (hiver). getDay() en NY :
+      // 0=dim, 6=sam, 1-5=jours ouvrés.
       const utcH = now.getUTCHours();
       const utcM = now.getUTCMinutes();
-      if ((utcH === 0 || utcH === 1) && utcM === 0
+      const nyDay = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' })).getDay();
+      const isWeekday = nyDay >= 1 && nyDay <= 5;
+      if (isWeekday && (utcH === 0 || utcH === 1) && utcM === 0
           && profitCounter.getLastSummaryDate() !== todayStr) {
         profitCounter.setLastSummaryDate(todayStr);
         profitCounter.sendDailyProfitSummary();

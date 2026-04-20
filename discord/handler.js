@@ -246,19 +246,23 @@ function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhoo
     }
 
     // ── Trading engine hook (entries: classifier said 'entry' + full signal) ──
-    if (tradingEngine
-        && filterType === 'entry'
-        && signalTicker
-        && pricesForLog.entry_price != null
-        && pricesForLog.target_price != null) {
-      tradingEngine.onEntry({
-        ticker: signalTicker.toUpperCase(),
-        entry_price: pricesForLog.entry_price,
-        target_price: pricesForLog.target_price,
-        author: authorName,
-        raw_content: content,
-        ts: message.createdAt.toISOString(),
-      }).catch(err => console.error('[trading] onEntry error:', err.message));
+    if (tradingEngine && filterType === 'entry' && signalTicker) {
+      if (pricesForLog.entry_price != null && pricesForLog.target_price != null) {
+        tradingEngine.onEntry({
+          ticker: signalTicker.toUpperCase(),
+          entry_price: pricesForLog.entry_price,
+          target_price: pricesForLog.target_price,
+          author: authorName,
+          raw_content: content,
+          ts: message.createdAt.toISOString(),
+        }).catch(err => console.error('[trading] onEntry error:', err.message));
+      } else {
+        // Entry signal but missing entry or target price → engine requires both.
+        console.log('[trading] $' + signalTicker + ' ENTRY signal skipped — missing '
+          + (pricesForLog.entry_price == null ? 'entry_price ' : '')
+          + (pricesForLog.target_price == null ? 'target_price' : '')
+          + ' (content: ' + content.slice(0, 80) + ')');
+      }
     }
 
     // ── Trading engine hook (exits: classifier said 'exit' + ticker) ──

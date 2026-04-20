@@ -41,14 +41,18 @@ function createEngine({ config, marketData, broker, now = () => new Date(), logg
 
   async function onEntry(signal) {
     const c = cfg();
+    const tag = '[trading] $' + signal.ticker + ' (by ' + signal.author + ')';
+
+    logger.log(tag, 'received signal: entry=' + signal.entry_price + ' target=' + signal.target_price);
 
     if (!c.tradingEnabled) {
-      logger.log('[trading] skip disabled', signal.ticker);
+      logger.log(tag, 'SKIP: tradingEnabled=false — enable in /trading → Config');
       return { skipped: 'disabled' };
     }
 
     if (c.authorWhitelist && c.authorWhitelist.length > 0) {
       if (!c.authorWhitelist.includes(signal.author)) {
+        logger.log(tag, 'SKIP: author not in whitelist (' + c.authorWhitelist.join(',') + ')');
         return { skipped: 'not_whitelisted' };
       }
     }
@@ -57,21 +61,32 @@ function createEngine({ config, marketData, broker, now = () => new Date(), logg
     // would otherwise mislabel as max_positions if many positions exist.
     const existing = getPositionByTickerAndAuthor(signal.ticker, signal.author);
     if (existing) {
+      logger.log(tag, 'SKIP: already held (position id=' + existing.id + ', status=' + existing.status + ')');
       return { skipped: 'already_held' };
     }
 
     const openCount = countOpenPositions();
     if (openCount >= c.maxConcurrentPositions) {
+      logger.log(tag, 'SKIP: max positions reached (' + openCount + '/' + c.maxConcurrentPositions + ')');
       return { skipped: 'max_positions' };
     }
 
     const tf = (c.tfMinutes || 5) + 'Min';
-    const bars = await marketData.fetchCandles(signal.ticker, tf, 50);
+    let bars;
+    try {
+      bars = await marketData.fetchCandles(signal.ticker, tf, 50);
+    } catch (err) {
+      logger.error(tag, 'SKIP: market data fetch failed —', err.message);
+      return { skipped: 'marketdata_error', detail: err.message };
+    }
     const { rsi, ema20, ema9, lastPrice } = computeIndicators(bars);
     if (rsi == null || ema20 == null || ema9 == null || lastPrice == null) {
+      logger.log(tag, 'SKIP: not enough candle data (got ' + (bars && bars.length) + ' bars, need 20+ for EMA20)');
       return { skipped: 'not_enough_data' };
     }
     if (rsi <= 50 || lastPrice <= ema20 || lastPrice <= ema9) {
+      logger.log(tag, 'SKIP: technical filter failed — rsi=' + rsi.toFixed(1)
+        + ' last=' + lastPrice.toFixed(2) + ' ema20=' + ema20.toFixed(2) + ' ema9=' + ema9.toFixed(2));
       return { skipped: 'technical', detail: { rsi, ema20, ema9, lastPrice } };
     }
 
@@ -83,8 +98,13 @@ function createEngine({ config, marketData, broker, now = () => new Date(), logg
     const slDistancePerShare = signal.entry_price * (c.trailingStopPct / 100);
     const qty = Math.floor(riskDollars / slDistancePerShare);
     if (qty < 1) {
+      logger.log(tag, 'SKIP: qty<1 — risk$=' + riskDollars.toFixed(2)
+        + ' slDistance=' + slDistancePerShare.toFixed(2) + ' (equity=' + account.equity + ')');
       return { skipped: 'qty_too_small', detail: { riskDollars, slDistancePerShare } };
     }
+
+    logger.log(tag, 'PLACE ' + orderType.toUpperCase() + ' bracket qty=' + qty
+      + ' entry=' + signal.entry_price + ' tp=' + signal.target_price + ' trail=' + c.trailingStopPct + '%');
 
     const slPrice = signal.entry_price * (1 - c.trailingStopPct / 100);
 

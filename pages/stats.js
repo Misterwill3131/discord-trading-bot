@@ -288,10 +288,24 @@ ${sidebarHTML('/stats')}
   // Pourquoi FIFO : permet de gérer "scaling in" (plusieurs entries avant un
   // exit) sans en perdre — chaque exit ferme la plus ancienne entry ouverte.
   //
-  // Pour les exits sans prix direct (ex: reply RF "all targets done"), on
-  // utilise deriveExitPrice pour remonter au prix de l entry correspondant.
+  // Hiérarchie de calcul du P&L pour un exit (premier disponible gagne) :
+  //   1. exit.exit_gain_pct         — annonce directe ("TICKER +29%", "up 8%")
+  //                                    Ne requiert NI entry_price NI exit_price.
+  //   2. entry.entry_price + deriveExitPrice(entry, exit)
+  //                                    Calcul classique (exitPrice - entryPx) / entryPx.
+  //   3. Backfill entry_price : si l entry matchée n a pas de prix mais qu un
+  //      message ANTÉRIEUR du même (auteur canonique, ticker) en avait un,
+  //      on reprend ce prix. Couvre les cas "Scalping BBGI" (entry sans prix)
+  //      qui suivent une mention antérieure "$BBGI 0.86" du même trader.
+  //
+  // On push TOUTES les entries (même sans prix) dans la queue FIFO — sinon
+  // un exit qui arrive derrière n aurait rien à apparier. Le backfill se
+  // fait au moment du match, pas à l insertion.
   function computePairs(msgs) {
     var sorted = msgs.slice().sort(function(a, b) { return new Date(a.ts) - new Date(b.ts); });
+    // lastPriceByKey : dernier entry_price observé par (auteur|ticker) — sert
+    // de source de backfill pour les entries postérieures sans prix.
+    var lastPriceByKey = {};
     var open = {}; // key = "author|ticker" → array of entry msgs (queue)
     var pairs = [];
     var unpaired = [];
@@ -300,28 +314,52 @@ ${sidebarHTML('/stats')}
       if (!m.ticker || !m.passed) return;
       var auth = canonical(m.author);
       var key = auth + '|' + m.ticker;
-      if (m.type === 'entry' && m.entry_price != null) {
+      if (m.type === 'entry') {
+        if (m.entry_price != null) lastPriceByKey[key] = m.entry_price;
         if (!open[key]) open[key] = [];
         open[key].push(m);
       } else if (m.type === 'exit') {
         var q = open[key];
         if (q && q.length) {
           var entry = q.shift();
+          var entryPrice = entry.entry_price != null ? entry.entry_price : lastPriceByKey[key];
           var exitPrice = deriveExitPrice(entry, m);
-          if (exitPrice != null && entry.entry_price != null) {
-            var pnl = (exitPrice - entry.entry_price) / entry.entry_price * 100;
-            var dur = new Date(m.ts) - new Date(entry.ts);
+          var dur = new Date(m.ts) - new Date(entry.ts);
+          var pnl = null;
+
+          if (m.exit_gain_pct != null) {
+            // Priorité 1 — l auteur annonce son P&L réalisé directement.
+            pnl = m.exit_gain_pct;
+          } else if (exitPrice != null && entryPrice != null) {
+            // Priorité 2 — calcul classique à partir des prix.
+            pnl = (exitPrice - entryPrice) / entryPrice * 100;
+          }
+
+          if (pnl != null) {
             pairs.push({
               author: auth, ticker: m.ticker,
               entryMsg: entry, exitMsg: m,
-              entryPrice: entry.entry_price, exitPrice: exitPrice,
+              entryPrice: entryPrice != null ? entryPrice : null,
+              exitPrice: exitPrice != null ? exitPrice : null,
               pnlPct: pnl, durationMs: dur,
             });
           }
-          // exitPrice non dérivable : entry clôturée mais P&L inconnu.
-          // Non comptée dans les stats P&L (mais elle l est dans closure rate).
+          // Sinon entry clôturée mais P&L inconnu — non comptée ici
+          // (reste visible dans le taux de clôture).
+        } else if (m.exit_gain_pct != null) {
+          // Exit orphelin (pas d entry dans la fenêtre) mais avec un P&L
+          // annoncé directement par l auteur. On compte quand même — le
+          // pourcentage vient du trader lui-même, pas d un calcul. Durée
+          // non estimable sans entry : on utilise 0 (filtré côté moyenne
+          // si on veut plus tard distinguer "paire FIFO" de "exit solo").
+          pairs.push({
+            author: auth, ticker: m.ticker,
+            entryMsg: null, exitMsg: m,
+            entryPrice: null, exitPrice: null,
+            pnlPct: m.exit_gain_pct, durationMs: 0,
+          });
         }
-        // exit sans entry matchée : probablement hors période — ignoré
+        // exit orphelin sans P&L annoncé : ignoré (pas de données pour stats)
       }
     });
     Object.keys(open).forEach(function(k) { open[k].forEach(function(e) { unpaired.push(e); }); });
@@ -343,19 +381,24 @@ ${sidebarHTML('/stats')}
   function pnlClass(v) { return v > 0 ? 'pnl-pos' : v < 0 ? 'pnl-neg' : 'pnl-zero'; }
   function pnlFmt(v) { return (v > 0 ? '+' : '') + v.toFixed(1) + '%'; }
 
-  // Regroupe les paires par auteur canonique → { total, avgPnl, avgDur, pairs }
+  // Regroupe les paires par auteur canonique → { count, avgPnl, avgDur, pairs }
+  // durCount / sumDur excluent les exits orphelins (pas d entry) car leur
+  // durationMs=0 n a pas de sens statistique. Le P&L, lui, est toujours valide.
   function pairsByAuthor(pairs) {
     var by = {};
     pairs.forEach(function(p) {
-      if (!by[p.author]) by[p.author] = { count: 0, sumPnl: 0, sumDur: 0, pairs: [] };
+      if (!by[p.author]) by[p.author] = { count: 0, durCount: 0, sumPnl: 0, sumDur: 0, pairs: [] };
       by[p.author].count++;
       by[p.author].sumPnl += p.pnlPct;
-      by[p.author].sumDur += p.durationMs;
+      if (p.entryMsg != null) {
+        by[p.author].durCount++;
+        by[p.author].sumDur += p.durationMs;
+      }
       by[p.author].pairs.push(p);
     });
     Object.keys(by).forEach(function(a) {
       by[a].avgPnl = by[a].sumPnl / by[a].count;
-      by[a].avgDur = by[a].sumDur / by[a].count;
+      by[a].avgDur = by[a].durCount > 0 ? by[a].sumDur / by[a].durCount : null;
     });
     return by;
   }
@@ -384,18 +427,25 @@ ${sidebarHTML('/stats')}
   function renderAvgDuration(pairs, unpaired) {
     var el = document.getElementById('avg-duration');
     var sub = document.getElementById('avg-duration-sub');
-    if (!pairs.length) {
+    // Exclut les exits orphelins (entryMsg = null, durationMs = 0 par
+    // convention) : leur "durée" n a pas de sens sans entry appariée.
+    var timed = pairs.filter(function(p) { return p.entryMsg != null; });
+    if (!timed.length) {
       el.textContent = '—';
-      sub.textContent = 'Aucune paire entry→exit' + (unpaired.length ? ' (' + unpaired.length + ' entries encore ouvertes)' : '');
+      var orphans = pairs.length - timed.length;
+      var parts = [];
+      if (orphans > 0) parts.push(orphans + ' exit' + (orphans > 1 ? 's' : '') + ' sans entry appariée');
+      if (unpaired.length) parts.push(unpaired.length + ' entries encore ouvertes');
+      sub.textContent = parts.length ? parts.join(' • ') : 'Aucune paire entry→exit';
       return;
     }
-    var sorted = pairs.slice().sort(function(a, b) { return a.durationMs - b.durationMs; });
-    var sum = pairs.reduce(function(acc, p) { return acc + p.durationMs; }, 0);
-    var avg = sum / pairs.length;
+    var sorted = timed.slice().sort(function(a, b) { return a.durationMs - b.durationMs; });
+    var sum = timed.reduce(function(acc, p) { return acc + p.durationMs; }, 0);
+    var avg = sum / timed.length;
     var med = sorted[Math.floor(sorted.length / 2)].durationMs;
     el.textContent = formatDuration(avg);
     sub.textContent = 'médiane ' + formatDuration(med)
-      + ' • ' + pairs.length + ' paires'
+      + ' • ' + timed.length + ' paires'
       + (unpaired.length ? ' • ' + unpaired.length + ' ouvertes' : '');
   }
 

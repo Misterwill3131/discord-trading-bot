@@ -84,3 +84,38 @@ test('createEmailNotifier no-ops when from is missing', async () => {
   await notifier('📥 **ENTRY** $AAPL');
   assert.strictEqual(fetch.calls.length, 0);
 });
+
+function makeCapturingLogger() {
+  const errors = [];
+  return {
+    errors,
+    error: (...args) => errors.push(args),
+    log: () => {},
+    warn: () => {},
+  };
+}
+
+test('createEmailNotifier logs and swallows network errors', async () => {
+  const logger = makeCapturingLogger();
+  const fetch = async () => { throw new Error('ECONNREFUSED'); };
+  const notifier = createEmailNotifier({
+    apiKey: 'k', to: 't', from: 'f', fetch, logger,
+  });
+  // Must not throw.
+  await notifier('📥 **ENTRY** $AAPL');
+  assert.strictEqual(logger.errors.length, 1);
+  assert.ok(String(logger.errors[0]).includes('ECONNREFUSED'));
+});
+
+test('createEmailNotifier logs and swallows non-2xx responses', async () => {
+  const logger = makeCapturingLogger();
+  const fetch = makeMockFetch({ ok: false, status: 401, body: 'unauthorized' });
+  const notifier = createEmailNotifier({
+    apiKey: 'k', to: 't', from: 'f', fetch, logger,
+  });
+  await notifier('📥 **ENTRY** $AAPL');
+  assert.strictEqual(logger.errors.length, 1);
+  const logged = String(logger.errors[0]);
+  assert.ok(logged.includes('401'));
+  assert.ok(logged.includes('unauthorized'));
+});

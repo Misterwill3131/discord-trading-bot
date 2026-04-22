@@ -57,3 +57,30 @@ test('createEmailNotifier does NOT call fetch for cancel messages', async () => 
   await notifier('❌ **CANCEL** $AAPL (limit timeout 30min)');
   assert.strictEqual(fetch.calls.length, 0);
 });
+
+test('createEmailNotifier no-ops when apiKey is missing', async () => {
+  const fetch = makeMockFetch();
+  const notifier = createEmailNotifier({
+    apiKey: '', to: 't', from: 'f', fetch,
+  });
+  await notifier('📥 **ENTRY** $AAPL');
+  assert.strictEqual(fetch.calls.length, 0);
+});
+
+test('createEmailNotifier no-ops when to is missing', async () => {
+  const fetch = makeMockFetch();
+  const notifier = createEmailNotifier({
+    apiKey: 'k', to: undefined, from: 'f', fetch,
+  });
+  await notifier('📥 **ENTRY** $AAPL');
+  assert.strictEqual(fetch.calls.length, 0);
+});
+
+test('createEmailNotifier no-ops when from is missing', async () => {
+  const fetch = makeMockFetch();
+  const notifier = createEmailNotifier({
+    apiKey: 'k', to: 't', from: null, fetch,
+  });
+  await notifier('📥 **ENTRY** $AAPL');
+  assert.strictEqual(fetch.calls.length, 0);
+});

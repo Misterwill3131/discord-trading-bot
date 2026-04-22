@@ -5,6 +5,9 @@ function stripBold(s) {
 }
 
 function createEmailNotifier({ apiKey, to, from, logger = console, fetch = nodeFetch }) {
+  if (!apiKey || !to || !from) {
+    return async () => {};
+  }
   return async function sendEmailAlert(message) {
     if (typeof message !== 'string' || !message.startsWith('📥')) return;
     const cleaned = stripBold(message);

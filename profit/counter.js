@@ -167,11 +167,11 @@ function setLastSummaryDate(d) { lastProfitSummaryDate = d; }
 // Incrémente le compteur du jour en parsant `content` pour y trouver
 // des ranges de prix. Retourne le nouveau total. Mutation silencieuse —
 // l'appelant décide s'il poste quelque chose sur Discord.
-async function addProfitMessage(content) {
+async function addProfitMessage(content, forceCount) {
   const dateKey = todayKey();
   const data = loadProfitData(dateKey);
   if (!data.milestones) data.milestones = [];
-  const entries = countProfitEntries(content);
+  const entries = forceCount !== undefined ? forceCount : countProfitEntries(content);
   data.count = (data.count || 0) + entries;
   saveProfitData(dateKey, data);
   console.log('[profits] +' + entries + ' profit(s) — total: ' + data.count);

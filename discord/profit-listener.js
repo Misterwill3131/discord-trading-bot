@@ -89,7 +89,10 @@ function registerProfitListener(client, { profitsChannelId }) {
     console.log('[profits] ' + reason + ' in #profits from ' + message.author.username + ' → counted=' + counted);
 
     if (counted) {
-      await profitCounter.addProfitMessage(content);
+      // Calculer le nombre exact de profits selon la raison détectée
+      // price ranges → count chaque range, sinon → 1 (image ou ticker seul)
+      const profitCount = reason === 'price range(s)' ? textCount : 1;
+      await profitCounter.addProfitMessage(content, profitCount);
     }
   });
 }

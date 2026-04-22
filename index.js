@@ -50,6 +50,7 @@ const { createMarketData } = require('./trading/marketdata');
 const { createBroker } = require('./trading/broker');
 const { createEngine: createTradingEngine } = require('./trading/engine');
 const { registerTradingRoutes } = require('./routes/trading');
+const { createEmailNotifier } = require('./notifications/email');
 
 // ── Configuration env ──────────────────────────────────────────────
 const DISCORD_TOKEN      = process.env.DISCORD_TOKEN;
@@ -61,6 +62,11 @@ const NEWS_CHANNEL_ID    = process.env.NEWS_CHANNEL_ID || '';
 // Doit être un CHANNEL ID (pas un guild ID). Le bot doit être invité
 // dans ce serveur avec la permission "Send Messages".
 const TRADING_ALERTS_CHANNEL_ID = process.env.TRADING_ALERTS_CHANNEL_ID || '';
+// Alertes email via Resend (optionnel). Si l'une des 3 vars manque,
+// sendEmailAlert est un no-op silencieux — pas d'erreur, pas de fetch.
+const RESEND_API_KEY    = process.env.RESEND_API_KEY || '';
+const ALERT_EMAIL_TO    = process.env.ALERT_EMAIL_TO || '';
+const ALERT_EMAIL_FROM  = process.env.ALERT_EMAIL_FROM || '';
 const PORT               = process.env.PORT || 3000;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
@@ -138,11 +144,24 @@ async function sendTradingAlert(message) {
   }
 }
 
+const sendEmailAlert = createEmailNotifier({
+  apiKey: RESEND_API_KEY,
+  to:     ALERT_EMAIL_TO,
+  from:   ALERT_EMAIL_FROM,
+});
+
+async function notifyAll(message) {
+  await Promise.allSettled([
+    sendTradingAlert(message),
+    sendEmailAlert(message),
+  ]);
+}
+
 const tradingEngine = createTradingEngine({
   config: loadTradingConfig,     // function — re-read each call
   marketData: tradingMarketData,
   broker: tradingBroker,
-  notifier: sendTradingAlert,
+  notifier: notifyAll,
 });
 
 // Wire broker events → engine.

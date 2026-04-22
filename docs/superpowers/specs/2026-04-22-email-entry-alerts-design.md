@@ -49,7 +49,7 @@ engine.notify(msg)─>│  combined notifier   │
 
 **`notifications/email.js` (nouveau)**
 
-Fichier unique, ~40 lignes, pas de dépendance externe (utilise `fetch` natif Node 18+).
+Fichier unique, ~40 lignes. Utilise `node-fetch@2` (déjà dans les deps, utilisé dans `routes/images.js`, `news/poller.js`, `discord/handler.js`) pour rester cohérent avec le reste du projet — pas d'ajout de package.
 
 Export :
 
@@ -110,9 +110,10 @@ Les deux appels sont awaités mais le wrapper n'écrase jamais une erreur de l'a
 
 ### Format email
 
-- **Subject :** 1ère ligne du message, avec les `**` retirés. Exemple : `📥 MARKET ENTRY $AAPL`
-- **Body (text) :** message complet tel qu'envoyé à Discord, markdown `**` retiré (optionnel — Resend affiche le texte brut de toute façon). Les `•` et `\n` sont préservés.
+- **Subject :** 1ère ligne du message avec les `**` retirés. Exemple : `📥 MARKET ENTRY $AAPL`
+- **Body (text) :** message complet avec les `**` retirés partout (les `•` et `\n` préservés). Le résultat est lisible en plain text.
 - **Pas de HTML.** Plain text suffit, robuste aux clients email.
+- Helper interne `stripBold(s) = s.replace(/\*\*/g, '')` — 1 ligne, pas de lib.
 
 ### Configuration (env vars)
 
@@ -142,7 +143,7 @@ Nouveau fichier `notifications/email.test.js` utilisant node:test (cohérent ave
 
 Scénarios :
 
-1. **Happy path** : `createEmailNotifier({apiKey, to, from})` avec mock `fetch` → envoie `'📥 ENTRY $AAPL\nfoo'` → vérifie que `fetch` est appelé avec `https://api.resend.com/emails`, header `Authorization: Bearer <apiKey>`, body `{from, to, subject: '📥 ENTRY $AAPL', text: '📥 ENTRY $AAPL\nfoo'}`.
+1. **Happy path** : `createEmailNotifier({apiKey, to, from, fetch: mockFetch})` (fetch injecté pour le test) → envoie `'📥 **ENTRY** $AAPL\n• foo'` → vérifie que `mockFetch` est appelé avec `https://api.resend.com/emails`, header `Authorization: Bearer <apiKey>`, body `{from, to, subject: '📥 ENTRY $AAPL', text: '📥 ENTRY $AAPL\n• foo'}` (bold stripped).
 2. **Filtre non-entry** : envoie `'✅ FILLED $AAPL'` → `fetch` jamais appelé.
 3. **Filtre non-entry bis** : envoie `'❌ CANCEL $AAPL'` → `fetch` jamais appelé.
 4. **env var manquante** : `createEmailNotifier({apiKey: '', to: 'x', from: 'y'})` → envoie `'📥 ...'` → `fetch` jamais appelé, pas d'erreur.
@@ -174,7 +175,7 @@ Pas de test d'intégration (pas de vrai HTTP vers Resend).
 - **Nouveau :** `notifications/email.js` (~40 lignes)
 - **Nouveau :** `notifications/email.test.js` (~80 lignes)
 - **Modifié :** `index.js` — ajout de 3 lignes de config + 1 wrapper `notifyAll`
-- **Modifié :** `package.json` — aucune dépendance ajoutée (fetch natif)
+- **Modifié :** `package.json` — aucune dépendance ajoutée (réutilise `node-fetch@2`)
 
 ## Ce qui n'est PAS dans le spec
 

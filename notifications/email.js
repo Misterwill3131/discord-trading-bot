@@ -6,6 +6,7 @@ function stripBold(s) {
 
 function createEmailNotifier({ apiKey, to, from, logger = console, fetch = nodeFetch }) {
   return async function sendEmailAlert(message) {
+    if (typeof message !== 'string' || !message.startsWith('📥')) return;
     const cleaned = stripBold(message);
     const subject = cleaned.split('\n')[0];
     await fetch('https://api.resend.com/emails', {

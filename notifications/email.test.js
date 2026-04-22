@@ -39,3 +39,21 @@ test('createEmailNotifier POSTs to Resend when message starts with entry prefix'
   assert.strictEqual(body.subject, '📥 ENTRY $AAPL');
   assert.strictEqual(body.text, '📥 ENTRY $AAPL\n• Qty: 10');
 });
+
+test('createEmailNotifier does NOT call fetch for fill messages', async () => {
+  const fetch = makeMockFetch();
+  const notifier = createEmailNotifier({
+    apiKey: 'k', to: 't', from: 'f', fetch,
+  });
+  await notifier('✅ **FILLED** $AAPL 10 @ 150.0');
+  assert.strictEqual(fetch.calls.length, 0);
+});
+
+test('createEmailNotifier does NOT call fetch for cancel messages', async () => {
+  const fetch = makeMockFetch();
+  const notifier = createEmailNotifier({
+    apiKey: 'k', to: 't', from: 'f', fetch,
+  });
+  await notifier('❌ **CANCEL** $AAPL (limit timeout 30min)');
+  assert.strictEqual(fetch.calls.length, 0);
+});

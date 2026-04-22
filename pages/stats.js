@@ -227,16 +227,16 @@ ${sidebarHTML('/stats')}
   function parseAllTargets(content) {
     if (!content) return [];
     var c = content.replace(/,/g, '.');
-    var m = c.match(/targets?\s+\$?(\d+(?:\.\d+)?(?:\s*\/\s*\$?\d+(?:\.\d+)?)+)/i);
+    var m = c.match(/targets?\\s+\\$?(\\d+(?:\\.\\d+)?(?:\\s*\\/\\s*\\$?\\d+(?:\\.\\d+)?)+)/i);
     if (!m) {
       // Fallback : un seul target "target $X"
-      var single = c.match(/target\s+\$?(\d+(?:\.\d+)?)/i);
+      var single = c.match(/target\\s+\\$?(\\d+(?:\\.\\d+)?)/i);
       return single ? [parseFloat(single[1])] : [];
     }
-    var parts = m[1].split(/\s*\/\s*/);
+    var parts = m[1].split(/\\s*\\/\\s*/);
     var out = [];
     parts.forEach(function(p) {
-      var v = parseFloat(String(p).replace(/\$/g, ''));
+      var v = parseFloat(String(p).replace(/\\$/g, ''));
       if (!isNaN(v)) out.push(v);
     });
     return out;
@@ -245,7 +245,7 @@ ${sidebarHTML('/stats')}
   // Parse stop price ("SL $X", "stop X", "stoploss X").
   function parseStopPrice(content) {
     if (!content) return null;
-    var m = content.replace(/,/g, '.').match(/(?:stop|sl|stoploss|stop[-\s]?loss)\s+\$?(\d+(?:\.\d+)?)/i);
+    var m = content.replace(/,/g, '.').match(/(?:stop|sl|stoploss|stop[-\\s]?loss)\\s+\\$?(\\d+(?:\\.\\d+)?)/i);
     return m ? parseFloat(m[1]) : null;
   }
 
@@ -264,21 +264,21 @@ ${sidebarHTML('/stats')}
     var stop = parseStopPrice(entry.content || '');
 
     // SL hit → perte
-    if (/\bsl\s*(?:hit|reached|out)?\b|\bstopped\s+out\b|\bstop(?:loss)?\s+hit\b/.test(exitLower)) {
+    if (/\\bsl\\s*(?:hit|reached|out)?\\b|\\bstopped\\s+out\\b|\\bstop(?:loss)?\\s+hit\\b/.test(exitLower)) {
       if (stop != null) return stop;
     }
     // All targets done → dernier target (TPmax, meilleur scénario)
-    if (/\ball\s+targets?\s+(?:done|hit|reached)\b/.test(exitLower)) {
+    if (/\\ball\\s+targets?\\s+(?:done|hit|reached)\\b/.test(exitLower)) {
       if (targets.length > 0) return targets[targets.length - 1];
     }
     // TPn hit / target N hit / target N done → Nième target
-    var tpMatch = exitLower.match(/\btp\s*(\d+)\b|\btarget\s*(\d+)\b/);
+    var tpMatch = exitLower.match(/\\btp\\s*(\\d+)\\b|\\btarget\\s*(\\d+)\\b/);
     if (tpMatch) {
       var n = parseInt(tpMatch[1] || tpMatch[2], 10);
       if (n > 0 && targets.length >= n) return targets[n - 1];
     }
     // Générique "target hit" / "targets done" sans numéro → TP1 conservateur
-    if (/\btargets?\s+(?:hit|done|reached)\b/.test(exitLower)) {
+    if (/\\btargets?\\s+(?:hit|done|reached)\\b/.test(exitLower)) {
       if (targets.length > 0) return targets[0];
     }
     return null;

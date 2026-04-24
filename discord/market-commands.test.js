@@ -236,3 +236,16 @@ test('formatQuoteMessage uses red arrow on negative change', () => {
   assert.match(msg, /🔴/);
   assert.match(msg, /-2\.50%/);
 });
+
+test('formatQuoteMessage renders N/A change when changePercent is null', () => {
+  // Cas courant en pre/post-market : Yahoo renvoie null sur le change%.
+  const msg = formatQuoteMessage({
+    symbol: 'AAPL',
+    regularMarketPrice: 174.23,
+    regularMarketChangePercent: null,
+  });
+  assert.match(msg, /\$174\.23/);
+  assert.match(msg, /⚪/);
+  assert.match(msg, /N\/A/);
+  assert.doesNotMatch(msg, /NaN/);
+});

@@ -176,9 +176,12 @@ function renderChartPng(candles, ticker, range) {
 function formatQuoteMessage(quote) {
   const price = quote.regularMarketPrice;
   const change = quote.regularMarketChangePercent;
-  const up = change >= 0;
-  const arrow = up ? '🟢' : '🔴';
-  const sign = up ? '+' : '';
+  // Yahoo renvoie parfois null sur le change% en pre/post-market.
+  // On affiche N/A plutôt que de crasher sur .toFixed().
+  const hasChange = typeof change === 'number' && Number.isFinite(change);
+  const up = hasChange && change >= 0;
+  const arrow = hasChange ? (up ? '🟢' : '🔴') : '⚪';
+  const changeStr = hasChange ? (up ? '+' : '') + change.toFixed(2) + '%' : 'N/A';
   const vol = (quote.regularMarketVolume || 0).toLocaleString('en-US');
   const dayLow = quote.regularMarketDayLow != null ? '$' + quote.regularMarketDayLow.toFixed(2) : 'N/A';
   const dayHigh = quote.regularMarketDayHigh != null ? '$' + quote.regularMarketDayHigh.toFixed(2) : 'N/A';
@@ -188,7 +191,7 @@ function formatQuoteMessage(quote) {
 
   return [
     '📊 **$' + quote.symbol + ' — ' + name + '**',
-    '> 💰 Prix : $' + price.toFixed(2) + ' ' + arrow + ' ' + sign + change.toFixed(2) + '%',
+    '> 💰 Prix : $' + price.toFixed(2) + ' ' + arrow + ' ' + changeStr,
     '> 📦 Volume : ' + vol,
     '> 📉 Day : ' + dayLow + ' → ' + dayHigh,
     '> 📆 52W : ' + w52Low + ' → ' + w52High,
@@ -198,12 +201,14 @@ function formatQuoteMessage(quote) {
 
 function isRateLimitError(err) {
   const msg = String(err && err.message || err);
-  return /429|rate/i.test(msg);
+  return /\b429\b|rate.?limit/i.test(msg);
 }
 
 function isUnknownTickerError(err) {
   const msg = String(err && err.message || err);
-  return /not found|quote.*not.*found|invalid symbol|no fundamentals|404/i.test(msg);
+  // Ancré sur des signaux Yahoo spécifiques pour éviter de capturer des
+  // erreurs génériques comme ENOENT ou "Module not found".
+  return /quote\s+not\s+found|invalid\s+(?:symbol|ticker)|no\s+fundamentals|HTTPError.*404|symbol\s+not\s+found/i.test(msg);
 }
 
 function registerMarketCommands(client, { yahooClient } = {}) {
@@ -220,7 +225,9 @@ function registerMarketCommands(client, { yahooClient } = {}) {
       try { await message.reply('❌ Usage: !price TICKER (ex: !price AAPL)'); } catch (_) {}
       return;
     }
-    const ticker = tickerArg.replace('$', '').toUpperCase();
+    const ticker = tickerArg.replace(/\$/g, '').toUpperCase();
+    console.log('[!price] ' + ticker + ' requested by ' + message.author.username
+      + ' in #' + (message.channel.name || message.channel.id));
 
     try {
       const quote = await yc.getQuote(ticker);

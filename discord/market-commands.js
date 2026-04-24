@@ -252,6 +252,69 @@ function registerMarketCommands(client, { yahooClient } = {}) {
       try { await message.reply('❌ Yahoo Finance indisponible, réessaye dans quelques minutes'); } catch (_) {}
     }
   });
+
+  // ── !chart TICKER [RANGE] ───────────────────────────────────────────
+  client.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
+    const m = message.content.trim().match(/^!chart(?:\s+([A-Za-z$.\-]{1,10}))?(?:\s+([A-Za-z0-9]{1,3}))?$/i);
+    if (!m) return;
+
+    const tickerArg = m[1];
+    const rangeArg = m[2];
+    if (!tickerArg) {
+      try { await message.reply('❌ Usage: !chart TICKER [RANGE] (ex: !chart AAPL 5D)'); } catch (_) {}
+      return;
+    }
+    const ticker = tickerArg.replace(/\$/g, '').toUpperCase();
+    const range = (rangeArg || '1D').toUpperCase();
+
+    if (!parseRange(range)) {
+      try { await message.reply('❌ Range invalide. Utilise: 1D, 5D, 1M, 3M, 6M, 1Y'); } catch (_) {}
+      return;
+    }
+
+    console.log('[!chart] ' + ticker + ' ' + range + ' requested by ' + message.author.username
+      + ' in #' + (message.channel.name || message.channel.id));
+
+    let candles;
+    try {
+      const chart = await yc.getChart(ticker, range);
+      candles = (chart && chart.quotes) || [];
+      if (candles.length === 0) {
+        try { await message.reply('❌ Ticker $' + ticker + ' introuvable'); } catch (_) {}
+        return;
+      }
+    } catch (err) {
+      if (isUnknownTickerError(err)) {
+        try { await message.reply('❌ Ticker $' + ticker + ' introuvable'); } catch (_) {}
+        return;
+      }
+      if (isRateLimitError(err)) {
+        try { await message.reply('❌ Trop de requêtes, patiente 30s'); } catch (_) {}
+        return;
+      }
+      console.error('[yahoo]', err.stack || err.message);
+      try { await message.reply('❌ Yahoo Finance indisponible, réessaye dans quelques minutes'); } catch (_) {}
+      return;
+    }
+
+    let buffer;
+    try {
+      buffer = renderChartPng(candles, ticker, range);
+    } catch (err) {
+      console.error('[!chart] render failed', err.stack || err.message);
+      try { await message.reply('❌ Erreur génération graphique'); } catch (_) {}
+      return;
+    }
+
+    try {
+      await message.reply({
+        files: [{ attachment: buffer, name: ticker + '-' + range + '.png' }],
+      });
+    } catch (err) {
+      console.error('[!chart] send failed', err.message);
+    }
+  });
 }
 
 module.exports = {

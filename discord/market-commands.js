@@ -374,14 +374,52 @@ function renderChartPng(candles, ticker, range) {
 
   // ── Candlesticks ──────────────────────────────────────────────────
   // Body : max 80% du slot, min 1px, wick toujours au centre.
+  // Pour éviter que les outliers (single-print pre/post-market) tracent
+  // des lignes verticales jusqu'au bord du chart :
+  //   - on skip la bougie si elle est intégralement hors du scale
+  //     (percentile-clipped)
+  //   - on omet la portion haute de la mèche si high > maxC
+  //   - on omet la portion basse de la mèche si low  < minC
+  // → le body reste visible, les mèches extrêmes sont tronquées
+  //   proprement sans "spike" jusqu'au bord.
   const bodyW = Math.max(1, Math.min(slotW * 0.7, 12));
+  const outOfScale = (v) => v < minC || v > maxC;
+
+  // Filtre anti-outlier basé sur la range (H−L) de chaque bar.
+  // Un single-print en after-hours peut produire un bar "in-scale" mais
+  // avec une range démesurée (ex: 5pt sur SPY 5m alors que la médiane
+  // est 0.2pt) — visuellement une grosse ligne verticale. On skip tout
+  // bar dont la range > 8× la médiane des ranges.
+  const ranges = [];
+  for (let i = 0; i < N; i++) {
+    const r = highs[i] - lows[i];
+    if (Number.isFinite(r) && r >= 0) ranges.push(r);
+  }
+  const sortedRanges = [...ranges].sort((a, b) => a - b);
+  const medianRange = sortedRanges.length
+    ? sortedRanges[Math.floor(sortedRanges.length / 2)]
+    : 0;
+  const maxReasonableRange = medianRange > 0
+    ? medianRange * 8
+    : Number.POSITIVE_INFINITY;
+
   for (let i = 0; i < N; i++) {
     const o = opens[i], h = highs[i], l = lows[i], c = closes[i];
+    // Skip toute bougie dont un OHLC sort du scale percentile-clipped,
+    // OU dont la range est clairement aberrante vs la médiane.
+    if (outOfScale(o) || outOfScale(h) || outOfScale(l) || outOfScale(c)) continue;
+    if ((h - l) > maxReasonableRange) continue;
+
     const cx = xCenter(i);
     const isUp = c >= o;
     const color = isUp ? UP : DOWN;
 
-    // Wick
+    const yOpen = y(o), yClose = y(c);
+    const bodyTop = Math.min(yOpen, yClose);
+    const bodyBottom = Math.max(yOpen, yClose);
+    const bodyH = Math.max(1, bodyBottom - bodyTop);
+
+    // Wick complet (high → low) puisqu'on a déjà filtré les outliers.
     ctx.strokeStyle = color;
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -389,10 +427,6 @@ function renderChartPng(candles, ticker, range) {
     ctx.lineTo(cx, y(l));
     ctx.stroke();
 
-    // Body — si open == close, on trace une ligne horizontale d'1px
-    const yOpen = y(o), yClose = y(c);
-    const bodyTop = Math.min(yOpen, yClose);
-    const bodyH = Math.max(1, Math.abs(yClose - yOpen));
     ctx.fillStyle = color;
     ctx.fillRect(cx - bodyW / 2, bodyTop, bodyW, bodyH);
   }

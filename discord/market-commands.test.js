@@ -209,6 +209,19 @@ test('renderChartPng returns a non-empty PNG buffer', () => {
   assert.strictEqual(buf[3], 0x47);
 });
 
+test('renderChartPng renders chart when bars are enough for close but not EMA20', () => {
+  // 10 bars : assez pour tracer le close, assez pour EMA9 (9 bars seed),
+  // mais PAS pour EMA20 (20 bars requis). La fonction doit skip EMA20
+  // silencieusement et renvoyer un PNG valide.
+  const candles = [];
+  for (let i = 0; i < 10; i++) {
+    candles.push({ date: new Date(2026, 3, 24, 9, i * 6), close: 100 + i * 0.5 });
+  }
+  const buf = renderChartPng(candles, 'AAPL', '1D');
+  assert.ok(Buffer.isBuffer(buf));
+  assert.ok(buf.length > 1000);
+});
+
 test('renderChartPng handles empty candles gracefully', () => {
   const buf = renderChartPng([], 'AAPL', '1D');
   assert.ok(Buffer.isBuffer(buf));

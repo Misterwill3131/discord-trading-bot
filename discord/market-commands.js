@@ -11,7 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const { createCanvas } = require('@napi-rs/canvas');
-const { computeIndicators } = require('../trading/indicators');
+const { computeIndicators, calcEMASeries } = require('../trading/indicators');
 const { FONT } = require('../canvas/config');
 
 const VALID_RANGES = {
@@ -138,8 +138,18 @@ function renderChartPng(candles, ticker, range) {
     return canvas.toBuffer('image/png');
   }
 
-  const minC = Math.min(...closes);
-  const maxC = Math.max(...closes);
+  // EMA séries — une valeur par index du close (null avant seed).
+  // Séries vides si pas assez de bars pour le period correspondant.
+  const ema9Series = calcEMASeries(closes, 9);
+  const ema20Series = calcEMASeries(closes, 20);
+
+  // Min/max incluent les EMAs pour que l'échelle fit toutes les lignes.
+  const allValues = closes.concat(
+    ema9Series.filter(v => v != null),
+    ema20Series.filter(v => v != null),
+  );
+  const minC = Math.min(...allValues);
+  const maxC = Math.max(...allValues);
   const chartW = W - 2 * PAD;
   const chartH = H - 2 * PAD - 20; // room for title
   const chartY0 = PAD + 20;
@@ -165,16 +175,59 @@ function renderChartPng(candles, ticker, range) {
   });
   ctx.textAlign = 'left';
 
+  // Helper pour dessiner une série où certains points peuvent être null
+  // (cas des EMAs avant leur seed). On "pen-up" sur null pour éviter un
+  // segment fantôme entre le premier index non-null et l'index 0.
+  function drawSeries(series, color, lineWidth) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    ctx.beginPath();
+    let penDown = false;
+    for (let i = 0; i < series.length; i++) {
+      const v = series[i];
+      if (v == null) { penDown = false; continue; }
+      if (!penDown) { ctx.moveTo(x(i), y(v)); penDown = true; }
+      else { ctx.lineTo(x(i), y(v)); }
+    }
+    ctx.stroke();
+  }
+
+  // EMA20 d'abord (fond), puis EMA9, puis close en dernier (premier plan).
+  if (ema20Series.some(v => v != null)) drawSeries(ema20Series, '#4ac4ff', 1.5);
+  if (ema9Series.some(v => v != null))  drawSeries(ema9Series,  '#ffd700', 1.5);
+
   // Price line (green if last >= first, else red)
   const rising = closes[closes.length - 1] >= closes[0];
-  ctx.strokeStyle = rising ? '#2fc774' : '#f5515f';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  closes.forEach((c, i) => {
-    if (i === 0) ctx.moveTo(x(i), y(c));
-    else ctx.lineTo(x(i), y(c));
+  const priceColor = rising ? '#2fc774' : '#f5515f';
+  drawSeries(closes, priceColor, 2);
+
+  // Légende en haut-droite : ● Close  ● EMA9  ● EMA20
+  // Positionnée à droite du titre, tailles proportionnelles à la police.
+  ctx.font = '12px ' + FONT;
+  ctx.textAlign = 'left';
+  const legendItems = [
+    { label: 'Close', color: priceColor },
+    { label: 'EMA9',  color: '#ffd700' },
+    { label: 'EMA20', color: '#4ac4ff' },
+  ];
+  const SWATCH = 8, GAP = 4, ITEM_GAP = 14;
+  // Mesure la largeur totale pour aligner à droite.
+  let totalW = 0;
+  const widths = legendItems.map((it) => {
+    const w = SWATCH + GAP + ctx.measureText(it.label).width;
+    totalW += w;
+    return w;
   });
-  ctx.stroke();
+  totalW += ITEM_GAP * (legendItems.length - 1);
+  let cx = W - PAD - totalW;
+  const cy = 24; // aligné avec le titre (baseline y=30)
+  legendItems.forEach((it, idx) => {
+    ctx.fillStyle = it.color;
+    ctx.fillRect(cx, cy - SWATCH + 1, SWATCH, SWATCH);
+    ctx.fillStyle = '#e6edf3';
+    ctx.fillText(it.label, cx + SWATCH + GAP, cy);
+    cx += widths[idx] + ITEM_GAP;
+  });
 
   return canvas.toBuffer('image/png');
 }

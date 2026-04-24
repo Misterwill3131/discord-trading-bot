@@ -18,6 +18,25 @@ function calcEMA(values, period) {
   return ema;
 }
 
+// Retourne l'EMA calculée à chaque index : null pour les `period-1`
+// premiers points (pas assez de bars pour seed la SMA), puis la valeur
+// EMA pour chaque index suivant. Utilisé pour dessiner la ligne EMA
+// complète sur un graphe, pas seulement la valeur finale.
+function calcEMASeries(values, period) {
+  if (!Array.isArray(values) || values.length < period) return [];
+  const k = 2 / (period + 1);
+  const out = new Array(values.length).fill(null);
+  let sum = 0;
+  for (let i = 0; i < period; i++) sum += values[i];
+  let ema = sum / period;
+  out[period - 1] = ema;
+  for (let i = period; i < values.length; i++) {
+    ema = values[i] * k + ema * (1 - k);
+    out[i] = ema;
+  }
+  return out;
+}
+
 function calcRSI(closes, period = 14) {
   if (!Array.isArray(closes) || closes.length < period + 1) return null;
 
@@ -59,4 +78,4 @@ function computeIndicators(candles) {
   };
 }
 
-module.exports = { calcEMA, calcRSI, computeIndicators };
+module.exports = { calcEMA, calcEMASeries, calcRSI, computeIndicators };

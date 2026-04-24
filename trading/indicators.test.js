@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { calcEMA, calcRSI, computeIndicators } = require('./indicators');
+const { calcEMA, calcEMASeries, calcRSI, computeIndicators } = require('./indicators');
 
 const EPS = 1e-4;
 function close(a, b) { return Math.abs(a - b) <= EPS; }
@@ -59,4 +59,22 @@ test('computeIndicators with too few bars returns nulls', () => {
   assert.strictEqual(out.rsi, null);
   assert.strictEqual(out.ema20, null);
   assert.strictEqual(out.ema9, null);
+});
+
+test('calcEMASeries returns nulls for first period-1 indices and values after', () => {
+  const closes = [22.27, 22.19, 22.08, 22.17, 22.18, 22.13, 22.23, 22.43, 22.24, 22.29];
+  const series = calcEMASeries(closes, 9);
+  assert.strictEqual(series.length, closes.length);
+  for (let i = 0; i < 8; i++) {
+    assert.strictEqual(series[i], null, `series[${i}] should be null (seed period)`);
+  }
+  // Seed SMA at index 8 (= SMA of closes[0..8])
+  const sma = closes.slice(0, 9).reduce((a, b) => a + b, 0) / 9;
+  assert.ok(close(series[8], sma), `series[8] should equal SMA=${sma}, got ${series[8]}`);
+  // Final value must match calcEMA for the same inputs
+  assert.ok(close(series[series.length - 1], calcEMA(closes, 9)));
+});
+
+test('calcEMASeries returns empty array when values.length < period', () => {
+  assert.deepStrictEqual(calcEMASeries([1, 2, 3], 9), []);
 });

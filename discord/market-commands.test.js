@@ -125,6 +125,18 @@ test('createYahooClient cache key includes range for getChart', async () => {
   assert.strictEqual(yahoo.calls.chart, 2, 'different ranges should be cached separately');
 });
 
+test('createYahooClient passes includePrePost=true to Yahoo chart()', async () => {
+  let capturedOpts = null;
+  const yahoo = {
+    quote: async () => ({ regularMarketPrice: 100 }),
+    chart: async (t, opts) => { capturedOpts = opts; return { quotes: [] }; },
+  };
+  const client = createYahooClient({ yahoo, now: () => 0 });
+  await client.getChart('AAPL', '1D');
+  assert.strictEqual(capturedOpts.includePrePost, true,
+    'intraday chart must include pre/post market hours');
+});
+
 test('createYahooClient getChart throws on invalid range', async () => {
   const yahoo = makeFakeYahoo();
   const client = createYahooClient({ yahoo, now: () => 0 });

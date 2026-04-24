@@ -122,8 +122,16 @@ function createYahooClient({
       if (hit.data && (now() - hit.ts) < ttlMs) return hit.data;
       if (hit.inflight) return hit.inflight;
     }
+    // includePrePost : on récupère pre-market + after-hours (4:00 → 20:00 ET).
+    // Ignoré par Yahoo pour les intervals daily (1d) — pas de risque à le
+    // passer systématiquement. Pour les intervals intraday ça élargit
+    // la fenêtre de données visible dans le chart.
     const inflight = withTimeout(
-      yahoo.chart(t, { interval: parsed.interval, period1: parsed.period1 }),
+      yahoo.chart(t, {
+        interval: parsed.interval,
+        period1: parsed.period1,
+        includePrePost: true,
+      }),
       timeoutMs,
     );
     chartCache.set(key, { inflight });

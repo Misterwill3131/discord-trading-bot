@@ -5,9 +5,8 @@
 //   !profits         → compteur du jour + record all-time
 //   !bilan           → rapport journalier Markdown (même contenu que
 //                      celui posté automatiquement à 20h EDT)
-//   !delete-report   → supprime le dernier rapport journalier posté
-//                      dans #profits (retrouve par ID sauvegardé ou
-//                      par scan des 50 derniers messages)
+//   !delete-report   → supprime le tout dernier message posté dans
+//                      #profits (peu importe son contenu)
 //   !news            → top 5 dernières headlines RSS (depuis poller)
 //
 // NE couvre PAS !top et !stats TICKER — celles-ci sont scopées au
@@ -69,9 +68,8 @@ function registerDiscordCommands(client, { profitsChannelId }) {
   });
 
   // ── !delete-report ─────────────────────────────────────────────────
-  // Workflow "undo" pour le daily summary : supprime le message posté
-  // par le bot dans #profits. On essaie d'abord l'ID mémorisé (certain
-  // match), fallback vers scan du contenu dans les 50 derniers messages.
+  // Supprime le tout dernier message posté dans #profits, peu importe
+  // son auteur ou son contenu.
   client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
     if (message.content.trim().toLowerCase() !== '!delete-report') return;
@@ -85,35 +83,21 @@ function registerDiscordCommands(client, { profitsChannelId }) {
       const ch = client.channels.cache.get(profitsChannelId);
       if (!ch) { await message.reply('❌ Salon #profits introuvable.'); return; }
 
-      let targetMsg = null;
-
-      // 1. Essai par ID mémorisé — plus rapide + certain match.
-      const savedMsgId = profitCounter.getLastSummaryMessageId();
-      if (savedMsgId) {
-        try { targetMsg = await ch.messages.fetch(savedMsgId); } catch (_) {}
-      }
-
-      // 2. Fallback : scan des 50 derniers messages du canal, on retient
-      //    le premier du bot contenant "Daily Profit Report".
-      if (!targetMsg) {
-        const fetched = await ch.messages.fetch({ limit: 50 });
-        targetMsg = fetched.find(m =>
-          m.author.id === client.user.id && m.content.includes('Daily Profit Report')
-        ) || null;
-      }
+      const fetched = await ch.messages.fetch({ limit: 1 });
+      const targetMsg = fetched.first();
 
       if (!targetMsg) {
-        await message.reply('❌ Aucun rapport journalier trouvé dans #profits.');
+        await message.reply('❌ Aucun message trouvé dans #profits.');
         return;
       }
 
       await targetMsg.delete();
-      // Évite que !delete-report enchaîné supprime un message plus ancien
-      // en vidant le pointeur si on a bien supprimé celui qu'on visait.
+      // Si le dernier message correspondait au summary sauvegardé,
+      // vide le pointeur pour éviter de pointer vers un message supprimé.
       if (profitCounter.getLastSummaryMessageId() === targetMsg.id) {
         profitCounter.clearLastSummaryMessageId();
       }
-      console.log('[!delete-report] Report deleted by ' + message.author.username);
+      console.log('[!delete-report] Last message deleted by ' + message.author.username);
       try { await message.react('✅'); } catch (_) {}
     } catch (e) {
       console.error('[!delete-report]', e.message);

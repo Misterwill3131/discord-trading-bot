@@ -194,10 +194,25 @@ test('createYahooClient default instantiates yahoo-finance2 v3 correctly', async
 
 const { renderChartPng } = require('./market-commands');
 
+function makeCandle(date, close, open = close, volume = 1000) {
+  const spread = 0.5;
+  return {
+    date,
+    open,
+    high: Math.max(open, close) + spread,
+    low: Math.min(open, close) - spread,
+    close,
+    volume,
+  };
+}
+
 test('renderChartPng returns a non-empty PNG buffer', () => {
   const candles = [];
+  let prev = 100;
   for (let i = 0; i < 50; i++) {
-    candles.push({ date: new Date(2026, 3, 24, 9, i * 6), close: 100 + Math.sin(i / 5) * 3 });
+    const c = 100 + Math.sin(i / 5) * 3;
+    candles.push(makeCandle(new Date(2026, 3, 24, 9, i * 6), c, prev, 10000 + i * 100));
+    prev = c;
   }
   const buf = renderChartPng(candles, 'AAPL', '1D');
   assert.ok(Buffer.isBuffer(buf), 'should return a Buffer');
@@ -214,12 +229,26 @@ test('renderChartPng renders chart when bars are enough for close but not EMA20'
   // mais PAS pour EMA20 (20 bars requis). La fonction doit skip EMA20
   // silencieusement et renvoyer un PNG valide.
   const candles = [];
+  let prev = 100;
   for (let i = 0; i < 10; i++) {
-    candles.push({ date: new Date(2026, 3, 24, 9, i * 6), close: 100 + i * 0.5 });
+    const c = 100 + i * 0.5;
+    candles.push(makeCandle(new Date(2026, 3, 24, 9, i * 6), c, prev, 500));
+    prev = c;
   }
   const buf = renderChartPng(candles, 'AAPL', '1D');
   assert.ok(Buffer.isBuffer(buf));
   assert.ok(buf.length > 1000);
+});
+
+test('renderChartPng skips bars without OHLC and falls back to placeholder when none remain', () => {
+  // Bars sans open/high/low (juste close) → aucune n'est "valide" pour
+  // candlesticks → placeholder "Not enough data".
+  const candles = [
+    { date: new Date(2026, 3, 24, 9, 0), close: 100 },
+    { date: new Date(2026, 3, 24, 9, 5), close: 101 },
+  ];
+  const buf = renderChartPng(candles, 'AAPL', '1D');
+  assert.ok(Buffer.isBuffer(buf));
 });
 
 test('renderChartPng handles empty candles gracefully', () => {

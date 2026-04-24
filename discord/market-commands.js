@@ -116,78 +116,216 @@ function createYahooClient({
   return { getQuote, getChart };
 }
 
+// Intervalle de bougies par range (pour l'affichage dans le titre).
+const INTERVAL_LABEL = {
+  '1D': '5m', '5D': '15m',
+  '1M': '1d', '3M': '1d', '6M': '1d', '1Y': '1d',
+};
+
+// Format de prix adaptatif : sous-dollar → 3 décimales, sinon 2.
+function formatPrice(v) {
+  if (!Number.isFinite(v)) return '—';
+  if (Math.abs(v) < 1) return v.toFixed(3);
+  return v.toFixed(2);
+}
+
+// Format de volume humain : 1.2M, 500K, 12345.
+function formatVolume(v) {
+  if (!Number.isFinite(v)) return '0';
+  if (v >= 1e9) return (v / 1e9).toFixed(1) + 'B';
+  if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+  if (v >= 1e3) return (v / 1e3).toFixed(0) + 'K';
+  return String(Math.round(v));
+}
+
+// Format label temporel. `dailyGranularity` = true quand l'intervalle
+// est 1d → on affiche MMM dd. Sinon intraday → HH:mm.
+function formatTimeLabel(date, dailyGranularity) {
+  if (!(date instanceof Date)) return '';
+  if (dailyGranularity) {
+    return date.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+  }
+  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function formatDateLabel(date) {
+  if (!(date instanceof Date)) return '';
+  return date.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+}
+
 function renderChartPng(candles, ticker, range) {
-  const W = 800, H = 400, PAD = 50;
+  // ── Layout ────────────────────────────────────────────────────────
+  const W = 1200, H = 700;
+  const TITLE_H = 50;
+  const TIME_H = 28;
+  const VOL_H = 120;                         // zone volume réduite…
+  const VOL_GAP = 12;                        // gap entre chart et volume
+  const BOTTOM_PAD = 18;                     // …pour garder une marge bas
+  const RIGHT_AXIS_W = 90;
+  const LEFT_PAD = 10;
+
+  const chartY0 = TITLE_H;
+  const chartY1 = H - BOTTOM_PAD - VOL_H - VOL_GAP - TIME_H;
+  const chartH = chartY1 - chartY0;
+  const timeY = chartY1 + 18;                // baseline label temps
+  const volY0 = chartY1 + TIME_H + VOL_GAP;  // haut sous-graphe volume
+  const plotX0 = LEFT_PAD;
+  const plotX1 = W - RIGHT_AXIS_W;
+  const plotW = plotX1 - plotX0;
+
+  // ── Couleurs (thème sombre "TradingView-ish") ─────────────────────
+  const BG = '#0b0e11';
+  const TEXT = '#e6edf3';
+  const TEXT_DIM = '#6e7681';
+  const GRID = '#20252c';
+  const UP = '#2fc774';
+  const DOWN = '#f5515f';
+  const AXIS_PILL_BG = '#1f6feb';
+  const AXIS_PILL_TEXT = '#ffffff';
+
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext('2d');
 
-  // Background
-  ctx.fillStyle = '#0e1116';
+  // ── Background ────────────────────────────────────────────────────
+  ctx.fillStyle = BG;
   ctx.fillRect(0, 0, W, H);
 
-  // Title
-  ctx.fillStyle = '#e6edf3';
-  ctx.font = 'bold 20px ' + FONT;
-  ctx.fillText('$' + ticker + ' — ' + range, PAD, 30);
-
-  // On filtre par close fini, puis on garde des bars complètes pour le
-  // calcul VWAP qui a besoin de H/L/C/V.
-  const filteredCandles = (candles || []).filter(c => Number.isFinite(c.close));
-  const closes = filteredCandles.map(c => c.close);
-  if (closes.length < 2) {
-    ctx.fillStyle = '#8b949e';
+  // ── Filter candles : on a besoin de O/H/L/C finis pour dessiner
+  //    un candlestick. Les bars sans OHLC complet sont ignorées. ────
+  const validCandles = (candles || []).filter(c =>
+    Number.isFinite(c.open) && Number.isFinite(c.high)
+    && Number.isFinite(c.low) && Number.isFinite(c.close)
+  );
+  if (validCandles.length < 2) {
+    ctx.fillStyle = TEXT_DIM;
     ctx.font = '16px ' + FONT;
-    ctx.fillText('Not enough data to render chart.', PAD, H / 2);
+    ctx.textAlign = 'left';
+    ctx.fillText('Not enough data to render chart.', LEFT_PAD + 20, chartY0 + chartH / 2);
     return canvas.toBuffer('image/png');
   }
 
-  const bars = filteredCandles.map(c => ({
-    h: c.high, l: c.low, c: c.close, v: c.volume,
-  }));
+  const N = validCandles.length;
+  const opens  = validCandles.map(c => c.open);
+  const highs  = validCandles.map(c => c.high);
+  const lows   = validCandles.map(c => c.low);
+  const closes = validCandles.map(c => c.close);
+  const volumes = validCandles.map(c => Number.isFinite(c.volume) ? c.volume : 0);
 
-  // EMA / VWAP séries — une valeur par index du close (null avant seed
-  // ou pour les bars incomplètes côté VWAP). Séries vides si pas assez
-  // de données pour l'indicateur correspondant.
+  // ── Overlays (EMAs, VWAP) ─────────────────────────────────────────
   const ema9Series = calcEMASeries(closes, 9);
   const ema20Series = calcEMASeries(closes, 20);
-  const vwapSeries = calcVWAPSeries(bars);
+  const vwapBars = validCandles.map(c => ({ h: c.high, l: c.low, c: c.close, v: c.volume }));
+  const vwapSeries = calcVWAPSeries(vwapBars);
 
-  // Min/max incluent les overlays pour que l'échelle fit toutes les lignes.
-  const allValues = closes.concat(
+  // ── Échelle Y prix : clipping par percentile pour éviter qu'un
+  //    outlier (spike illiquide pre/post-market chez Yahoo) compresse
+  //    toute la zone principale. On prend le 2e/98e percentile des
+  //    highs et lows, puis on ajoute un padding 5% de chaque côté.
+  //    Les wicks qui dépassent seront clippés à la bbox du plot. ─────
+  function percentile(arr, p) {
+    if (arr.length === 0) return 0;
+    const sorted = [...arr].sort((a, b) => a - b);
+    const idx = Math.max(0, Math.min(sorted.length - 1, Math.floor(p * sorted.length)));
+    return sorted[idx];
+  }
+  const yValuesForScale = highs.concat(
+    lows,
     ema9Series.filter(v => v != null),
     ema20Series.filter(v => v != null),
     vwapSeries.filter(v => v != null),
   );
-  const minC = Math.min(...allValues);
-  const maxC = Math.max(...allValues);
-  const chartW = W - 2 * PAD;
-  const chartH = H - 2 * PAD - 20; // room for title
-  const chartY0 = PAD + 20;
-  const span = (maxC - minC) || 1;
+  const minY = percentile(yValuesForScale, 0.02);
+  const maxY = percentile(yValuesForScale, 0.98);
+  const ySpan = (maxY - minY) || 1;
+  const yPad = ySpan * 0.05;
+  const minC = minY - yPad;
+  const maxC = maxY + yPad;
+  const span = maxC - minC;
 
-  const x = (i) => PAD + (i / (closes.length - 1)) * chartW;
-  const y = (v) => chartY0 + chartH - ((v - minC) / span) * chartH;
+  // ── Helpers de projection ─────────────────────────────────────────
+  // Candle centre en x = plotX0 + (i + 0.5) * slotW, slotW = plotW / N.
+  const slotW = plotW / N;
+  const xCenter = (i) => plotX0 + (i + 0.5) * slotW;
+  // y projeté, puis clampé à la bbox du plot pour les valeurs hors
+  // scale (percentile-clipped outliers).
+  const y = (v) => {
+    const raw = chartY0 + chartH - ((v - minC) / span) * chartH;
+    if (raw < chartY0) return chartY0;
+    if (raw > chartY0 + chartH) return chartY0 + chartH;
+    return raw;
+  };
 
-  // Subtle horizontal gridlines at min/mid/max.
-  // Labels right-aligned inside the left padding zone (PAD-4) so 5-digit
-  // prices ne chevauchent pas la zone du graphique.
-  ctx.strokeStyle = '#30363d';
-  ctx.lineWidth = 1;
-  ctx.textAlign = 'right';
-  [minC, (minC + maxC) / 2, maxC].forEach(v => {
-    ctx.beginPath();
-    ctx.moveTo(PAD, y(v));
-    ctx.lineTo(W - PAD, y(v));
-    ctx.stroke();
-    ctx.fillStyle = '#8b949e';
-    ctx.font = '12px ' + FONT;
-    ctx.fillText('$' + v.toFixed(2), PAD - 4, y(v) + 4);
-  });
+  // ── Titre : "TICKER, INTERVAL • $PRICE • ±CHANGE%" ────────────────
+  const interval = INTERVAL_LABEL[String(range).toUpperCase()] || '';
+  const firstOpen = opens[0];
+  const lastClose = closes[N - 1];
+  const changePct = firstOpen !== 0 ? ((lastClose - firstOpen) / firstOpen) * 100 : 0;
+  const up = changePct >= 0;
+
   ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  const titleY = 32;
+  let tx = LEFT_PAD + 14;
+  ctx.font = 'bold 22px ' + FONT;
+  ctx.fillStyle = TEXT;
+  const titleLeft = ticker + (interval ? ', ' + interval : '');
+  ctx.fillText(titleLeft, tx, titleY);
+  tx += ctx.measureText(titleLeft).width;
+  ctx.fillStyle = TEXT_DIM;
+  ctx.fillText(' • ', tx, titleY);
+  tx += ctx.measureText(' • ').width;
+  ctx.fillStyle = TEXT;
+  const priceStr = '$' + formatPrice(lastClose);
+  ctx.fillText(priceStr, tx, titleY);
+  tx += ctx.measureText(priceStr).width;
+  ctx.fillStyle = TEXT_DIM;
+  ctx.fillText(' • ', tx, titleY);
+  tx += ctx.measureText(' • ').width;
+  ctx.fillStyle = up ? UP : DOWN;
+  ctx.fillText((up ? '+' : '') + changePct.toFixed(2) + '%', tx, titleY);
 
-  // Helper pour dessiner une série où certains points peuvent être null
-  // (cas des EMAs avant leur seed). On "pen-up" sur null pour éviter un
-  // segment fantôme entre le premier index non-null et l'index 0.
+  // ── Gridlines horizontales + axe Y droit ──────────────────────────
+  // 5 niveaux de grille équidistants en prix.
+  ctx.font = '11px ' + FONT;
+  ctx.textAlign = 'left';
+  const gridSteps = 5;
+  for (let k = 0; k <= gridSteps; k++) {
+    const v = minC + (span * k) / gridSteps;
+    const yy = y(v);
+    ctx.strokeStyle = GRID;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(plotX0, yy);
+    ctx.lineTo(plotX1, yy);
+    ctx.stroke();
+    ctx.fillStyle = TEXT_DIM;
+    ctx.fillText(formatPrice(v), plotX1 + 6, yy + 4);
+  }
+
+  // ── Pill High (en haut à droite) ─────────────────────────────────
+  const highMax = Math.max(...highs);
+  const lowMin  = Math.min(...lows);
+  function drawPill(textLine1, textLine2, color, textColor, yTop) {
+    ctx.font = 'bold 11px ' + FONT;
+    const w = Math.max(
+      ctx.measureText(textLine1).width,
+      textLine2 ? ctx.measureText(textLine2).width : 0,
+    ) + 12;
+    const h = textLine2 ? 28 : 18;
+    ctx.fillStyle = color;
+    ctx.fillRect(plotX1 + 1, yTop, w, h);
+    ctx.fillStyle = textColor;
+    ctx.textAlign = 'left';
+    ctx.fillText(textLine1, plotX1 + 7, yTop + 12);
+    if (textLine2) ctx.fillText(textLine2, plotX1 + 7, yTop + 24);
+    return w;
+  }
+  // High pill en haut (aligné avec le max réel)
+  drawPill('High ' + formatPrice(highMax), null, AXIS_PILL_BG, AXIS_PILL_TEXT, y(highMax) - 14);
+  // Low pill en bas
+  drawPill('Low ' + formatPrice(lowMin), null, AXIS_PILL_BG, AXIS_PILL_TEXT, y(lowMin) - 4);
+
+  // ── Helper pour dessiner une série (null = pen-up) ───────────────
   function drawSeries(series, color, lineWidth) {
     ctx.strokeStyle = color;
     ctx.lineWidth = lineWidth;
@@ -196,42 +334,109 @@ function renderChartPng(candles, ticker, range) {
     for (let i = 0; i < series.length; i++) {
       const v = series[i];
       if (v == null) { penDown = false; continue; }
-      if (!penDown) { ctx.moveTo(x(i), y(v)); penDown = true; }
-      else { ctx.lineTo(x(i), y(v)); }
+      if (!penDown) { ctx.moveTo(xCenter(i), y(v)); penDown = true; }
+      else { ctx.lineTo(xCenter(i), y(v)); }
     }
     ctx.stroke();
   }
 
-  // Overlays d'abord (fond) — VWAP, puis EMA20, puis EMA9. Close en
-  // dernier (premier plan) pour qu'il reste lisible.
+  // ── Candlesticks ──────────────────────────────────────────────────
+  // Body : max 80% du slot, min 1px, wick toujours au centre.
+  const bodyW = Math.max(1, Math.min(slotW * 0.7, 12));
+  for (let i = 0; i < N; i++) {
+    const o = opens[i], h = highs[i], l = lows[i], c = closes[i];
+    const cx = xCenter(i);
+    const isUp = c >= o;
+    const color = isUp ? UP : DOWN;
+
+    // Wick
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx, y(h));
+    ctx.lineTo(cx, y(l));
+    ctx.stroke();
+
+    // Body — si open == close, on trace une ligne horizontale d'1px
+    const yOpen = y(o), yClose = y(c);
+    const bodyTop = Math.min(yOpen, yClose);
+    const bodyH = Math.max(1, Math.abs(yClose - yOpen));
+    ctx.fillStyle = color;
+    ctx.fillRect(cx - bodyW / 2, bodyTop, bodyW, bodyH);
+  }
+
+  // ── Overlays (par-dessus les candles) ─────────────────────────────
   if (vwapSeries.some(v => v != null))  drawSeries(vwapSeries,  '#ff59b9', 1.5);
   if (ema20Series.some(v => v != null)) drawSeries(ema20Series, '#4ac4ff', 1.5);
   if (ema9Series.some(v => v != null))  drawSeries(ema9Series,  '#ffd700', 1.5);
 
-  // Price line (green if last >= first, else red)
-  const rising = closes[closes.length - 1] >= closes[0];
-  const priceColor = rising ? '#2fc774' : '#f5515f';
-  drawSeries(closes, priceColor, 2);
+  // ── Pill du prix courant (sur l'axe de droite) ────────────────────
+  const currentPriceColor = up ? UP : DOWN;
+  ctx.font = 'bold 12px ' + FONT;
+  const cpText = formatPrice(lastClose);
+  const cpW = ctx.measureText(cpText).width + 12;
+  const cpY = y(lastClose) - 10;
+  ctx.fillStyle = currentPriceColor;
+  ctx.fillRect(plotX1 + 1, cpY, cpW, 20);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(cpText, plotX1 + 7, cpY + 14);
 
-  // Légende en bas-gauche : ■ Close  ■ EMA9  ■ EMA20  ■ VWAP
-  ctx.font = '12px ' + FONT;
+  // Ligne pointillée du prix courant sur toute la largeur du chart.
+  ctx.strokeStyle = TEXT_DIM;
+  ctx.setLineDash([3, 3]);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(plotX0, y(lastClose));
+  ctx.lineTo(plotX1, y(lastClose));
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // ── Axe temporel : 5 ticks évenly-spaced + date à gauche ──────────
+  const daily = interval === '1d';
+  ctx.font = '11px ' + FONT;
+  ctx.fillStyle = TEXT_DIM;
+  ctx.textAlign = 'center';
+  const tickCount = 5;
+  for (let k = 0; k < tickCount; k++) {
+    const idx = Math.round((k / (tickCount - 1)) * (N - 1));
+    const xx = xCenter(idx);
+    const date = validCandles[idx].date;
+    ctx.fillText(formatTimeLabel(date, daily), xx, timeY);
+  }
+  // Date complète sous la zone des labels de temps, alignée à gauche
+  // dans la marge pour ne jamais sortir du canvas.
   ctx.textAlign = 'left';
-  const legendItems = [
-    { label: 'Close', color: priceColor },
-    { label: 'EMA9',  color: '#ffd700' },
-    { label: 'EMA20', color: '#4ac4ff' },
-    { label: 'VWAP',  color: '#ff59b9' },
-  ];
-  const SWATCH = 8, GAP = 4, ITEM_GAP = 14;
-  let cx = PAD;
-  const cy = H - 12; // baseline près du bord inférieur
-  legendItems.forEach((it) => {
-    ctx.fillStyle = it.color;
-    ctx.fillRect(cx, cy - SWATCH + 1, SWATCH, SWATCH);
-    ctx.fillStyle = '#e6edf3';
-    ctx.fillText(it.label, cx + SWATCH + GAP, cy);
-    cx += SWATCH + GAP + ctx.measureText(it.label).width + ITEM_GAP;
-  });
+  const firstDate = validCandles[0].date;
+  ctx.fillStyle = TEXT_DIM;
+  ctx.fillText(formatDateLabel(firstDate), LEFT_PAD + 4, timeY + 14);
+
+  // ── Volume sub-chart ──────────────────────────────────────────────
+  const maxVol = Math.max(...volumes, 1);
+  // Gridlines volume (3 niveaux : 0, mid, max)
+  for (const frac of [0, 0.5, 1]) {
+    const yy = volY0 + VOL_H - frac * VOL_H;
+    ctx.strokeStyle = GRID;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(plotX0, yy);
+    ctx.lineTo(plotX1, yy);
+    ctx.stroke();
+    ctx.fillStyle = TEXT_DIM;
+    ctx.font = '10px ' + FONT;
+    ctx.textAlign = 'left';
+    ctx.fillText(formatVolume(frac * maxVol), plotX1 + 6, yy + 3);
+  }
+  // Bars volume (même couleur que la candle correspondante).
+  for (let i = 0; i < N; i++) {
+    const v = volumes[i];
+    if (!Number.isFinite(v) || v <= 0) continue;
+    const vh = (v / maxVol) * VOL_H;
+    const isUp = closes[i] >= opens[i];
+    ctx.fillStyle = isUp ? UP : DOWN;
+    ctx.globalAlpha = 0.7;
+    ctx.fillRect(xCenter(i) - bodyW / 2, volY0 + VOL_H - vh, bodyW, vh);
+  }
+  ctx.globalAlpha = 1;
 
   return canvas.toBuffer('image/png');
 }

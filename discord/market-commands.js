@@ -597,7 +597,16 @@ function renderChartPng(candles, ticker, range) {
   ctx.fillText(formatDateLabel(firstDate), LEFT_PAD + 4, timeY + 14);
 
   // ── Volume sub-chart ──────────────────────────────────────────────
-  const maxVol = Math.max(...volumes, 1);
+  // On utilise le 95e percentile comme max d'échelle (au lieu du max
+  // absolu) pour que les bars extended-hours (10×-1000× plus faibles
+  // que le peak RTH) restent visibles. Les quelques bars qui dépassent
+  // sont clippés à la hauteur max. Plus : hauteur min 1px pour tout
+  // volume > 0 non trivial.
+  const posVolumes = volumes.filter(v => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
+  const p95Vol = posVolumes.length
+    ? posVolumes[Math.min(posVolumes.length - 1, Math.floor(posVolumes.length * 0.95))]
+    : 1;
+  const maxVol = p95Vol || 1;
   // Gridlines volume (3 niveaux : 0, mid, max)
   for (const frac of [0, 0.5, 1]) {
     const yy = volY0 + VOL_H - frac * VOL_H;
@@ -616,10 +625,13 @@ function renderChartPng(candles, ticker, range) {
   for (let i = 0; i < N; i++) {
     const v = volumes[i];
     if (!Number.isFinite(v) || v <= 0) continue;
-    const vh = (v / maxVol) * VOL_H;
+    // Clip à VOL_H (pour les bars qui dépassent le 95e percentile) et
+    // force 2px minimum pour que les petits volumes (extended-hours,
+    // souvent 100×-1000× plus faibles que RTH) restent visibles.
+    const vh = Math.max(2, Math.min(VOL_H, (v / maxVol) * VOL_H));
     const isUp = closes[i] >= opens[i];
     ctx.fillStyle = isUp ? UP : DOWN;
-    ctx.globalAlpha = 0.7;
+    ctx.globalAlpha = 0.85;
     ctx.fillRect(xCenter(i) - bodyW / 2, volY0 + VOL_H - vh, bodyW, vh);
   }
   ctx.globalAlpha = 1;

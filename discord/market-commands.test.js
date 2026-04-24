@@ -174,6 +174,24 @@ test('createYahooClient does not cache failed getQuote calls', async () => {
   assert.strictEqual(calls, 2, 'failed call must not poison the cache');
 });
 
+test('createYahooClient default instantiates yahoo-finance2 v3 correctly', async () => {
+  // Régression : yahoo-finance2 v3 exporte une CLASSE (pas un singleton).
+  // Sans `new YahooFinance()`, .quote() throw sync avec
+  // "Call `const yahooFinance = new YahooFinance()` first."
+  // On vérifie en appelant getQuote avec un timeout minimal : l'erreur
+  // attendue est un timeout/network, PAS l'erreur de setup v3.
+  const client = createYahooClient({ timeoutMs: 1 });
+  await assert.rejects(
+    () => client.getQuote('AAPL'),
+    (err) => {
+      const msg = String((err && err.message) || err);
+      assert.doesNotMatch(msg, /Call\s+`?const\s+yahooFinance\s*=\s*new\s+YahooFinance/i,
+        'regression: default path must instantiate the class, got: ' + msg);
+      return true;
+    },
+  );
+});
+
 const { renderChartPng } = require('./market-commands');
 
 test('renderChartPng returns a non-empty PNG buffer', () => {

@@ -56,9 +56,13 @@ function createYahooClient({
   timeoutMs = 10_000,
 } = {}) {
   if (!yahoo) {
-    // Lazy require to keep the module loadable even if yahoo-finance2 is not installed
-    // in some edge path (tests always inject their own fake).
-    yahoo = require('yahoo-finance2').default;
+    // yahoo-finance2 v3 exporte une CLASSE (pas un singleton comme v2) :
+    // il faut `new YahooFinance()` avant d'appeler .quote()/.chart().
+    // Sans ça : "Call `const yahooFinance = new YahooFinance()` first."
+    // La classe est require'd paresseusement ici ; les tests injectent un fake.
+    // suppressNotices évite l'impression du survey Yahoo sur le premier appel.
+    const YahooFinance = require('yahoo-finance2').default;
+    yahoo = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
   }
 
   const quoteCache = new Map();

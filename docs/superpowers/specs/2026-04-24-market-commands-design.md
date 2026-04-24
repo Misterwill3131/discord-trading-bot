@@ -12,23 +12,22 @@ Ajouter trois commandes Discord globales (fonctionnent dans n'importe quel salon
 
 - Pas de MACD (uniquement les indicateurs déjà dans `trading/indicators.js`).
 - Pas d'ASCII sparkline — on rend en PNG uniquement pour `!chart`.
-- Pas de subscription live IBKR — on reste sur le mode DELAYED existant pour `!indicator`.
+- Pas d'usage d'IBKR — toutes les données viennent de Yahoo (source unique, simple).
 - Pas de cache persistent — cache mémoire TTL 30s uniquement.
 
 ## Architecture
 
 ### Fichiers touchés
 
-- **Nouveau** : `discord/market-commands.js` (~250 lignes) — exporte `registerMarketCommands(client, { marketData })`
+- **Nouveau** : `discord/market-commands.js` (~250 lignes) — exporte `registerMarketCommands(client)`
 - **Modifié** : `index.js` — enregistre `registerMarketCommands` à côté de `registerDiscordCommands`
 - **Modifié** : `package.json` — ajoute la dépendance `yahoo-finance2`
 
 ### Dépendances
 
-- **`yahoo-finance2`** (nouveau) — client Node actif et maintenu pour Yahoo Finance. Utilisé pour `!price` et `!chart` (données quasi-temps-réel, gratuit).
+- **`yahoo-finance2`** (nouveau) — client Node actif et maintenu pour Yahoo Finance. Utilisé pour les 3 commandes (données quasi-temps-réel, gratuit, source unique).
 - **`canvas`** (existant) — déjà utilisé dans `canvas/proof.js`, réutilisé pour le rendu PNG du graphe.
-- **`trading/marketdata.js`** (existant) — utilisé par `!indicator` via IBKR (DELAYED).
-- **`trading/indicators.js`** (existant) — `computeIndicators()` appelé par `!indicator`.
+- **`trading/indicators.js`** (existant) — `computeIndicators()` appelé par `!indicator` (fonction pure, indépendante de la source de données).
 
 ### Structure interne de `discord/market-commands.js`
 
@@ -83,17 +82,18 @@ discord/market-commands.js
 ### `!indicator AAPL`
 
 1. Parse ticker.
-2. `marketData.fetchCandles('AAPL', '5 mins', 50)` (IBKR).
-3. `computeIndicators(candles)` → `{ rsi, ema9, ema20, lastPrice }`.
-4. Formate :
+2. `getYahooChart('AAPL', '1D')` → candles 5min du dernier jour (même helper que `!chart`, range fixe `1D`).
+3. Adapter le format Yahoo `{ date, open, high, low, close, volume }` vers le format attendu par `computeIndicators` : `{ t, o, h, l, c, v }` (le champ utilisé par `computeIndicators` est `c`).
+4. `computeIndicators(candles)` → `{ rsi, ema9, ema20, lastPrice }`.
+5. Formate :
    ```
-   📈 **$AAPL — Indicators** (données retardées ~15min)
+   📈 **$AAPL — Indicators**
    > Prix : $174.23
    > RSI(14) : 52.3
    > EMA(9) : $174.12
    > EMA(20) : $172.40
    ```
-5. `message.reply(...)`.
+6. `message.reply(...)`.
 
 ## Error handling
 
@@ -110,11 +110,11 @@ discord/market-commands.js
 - **Réponse** : `❌ Yahoo Finance indisponible, réessaye dans quelques minutes`
 - **Log** : `console.error('[yahoo]', err.message)` avec stack.
 
-### 3. IBKR non connecté (pour `!indicator`)
+### 3. Pas assez de candles pour `!indicator`
 
-- **Détection** : `marketData.fetchCandles()` throw `'IBKR connect timeout'` ou `'no broker with getHistoricalBars'`.
-- **Réponse** : `❌ Indicateurs indisponibles (broker offline)`
-- **Note** : IBKR reste en DELAYED — on affiche toujours `(données retardées ~15min)` dans le message normal de `!indicator` pour éviter la confusion utilisateur.
+- **Détection** : `computeIndicators(candles)` renvoie `rsi: null` si candles.length < 15 (RSI(14) nécessite 15 bars minimum). Idem pour `ema20: null` si < 20 bars.
+- **Réponse** : `❌ Pas assez de données historiques pour $XXX`
+- **Cause probable** : ticker très illiquide ou nouvellement listé.
 
 ### 4. Range invalide sur `!chart`
 

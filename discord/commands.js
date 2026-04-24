@@ -75,19 +75,19 @@ function registerDiscordCommands(client, { profitsChannelId }) {
     if (message.content.trim().toLowerCase() !== '!delete-report') return;
 
     if (!profitsChannelId) {
-      try { await message.reply('❌ PROFITS_CHANNEL_ID non configuré.'); } catch (_) {}
+      try { await message.reply('❌ PROFITS_CHANNEL_ID not configured.'); } catch (_) {}
       return;
     }
 
     try {
       const ch = client.channels.cache.get(profitsChannelId);
-      if (!ch) { await message.reply('❌ Salon #profits introuvable.'); return; }
+      if (!ch) { await message.reply('❌ #profits channel not found.'); return; }
 
       const fetched = await ch.messages.fetch({ limit: 1 });
       const targetMsg = fetched.first();
 
       if (!targetMsg) {
-        await message.reply('❌ Aucun message trouvé dans #profits.');
+        await message.reply('❌ No messages found in #profits.');
         return;
       }
 
@@ -101,7 +101,7 @@ function registerDiscordCommands(client, { profitsChannelId }) {
       try { await message.react('✅'); } catch (_) {}
     } catch (e) {
       console.error('[!delete-report]', e.message);
-      try { await message.reply('❌ Erreur : ' + e.message); } catch (_) {}
+      try { await message.reply('❌ Error: ' + e.message); } catch (_) {}
     }
   });
 

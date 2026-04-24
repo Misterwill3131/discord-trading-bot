@@ -196,11 +196,11 @@ function formatQuoteMessage(quote) {
 
   return [
     '📊 **$' + quote.symbol + ' — ' + name + '**',
-    '> 💰 Prix : $' + price.toFixed(2) + ' ' + arrow + ' ' + changeStr,
-    '> 📦 Volume : ' + vol,
-    '> 📉 Day : ' + dayLow + ' → ' + dayHigh,
-    '> 📆 52W : ' + w52Low + ' → ' + w52High,
-    '> 🏦 Market cap : ' + formatMarketCap(quote.marketCap),
+    '> 💰 Price: $' + price.toFixed(2) + ' ' + arrow + ' ' + changeStr,
+    '> 📦 Volume: ' + vol,
+    '> 📉 Day: ' + dayLow + ' → ' + dayHigh,
+    '> 📆 52W: ' + w52Low + ' → ' + w52High,
+    '> 🏦 Market cap: ' + formatMarketCap(quote.marketCap),
   ].join('\n');
 }
 
@@ -227,7 +227,7 @@ function registerMarketCommands(client, { yahooClient } = {}) {
 
     const tickerArg = m[1];
     if (!tickerArg) {
-      try { await message.reply('❌ Usage: !price TICKER (ex: !price AAPL)'); } catch (_) {}
+      try { await message.reply('❌ Usage: !price TICKER (e.g. !price AAPL)'); } catch (_) {}
       return;
     }
     const ticker = tickerArg.replace(/\$/g, '').toUpperCase();
@@ -238,23 +238,23 @@ function registerMarketCommands(client, { yahooClient } = {}) {
       const quote = await yc.getQuote(ticker);
       if (!quote || quote.regularMarketPrice == null) {
         console.log('[!price] Unknown ticker: ' + ticker);
-        try { await message.reply('❌ Ticker $' + ticker + ' introuvable'); } catch (_) {}
+        try { await message.reply('❌ Ticker $' + ticker + ' not found'); } catch (_) {}
         return;
       }
       await message.reply(formatQuoteMessage(quote));
     } catch (err) {
       if (isUnknownTickerError(err)) {
         console.log('[!price] Unknown ticker: ' + ticker);
-        try { await message.reply('❌ Ticker $' + ticker + ' introuvable'); } catch (_) {}
+        try { await message.reply('❌ Ticker $' + ticker + ' not found'); } catch (_) {}
         return;
       }
       if (isRateLimitError(err)) {
         console.error('[!price] Rate limited');
-        try { await message.reply('❌ Trop de requêtes, patiente 30s'); } catch (_) {}
+        try { await message.reply('❌ Rate limited, try again in 30s'); } catch (_) {}
         return;
       }
       console.error('[yahoo]', err.stack || err.message);
-      try { await message.reply('❌ Yahoo Finance indisponible, réessaye dans quelques minutes'); } catch (_) {}
+      try { await message.reply('❌ Yahoo Finance unavailable, try again in a few minutes'); } catch (_) {}
     }
   });
 
@@ -267,14 +267,14 @@ function registerMarketCommands(client, { yahooClient } = {}) {
     const tickerArg = m[1];
     const rangeArg = m[2];
     if (!tickerArg) {
-      try { await message.reply('❌ Usage: !chart TICKER [RANGE] (ex: !chart AAPL 5D)'); } catch (_) {}
+      try { await message.reply('❌ Usage: !chart TICKER [RANGE] (e.g. !chart AAPL 5D)'); } catch (_) {}
       return;
     }
     const ticker = tickerArg.replace(/\$/g, '').toUpperCase();
     const range = (rangeArg || '1D').toUpperCase();
 
     if (!parseRange(range)) {
-      try { await message.reply('❌ Range invalide. Utilise: 1D, 5D, 1M, 3M, 6M, 1Y'); } catch (_) {}
+      try { await message.reply('❌ Invalid range. Use: 1D, 5D, 1M, 3M, 6M, 1Y'); } catch (_) {}
       return;
     }
 
@@ -289,22 +289,22 @@ function registerMarketCommands(client, { yahooClient } = {}) {
         // Ticker valide mais pas de données (jour férié, hors séance, ticker
         // très illiquide). On distingue du cas "ticker introuvable" qui passe
         // par le catch.
-        try { await message.reply('❌ Pas de données disponibles pour $' + ticker + ' sur ' + range); } catch (_) {}
+        try { await message.reply('❌ No data available for $' + ticker + ' on ' + range); } catch (_) {}
         return;
       }
     } catch (err) {
       if (isUnknownTickerError(err)) {
         console.log('[!chart] Unknown ticker: ' + ticker);
-        try { await message.reply('❌ Ticker $' + ticker + ' introuvable'); } catch (_) {}
+        try { await message.reply('❌ Ticker $' + ticker + ' not found'); } catch (_) {}
         return;
       }
       if (isRateLimitError(err)) {
         console.error('[!chart] Rate limited');
-        try { await message.reply('❌ Trop de requêtes, patiente 30s'); } catch (_) {}
+        try { await message.reply('❌ Rate limited, try again in 30s'); } catch (_) {}
         return;
       }
       console.error('[yahoo]', err.stack || err.message);
-      try { await message.reply('❌ Yahoo Finance indisponible, réessaye dans quelques minutes'); } catch (_) {}
+      try { await message.reply('❌ Yahoo Finance unavailable, try again in a few minutes'); } catch (_) {}
       return;
     }
 
@@ -313,7 +313,7 @@ function registerMarketCommands(client, { yahooClient } = {}) {
       buffer = renderChartPng(candles, ticker, range);
     } catch (err) {
       console.error('[!chart] render failed', err.stack || err.message);
-      try { await message.reply('❌ Erreur génération graphique'); } catch (_) {}
+      try { await message.reply('❌ Chart rendering failed'); } catch (_) {}
       return;
     }
 
@@ -334,7 +334,7 @@ function registerMarketCommands(client, { yahooClient } = {}) {
 
     const tickerArg = m[1];
     if (!tickerArg) {
-      try { await message.reply('❌ Usage: !indicator TICKER (ex: !indicator AAPL)'); } catch (_) {}
+      try { await message.reply('❌ Usage: !indicator TICKER (e.g. !indicator AAPL)'); } catch (_) {}
       return;
     }
     const ticker = tickerArg.replace(/\$/g, '').toUpperCase();
@@ -346,22 +346,22 @@ function registerMarketCommands(client, { yahooClient } = {}) {
       const chart = await yc.getChart(ticker, '1D');
       yahooCandles = (chart && chart.quotes) || [];
       if (yahooCandles.length === 0) {
-        try { await message.reply('❌ Pas de données disponibles pour $' + ticker); } catch (_) {}
+        try { await message.reply('❌ No data available for $' + ticker); } catch (_) {}
         return;
       }
     } catch (err) {
       if (isUnknownTickerError(err)) {
         console.log('[!indicator] Unknown ticker: ' + ticker);
-        try { await message.reply('❌ Ticker $' + ticker + ' introuvable'); } catch (_) {}
+        try { await message.reply('❌ Ticker $' + ticker + ' not found'); } catch (_) {}
         return;
       }
       if (isRateLimitError(err)) {
         console.error('[!indicator] Rate limited');
-        try { await message.reply('❌ Trop de requêtes, patiente 30s'); } catch (_) {}
+        try { await message.reply('❌ Rate limited, try again in 30s'); } catch (_) {}
         return;
       }
       console.error('[yahoo]', err.stack || err.message);
-      try { await message.reply('❌ Yahoo Finance indisponible, réessaye dans quelques minutes'); } catch (_) {}
+      try { await message.reply('❌ Yahoo Finance unavailable, try again in a few minutes'); } catch (_) {}
       return;
     }
 
@@ -374,16 +374,16 @@ function registerMarketCommands(client, { yahooClient } = {}) {
 
     const ind = computeIndicators(bars);
     if (ind.rsi == null || ind.ema9 == null || ind.ema20 == null || !Number.isFinite(ind.lastPrice)) {
-      try { await message.reply('❌ Pas assez de données historiques pour $' + ticker); } catch (_) {}
+      try { await message.reply('❌ Not enough historical data for $' + ticker); } catch (_) {}
       return;
     }
 
     const lines = [
       '📈 **$' + ticker + ' — Indicators**',
-      '> Prix : $' + ind.lastPrice.toFixed(2),
-      '> RSI(14) : ' + ind.rsi.toFixed(1),
-      '> EMA(9) : $' + ind.ema9.toFixed(2),
-      '> EMA(20) : $' + ind.ema20.toFixed(2),
+      '> Price: $' + ind.lastPrice.toFixed(2),
+      '> RSI(14): ' + ind.rsi.toFixed(1),
+      '> EMA(9): $' + ind.ema9.toFixed(2),
+      '> EMA(20): $' + ind.ema20.toFixed(2),
     ];
     try { await message.reply(lines.join('\n')); } catch (e) { console.error('[!indicator]', e.message); }
   });

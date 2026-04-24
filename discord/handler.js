@@ -84,13 +84,13 @@ async function handleStatsCommand(message, ticker) {
   const topAuthors = Object.keys(authorMap)
     .map(k => k + ' (' + authorMap[k] + ')')
     .sort((a, b) => authorMap[b.split(' ')[0]] - authorMap[a.split(' ')[0]]);
-  const authorStr = topAuthors.length ? topAuthors.join(', ') : 'Aucun';
+  const authorStr = topAuthors.length ? topAuthors.join(', ') : 'None';
 
   const lines = [
-    '**📈 Stats $' + ticker + ' — aujourd\'hui**',
-    '> Signaux : ' + total,
-    '> Acceptés : ' + accepted + ' | Filtrés : ' + filtered,
-    '> Auteurs : ' + authorStr,
+    '**📈 Stats $' + ticker + ' — Today**',
+    '> Signals: ' + total,
+    '> Accepted: ' + accepted + ' | Filtered: ' + filtered,
+    '> Authors: ' + authorStr,
   ];
   try { await message.reply(lines.join('\n')); } catch (e) { console.error('[!stats]', e.message); }
 }

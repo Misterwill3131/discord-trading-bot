@@ -104,7 +104,7 @@ function renderChartPng(candles, ticker, range) {
   ctx.font = 'bold 20px sans-serif';
   ctx.fillText('$' + ticker + ' — ' + range, PAD, 30);
 
-  const closes = (candles || []).map(c => c.close).filter(c => typeof c === 'number');
+  const closes = (candles || []).map(c => c.close).filter(c => Number.isFinite(c));
   if (closes.length < 2) {
     ctx.fillStyle = '#8b949e';
     ctx.font = '16px sans-serif';
@@ -122,9 +122,12 @@ function renderChartPng(candles, ticker, range) {
   const x = (i) => PAD + (i / (closes.length - 1)) * chartW;
   const y = (v) => chartY0 + chartH - ((v - minC) / span) * chartH;
 
-  // Subtle horizontal gridlines at min/mid/max
+  // Subtle horizontal gridlines at min/mid/max.
+  // Labels right-aligned inside the left padding zone (PAD-4) so 5-digit
+  // prices ne chevauchent pas la zone du graphique.
   ctx.strokeStyle = '#30363d';
   ctx.lineWidth = 1;
+  ctx.textAlign = 'right';
   [minC, (minC + maxC) / 2, maxC].forEach(v => {
     ctx.beginPath();
     ctx.moveTo(PAD, y(v));
@@ -132,8 +135,9 @@ function renderChartPng(candles, ticker, range) {
     ctx.stroke();
     ctx.fillStyle = '#8b949e';
     ctx.font = '12px sans-serif';
-    ctx.fillText('$' + v.toFixed(2), 4, y(v) + 4);
+    ctx.fillText('$' + v.toFixed(2), PAD - 4, y(v) + 4);
   });
+  ctx.textAlign = 'left';
 
   // Price line (green if last >= first, else red)
   const rising = closes[closes.length - 1] >= closes[0];

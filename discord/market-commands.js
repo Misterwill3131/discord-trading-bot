@@ -281,7 +281,10 @@ function registerMarketCommands(client, { yahooClient } = {}) {
       const chart = await yc.getChart(ticker, range);
       candles = (chart && chart.quotes) || [];
       if (candles.length === 0) {
-        try { await message.reply('❌ Ticker $' + ticker + ' introuvable'); } catch (_) {}
+        // Ticker valide mais pas de données (jour férié, hors séance, ticker
+        // très illiquide). On distingue du cas "ticker introuvable" qui passe
+        // par le catch.
+        try { await message.reply('❌ Pas de données disponibles pour $' + ticker + ' sur ' + range); } catch (_) {}
         return;
       }
     } catch (err) {

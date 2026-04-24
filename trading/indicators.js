@@ -1,9 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────
-// trading/indicators.js — RSI(14), EMA(N) sur un array de candles
+// trading/indicators.js — RSI(14), EMA(N), VWAP sur un array de candles
 // ─────────────────────────────────────────────────────────────────────
 // Fonctions pures. Historique minimal :
 //   EMA(N)  : N bars (seed avec SMA des N premiers closes)
 //   RSI(14) : 15 bars (14 diffs)
+//   VWAP    : 1 bar valide avec volume > 0 (anchored depuis la 1re bougie
+//             de la série — pas de reset par session)
 // ─────────────────────────────────────────────────────────────────────
 
 function calcEMA(values, period) {
@@ -65,17 +67,50 @@ function calcRSI(closes, period = 14) {
   return 100 - 100 / (1 + rs);
 }
 
+// VWAP cumulé (anchored) : Σ(typical_price × volume) / Σ(volume) avec
+// typical_price = (H+L+C)/3, ancré depuis la 1re bougie valide.
+// Retourne un array de même longueur que `bars`, avec null aux index où
+// la bougie n'a pas de H/L/C/V finis ou un volume ≤ 0. Le cumul continue
+// à travers ces trous — le prochain bar valide reprend le VWAP global.
+function calcVWAPSeries(bars) {
+  if (!Array.isArray(bars) || bars.length === 0) return [];
+  const out = new Array(bars.length).fill(null);
+  let cumPV = 0;
+  let cumV = 0;
+  for (let i = 0; i < bars.length; i++) {
+    const b = bars[i];
+    if (!b) continue;
+    const h = b.h, l = b.l, c = b.c, v = b.v;
+    if (!Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c)
+        || !Number.isFinite(v) || v <= 0) {
+      continue;
+    }
+    const tp = (h + l + c) / 3;
+    cumPV += tp * v;
+    cumV += v;
+    out[i] = cumPV / cumV;
+  }
+  return out;
+}
+
 function computeIndicators(candles) {
   if (!Array.isArray(candles) || candles.length === 0) {
-    return { rsi: null, ema20: null, ema9: null, lastPrice: null };
+    return { rsi: null, ema20: null, ema9: null, vwap: null, lastPrice: null };
   }
   const closes = candles.map(c => c.c);
+  const vwapSeries = calcVWAPSeries(candles);
+  // VWAP final = dernière valeur non-null de la série.
+  let vwap = null;
+  for (let i = vwapSeries.length - 1; i >= 0; i--) {
+    if (vwapSeries[i] != null) { vwap = vwapSeries[i]; break; }
+  }
   return {
     rsi: calcRSI(closes, 14),
     ema20: calcEMA(closes, 20),
     ema9: calcEMA(closes, 9),
+    vwap,
     lastPrice: closes[closes.length - 1],
   };
 }
 
-module.exports = { calcEMA, calcEMASeries, calcRSI, computeIndicators };
+module.exports = { calcEMA, calcEMASeries, calcRSI, calcVWAPSeries, computeIndicators };

@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { calcEMA, calcEMASeries, calcRSI, computeIndicators } = require('./indicators');
+const { calcEMA, calcEMASeries, calcRSI, calcVWAPSeries, computeIndicators } = require('./indicators');
 
 const EPS = 1e-4;
 function close(a, b) { return Math.abs(a - b) <= EPS; }
@@ -77,4 +77,50 @@ test('calcEMASeries returns nulls for first period-1 indices and values after', 
 
 test('calcEMASeries returns empty array when values.length < period', () => {
   assert.deepStrictEqual(calcEMASeries([1, 2, 3], 9), []);
+});
+
+test('calcVWAPSeries cumulative anchored VWAP over 3 bars', () => {
+  // Bar 1: HLC = 11,9,10  tp=10  v=100 → cumPV=1000  cumV=100  vwap=10
+  // Bar 2: HLC = 12,10,11 tp=11  v=200 → cumPV=1000+2200=3200  cumV=300  vwap=10.6667
+  // Bar 3: HLC = 13,11,12 tp=12  v=100 → cumPV=3200+1200=4400  cumV=400  vwap=11
+  const bars = [
+    { h: 11, l:  9, c: 10, v: 100 },
+    { h: 12, l: 10, c: 11, v: 200 },
+    { h: 13, l: 11, c: 12, v: 100 },
+  ];
+  const s = calcVWAPSeries(bars);
+  assert.strictEqual(s.length, 3);
+  assert.ok(close(s[0], 10), `s[0] expected 10, got ${s[0]}`);
+  assert.ok(close(s[1], 10.6667), `s[1] expected ~10.6667, got ${s[1]}`);
+  assert.ok(close(s[2], 11), `s[2] expected 11, got ${s[2]}`);
+});
+
+test('calcVWAPSeries skips bars with invalid data but carries cumulative forward', () => {
+  const bars = [
+    { h: 11, l:  9, c: 10, v: 100 }, // valid → vwap=10
+    { h: 12, l: 10, c: 11, v: 0 },   // skip (v=0) → null
+    { h: 13, l: 11, c: 12, v: 100 }, // valid → cumPV=1000+1200=2200, cumV=200, vwap=11
+  ];
+  const s = calcVWAPSeries(bars);
+  assert.ok(close(s[0], 10));
+  assert.strictEqual(s[1], null);
+  assert.ok(close(s[2], 11));
+});
+
+test('calcVWAPSeries returns empty array for empty input', () => {
+  assert.deepStrictEqual(calcVWAPSeries([]), []);
+  assert.deepStrictEqual(calcVWAPSeries(null), []);
+});
+
+test('computeIndicators returns vwap final value', () => {
+  const bars = [];
+  let p = 100;
+  for (let i = 0; i < 25; i++) {
+    p += 0.1;
+    bars.push({ t: 't'+i, o: p, h: p + 0.5, l: p - 0.5, c: p, v: 1000 });
+  }
+  const out = computeIndicators(bars);
+  assert.ok(typeof out.vwap === 'number', 'vwap must be a number');
+  // VWAP doit être proche du prix moyen (puisque tp ≈ close et v constant)
+  assert.ok(out.vwap > 100 && out.vwap < 110, `vwap out of expected range: ${out.vwap}`);
 });

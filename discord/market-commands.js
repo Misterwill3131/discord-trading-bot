@@ -11,7 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const { createCanvas } = require('@napi-rs/canvas');
-const { computeIndicators, calcEMASeries } = require('../trading/indicators');
+const { computeIndicators, calcEMASeries, calcVWAPSeries } = require('../trading/indicators');
 const { FONT } = require('../canvas/config');
 
 const VALID_RANGES = {
@@ -130,7 +130,10 @@ function renderChartPng(candles, ticker, range) {
   ctx.font = 'bold 20px ' + FONT;
   ctx.fillText('$' + ticker + ' — ' + range, PAD, 30);
 
-  const closes = (candles || []).map(c => c.close).filter(c => Number.isFinite(c));
+  // On filtre par close fini, puis on garde des bars complètes pour le
+  // calcul VWAP qui a besoin de H/L/C/V.
+  const filteredCandles = (candles || []).filter(c => Number.isFinite(c.close));
+  const closes = filteredCandles.map(c => c.close);
   if (closes.length < 2) {
     ctx.fillStyle = '#8b949e';
     ctx.font = '16px ' + FONT;
@@ -138,15 +141,22 @@ function renderChartPng(candles, ticker, range) {
     return canvas.toBuffer('image/png');
   }
 
-  // EMA séries — une valeur par index du close (null avant seed).
-  // Séries vides si pas assez de bars pour le period correspondant.
+  const bars = filteredCandles.map(c => ({
+    h: c.high, l: c.low, c: c.close, v: c.volume,
+  }));
+
+  // EMA / VWAP séries — une valeur par index du close (null avant seed
+  // ou pour les bars incomplètes côté VWAP). Séries vides si pas assez
+  // de données pour l'indicateur correspondant.
   const ema9Series = calcEMASeries(closes, 9);
   const ema20Series = calcEMASeries(closes, 20);
+  const vwapSeries = calcVWAPSeries(bars);
 
-  // Min/max incluent les EMAs pour que l'échelle fit toutes les lignes.
+  // Min/max incluent les overlays pour que l'échelle fit toutes les lignes.
   const allValues = closes.concat(
     ema9Series.filter(v => v != null),
     ema20Series.filter(v => v != null),
+    vwapSeries.filter(v => v != null),
   );
   const minC = Math.min(...allValues);
   const maxC = Math.max(...allValues);
@@ -192,7 +202,9 @@ function renderChartPng(candles, ticker, range) {
     ctx.stroke();
   }
 
-  // EMA20 d'abord (fond), puis EMA9, puis close en dernier (premier plan).
+  // Overlays d'abord (fond) — VWAP, puis EMA20, puis EMA9. Close en
+  // dernier (premier plan) pour qu'il reste lisible.
+  if (vwapSeries.some(v => v != null))  drawSeries(vwapSeries,  '#ff59b9', 1.5);
   if (ema20Series.some(v => v != null)) drawSeries(ema20Series, '#4ac4ff', 1.5);
   if (ema9Series.some(v => v != null))  drawSeries(ema9Series,  '#ffd700', 1.5);
 
@@ -201,13 +213,14 @@ function renderChartPng(candles, ticker, range) {
   const priceColor = rising ? '#2fc774' : '#f5515f';
   drawSeries(closes, priceColor, 2);
 
-  // Légende en bas-gauche : ■ Close  ■ EMA9  ■ EMA20
+  // Légende en bas-gauche : ■ Close  ■ EMA9  ■ EMA20  ■ VWAP
   ctx.font = '12px ' + FONT;
   ctx.textAlign = 'left';
   const legendItems = [
     { label: 'Close', color: priceColor },
     { label: 'EMA9',  color: '#ffd700' },
     { label: 'EMA20', color: '#4ac4ff' },
+    { label: 'VWAP',  color: '#ff59b9' },
   ];
   const SWATCH = 8, GAP = 4, ITEM_GAP = 14;
   let cx = PAD;
@@ -423,9 +436,13 @@ function registerMarketCommands(client, { yahooClient } = {}) {
       return;
     }
 
+    // VWAP peut être null si aucune bougie n'a de volume exploitable —
+    // rare mais on affiche N/A pour rester robuste.
+    const vwapStr = Number.isFinite(ind.vwap) ? '$' + ind.vwap.toFixed(2) : 'N/A';
     const lines = [
       '📈 **$' + ticker + ' — Indicators**',
       '> Price: $' + ind.lastPrice.toFixed(2),
+      '> VWAP: ' + vwapStr,
       '> RSI(14): ' + ind.rsi.toFixed(1),
       '> EMA(9): $' + ind.ema9.toFixed(2),
       '> EMA(20): $' + ind.ema20.toFixed(2),

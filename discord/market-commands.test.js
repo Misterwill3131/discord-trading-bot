@@ -19,8 +19,11 @@ test('parseRange 5D uses 15m interval and 5-day period', () => {
 });
 
 test('parseRange is case-insensitive', () => {
-  assert.ok(parseRange('1m', FIXED_NOW));
-  assert.ok(parseRange('1M', FIXED_NOW));
+  const lower = parseRange('1m', FIXED_NOW);
+  const upper = parseRange('1M', FIXED_NOW);
+  assert.ok(lower, 'lowercase 1m should not return null');
+  assert.strictEqual(lower.interval, '1d');
+  assert.deepStrictEqual(lower, upper);
 });
 
 test('parseRange returns null for invalid input', () => {

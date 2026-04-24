@@ -290,10 +290,12 @@ function registerMarketCommands(client, { yahooClient } = {}) {
       }
     } catch (err) {
       if (isUnknownTickerError(err)) {
+        console.log('[!chart] Unknown ticker: ' + ticker);
         try { await message.reply('❌ Ticker $' + ticker + ' introuvable'); } catch (_) {}
         return;
       }
       if (isRateLimitError(err)) {
+        console.error('[!chart] Rate limited');
         try { await message.reply('❌ Trop de requêtes, patiente 30s'); } catch (_) {}
         return;
       }
@@ -345,10 +347,12 @@ function registerMarketCommands(client, { yahooClient } = {}) {
       }
     } catch (err) {
       if (isUnknownTickerError(err)) {
+        console.log('[!indicator] Unknown ticker: ' + ticker);
         try { await message.reply('❌ Ticker $' + ticker + ' introuvable'); } catch (_) {}
         return;
       }
       if (isRateLimitError(err)) {
+        console.error('[!indicator] Rate limited');
         try { await message.reply('❌ Trop de requêtes, patiente 30s'); } catch (_) {}
         return;
       }

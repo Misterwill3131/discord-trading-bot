@@ -31,6 +31,7 @@ const VALID_RANGES = {
   '30m': { interval: '30m', ms: 5 * 86_400_000 },    // 5 jours
   // Heure (lowercase h)
   '1h':  { interval: '1h',  ms: 20 * 86_400_000 },   // 20 jours
+  '4h':  { interval: '1h',  ms: 60 * 86_400_000, aggregateBy: 4, displayLabel: '4h' }, // 60j, 4×1h agrégés
   // Jour (case-insensitive)
   '1D':  { interval: '5m',  ms: 86_400_000 },
   '1d':  { interval: '5m',  ms: 86_400_000 },
@@ -53,6 +54,7 @@ function parseRange(arg, now = new Date()) {
   return {
     interval: cfg.interval,
     period1: new Date(now.getTime() - cfg.ms),
+    aggregateBy: cfg.aggregateBy || 1,
   };
 }
 
@@ -137,6 +139,13 @@ function createYahooClient({
     chartCache.set(key, { inflight });
     try {
       const data = await inflight;
+      // Agrégation côté client pour les ranges synthétiques (ex: 4h = 4×1h).
+      // Yahoo ne supporte pas 4h nativement, donc on requête en 1h puis on
+      // fusionne. L'objet `data.quotes` est remplacé par la série agrégée ;
+      // les autres champs (meta, events) restent intacts.
+      if (parsed.aggregateBy && parsed.aggregateBy > 1 && data && Array.isArray(data.quotes)) {
+        data.quotes = aggregateBars(data.quotes, parsed.aggregateBy);
+      }
       chartCache.set(key, { ts: now(), data });
       return data;
     } catch (err) {
@@ -149,10 +158,62 @@ function createYahooClient({
 }
 
 // Label d'intervalle affiché dans le titre — dérivé du range demandé.
-// Construit à partir de VALID_RANGES pour rester en sync.
+// On préfère displayLabel quand défini (cas de 4h qui utilise 1h côté
+// Yahoo mais s'affiche 4h après agrégation).
 const INTERVAL_LABEL = Object.fromEntries(
-  Object.entries(VALID_RANGES).map(([k, v]) => [k, v.interval])
+  Object.entries(VALID_RANGES).map(([k, v]) => [k, v.displayLabel || v.interval])
 );
+
+// Renvoie 'pre' | 'rth' | 'post' | 'closed' selon l'heure ET d'une
+// bougie. Frontières US NYSE : pre 04:00-09:30, RTH 09:30-16:00,
+// post 16:00-20:00. Hors de ces plages = 'closed'. Intl gère la DST
+// automatiquement pour 'America/New_York'.
+function getETPhase(date) {
+  if (!(date instanceof Date)) return 'closed';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  let hour = 0, minute = 0;
+  for (const p of parts) {
+    if (p.type === 'hour') hour = parseInt(p.value, 10);
+    if (p.type === 'minute') minute = parseInt(p.value, 10);
+  }
+  const mins = hour * 60 + minute;
+  if (mins < 4 * 60) return 'closed';         // 00:00-03:59
+  if (mins < 9 * 60 + 30) return 'pre';       // 04:00-09:29
+  if (mins < 16 * 60) return 'rth';           // 09:30-15:59
+  if (mins < 20 * 60) return 'post';          // 16:00-19:59
+  return 'closed';                             // 20:00-23:59
+}
+
+// Agrège des bars OHLCV N-par-N : O = premier, H = max, L = min,
+// C = dernier, V = somme. Utilisé pour 4h (4 × 1h).
+function aggregateBars(bars, n) {
+  if (!Array.isArray(bars) || n <= 1) return bars || [];
+  const out = [];
+  for (let i = 0; i < bars.length; i += n) {
+    const group = bars.slice(i, i + n);
+    if (group.length === 0) continue;
+    const highs = group.map(b => b.high).filter(Number.isFinite);
+    const lows  = group.map(b => b.low).filter(Number.isFinite);
+    const first = group[0];
+    const last  = group[group.length - 1];
+    const open  = Number.isFinite(first.open) ? first.open : last.close;
+    const close = Number.isFinite(last.close) ? last.close : first.open;
+    out.push({
+      date: first.date,
+      open,
+      high: highs.length ? Math.max(...highs) : Math.max(open, close),
+      low:  lows.length  ? Math.min(...lows)  : Math.min(open, close),
+      close,
+      volume: group.reduce((s, b) => s + (Number.isFinite(b.volume) ? b.volume : 0), 0),
+    });
+  }
+  return out;
+}
 
 // Format de prix adaptatif : sous-dollar → 3 décimales, sinon 2.
 function formatPrice(v) {
@@ -315,6 +376,38 @@ function renderChartPng(candles, ticker, range) {
   tx += ctx.measureText(' • ').width;
   ctx.fillStyle = up ? UP : DOWN;
   ctx.fillText((up ? '+' : '') + changePct.toFixed(2) + '%', tx, titleY);
+
+  // ── Background shading pour les phases hors RTH ───────────────────
+  // Pré-market / after-hours obtiennent un léger éclaircissement pour
+  // distinguer visuellement la session régulière (9:30-16:00 ET) du
+  // reste. Skip pour les ranges daily (intervals '1d') où le concept
+  // ne s'applique pas (chaque bar = 1 journée complète).
+  if (interval !== '1d') {
+    // Groupe les bars contiguës de même phase pour dessiner un seul
+    // rectangle par groupe (évite N fillRect pour N bars).
+    const EXT_HOURS_SHADE = 'rgba(255, 255, 255, 0.03)';
+    let groupStart = -1;
+    let groupPhase = null;
+    const shadeGroup = (startIdx, endIdx) => {
+      const x0 = xCenter(startIdx) - slotW / 2;
+      const x1 = xCenter(endIdx) + slotW / 2;
+      ctx.fillStyle = EXT_HOURS_SHADE;
+      ctx.fillRect(x0, chartY0, x1 - x0, chartH);
+      ctx.fillRect(x0, volY0, x1 - x0, VOL_H);
+    };
+    for (let i = 0; i < N; i++) {
+      const phase = getETPhase(validCandles[i].date);
+      const shade = phase === 'pre' || phase === 'post';
+      if (shade && groupPhase !== 'ext') {
+        groupStart = i;
+        groupPhase = 'ext';
+      } else if (!shade && groupPhase === 'ext') {
+        shadeGroup(groupStart, i - 1);
+        groupPhase = null;
+      }
+    }
+    if (groupPhase === 'ext') shadeGroup(groupStart, N - 1);
+  }
 
   // ── Gridlines horizontales + axe Y droit ──────────────────────────
   // 5 niveaux de grille équidistants en prix.

@@ -132,7 +132,7 @@ function registerDiscordCommands(client, { profitsChannelId }) {
       '',
       '**Market data** (Yahoo Finance)',
       '> `!price TICKER` — Live quote (price, change%, volume, ranges)',
-      '> `!chart TICKER [RANGE]` — PNG chart; RANGE ∈ 1m / 2m / 5m / 15m / 30m / 1h / 1D / 5D / 1M / 3M / 6M / 1Y (default 1D)',
+      '> `!chart TICKER [RANGE]` — PNG chart; RANGE ∈ 1m / 2m / 5m / 15m / 30m / 1h / 4h / 1D / 5D / 1M / 3M / 6M / 1Y (default 1D)',
       '> `!indicator TICKER` — RSI(14), EMA(9), EMA(20)',
       '',
       '**Utility**',

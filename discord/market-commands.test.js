@@ -50,6 +50,18 @@ test('parseRange supports minute and hour timeframes (lowercase)', () => {
   assert.strictEqual(parseRange('1h', FIXED_NOW).interval, '1h');
 });
 
+test('parseRange 4h uses 1h interval with aggregateBy=4', () => {
+  const r = parseRange('4h', FIXED_NOW);
+  assert.strictEqual(r.interval, '1h', 'Yahoo ne supporte que 1h nativement');
+  assert.strictEqual(r.aggregateBy, 4, '4 bars de 1h agrégés en 1 bar 4h');
+});
+
+test('parseRange default ranges have aggregateBy=1 (no aggregation)', () => {
+  for (const k of ['1D', '5D', '1m', '1h', '1M']) {
+    assert.strictEqual(parseRange(k, FIXED_NOW).aggregateBy, 1, k + ' should not aggregate');
+  }
+});
+
 test('parseRange distinguishes 1M (month) from 1m (minute) by case', () => {
   assert.strictEqual(parseRange('1M', FIXED_NOW).interval, '1d', 'month → daily bars');
   assert.strictEqual(parseRange('1m', FIXED_NOW).interval, '1m', 'minute');
@@ -123,6 +135,27 @@ test('createYahooClient cache key includes range for getChart', async () => {
   await client.getChart('AAPL', '1D');
   await client.getChart('AAPL', '5D');
   assert.strictEqual(yahoo.calls.chart, 2, 'different ranges should be cached separately');
+});
+
+test('createYahooClient aggregates bars when range has aggregateBy > 1', async () => {
+  // 8 × 1h → 2 × 4h, avec O=first, H=max, L=min, C=last, V=sum
+  const bars = [];
+  for (let i = 0; i < 8; i++) {
+    bars.push({ date: new Date(2026, 3, 24, i), open: 100 + i, high: 100 + i + 2, low: 100 + i - 1, close: 100 + i + 1, volume: 1000 });
+  }
+  const yahoo = {
+    quote: async () => ({ regularMarketPrice: 100 }),
+    chart: async () => ({ quotes: bars }),
+  };
+  const client = createYahooClient({ yahoo, now: () => 0 });
+  const res = await client.getChart('AAPL', '4h');
+  assert.strictEqual(res.quotes.length, 2, '8 bars / 4 = 2 aggregated bars');
+  // Premier groupe : bars[0..3]
+  assert.strictEqual(res.quotes[0].open, 100);          // first.open
+  assert.strictEqual(res.quotes[0].close, 104);         // last.close (bars[3].close = 100+3+1)
+  assert.strictEqual(res.quotes[0].high, 105);          // max(bars[0..3].high) = 100+3+2
+  assert.strictEqual(res.quotes[0].low, 99);            // min(bars[0..3].low) = 100+0-1
+  assert.strictEqual(res.quotes[0].volume, 4000);       // sum
 });
 
 test('createYahooClient passes includePrePost=true to Yahoo chart()', async () => {

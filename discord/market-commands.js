@@ -358,12 +358,14 @@ function registerMarketCommands(client, { yahooClient } = {}) {
     }
 
     // Adapt Yahoo shape { date, open, high, low, close, volume } → { t, o, h, l, c, v }
+    // Number.isFinite exclut NaN/Infinity — sinon ils propageraient dans
+    // les calculs d'EMA/RSI et produiraient des NaN visibles dans le reply.
     const bars = yahooCandles
-      .filter(q => typeof q.close === 'number')
+      .filter(q => Number.isFinite(q.close))
       .map(q => ({ t: q.date, o: q.open, h: q.high, l: q.low, c: q.close, v: q.volume }));
 
     const ind = computeIndicators(bars);
-    if (ind.rsi == null || ind.ema9 == null || ind.ema20 == null) {
+    if (ind.rsi == null || ind.ema9 == null || ind.ema20 == null || !Number.isFinite(ind.lastPrice)) {
       try { await message.reply('❌ Pas assez de données historiques pour $' + ticker); } catch (_) {}
       return;
     }

@@ -10,6 +10,8 @@
 // TTL 30s + timeout 10s sur chaque appel externe.
 // ─────────────────────────────────────────────────────────────────────
 
+const { createCanvas } = require('@napi-rs/canvas');
+
 const VALID_RANGES = {
   '1D': { interval: '5m',  ms: 86_400_000 },
   '5D': { interval: '15m', ms: 5 * 86_400_000 },
@@ -88,4 +90,63 @@ function createYahooClient({
   return { getQuote, getChart };
 }
 
-module.exports = { parseRange, formatMarketCap, createYahooClient };
+function renderChartPng(candles, ticker, range) {
+  const W = 800, H = 400, PAD = 50;
+  const canvas = createCanvas(W, H);
+  const ctx = canvas.getContext('2d');
+
+  // Background
+  ctx.fillStyle = '#0e1116';
+  ctx.fillRect(0, 0, W, H);
+
+  // Title
+  ctx.fillStyle = '#e6edf3';
+  ctx.font = 'bold 20px sans-serif';
+  ctx.fillText('$' + ticker + ' — ' + range, PAD, 30);
+
+  const closes = (candles || []).map(c => c.close).filter(c => typeof c === 'number');
+  if (closes.length < 2) {
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '16px sans-serif';
+    ctx.fillText('Not enough data to render chart.', PAD, H / 2);
+    return canvas.toBuffer('image/png');
+  }
+
+  const minC = Math.min(...closes);
+  const maxC = Math.max(...closes);
+  const chartW = W - 2 * PAD;
+  const chartH = H - 2 * PAD - 20; // room for title
+  const chartY0 = PAD + 20;
+  const span = (maxC - minC) || 1;
+
+  const x = (i) => PAD + (i / (closes.length - 1)) * chartW;
+  const y = (v) => chartY0 + chartH - ((v - minC) / span) * chartH;
+
+  // Subtle horizontal gridlines at min/mid/max
+  ctx.strokeStyle = '#30363d';
+  ctx.lineWidth = 1;
+  [minC, (minC + maxC) / 2, maxC].forEach(v => {
+    ctx.beginPath();
+    ctx.moveTo(PAD, y(v));
+    ctx.lineTo(W - PAD, y(v));
+    ctx.stroke();
+    ctx.fillStyle = '#8b949e';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('$' + v.toFixed(2), 4, y(v) + 4);
+  });
+
+  // Price line (green if last >= first, else red)
+  const rising = closes[closes.length - 1] >= closes[0];
+  ctx.strokeStyle = rising ? '#2fc774' : '#f5515f';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  closes.forEach((c, i) => {
+    if (i === 0) ctx.moveTo(x(i), y(c));
+    else ctx.lineTo(x(i), y(c));
+  });
+  ctx.stroke();
+
+  return canvas.toBuffer('image/png');
+}
+
+module.exports = { parseRange, formatMarketCap, createYahooClient, renderChartPng };

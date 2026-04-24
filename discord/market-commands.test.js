@@ -115,3 +115,25 @@ test('createYahooClient wraps calls with timeout', async () => {
   const client = createYahooClient({ yahoo, now: () => 0, timeoutMs: 20 });
   await assert.rejects(() => client.getQuote('AAPL'), /timeout/i);
 });
+
+const { renderChartPng } = require('./market-commands');
+
+test('renderChartPng returns a non-empty PNG buffer', () => {
+  const candles = [];
+  for (let i = 0; i < 50; i++) {
+    candles.push({ date: new Date(2026, 3, 24, 9, i * 6), close: 100 + Math.sin(i / 5) * 3 });
+  }
+  const buf = renderChartPng(candles, 'AAPL', '1D');
+  assert.ok(Buffer.isBuffer(buf), 'should return a Buffer');
+  assert.ok(buf.length > 1000, 'PNG should be at least 1KB, got ' + buf.length);
+  // PNG signature: 89 50 4E 47
+  assert.strictEqual(buf[0], 0x89);
+  assert.strictEqual(buf[1], 0x50);
+  assert.strictEqual(buf[2], 0x4E);
+  assert.strictEqual(buf[3], 0x47);
+});
+
+test('renderChartPng handles empty candles gracefully', () => {
+  const buf = renderChartPng([], 'AAPL', '1D');
+  assert.ok(Buffer.isBuffer(buf));
+});

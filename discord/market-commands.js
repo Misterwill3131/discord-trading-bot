@@ -14,17 +14,40 @@ const { createCanvas } = require('@napi-rs/canvas');
 const { computeIndicators, calcEMASeries, calcVWAPSeries } = require('../trading/indicators');
 const { FONT } = require('../canvas/config');
 
+// Table des timeframes acceptés, convention TradingView :
+//   - minute en MINUSCULE  : 1m, 2m, 5m, 15m, 30m
+//   - heure en minuscule   : 1h
+//   - jour                 : 1d / 1D, 5d / 5D (case-insensitive)
+//   - mois en MAJUSCULE    : 1M, 3M, 6M (UPPERCASE M, pour distinguer de 1m)
+//   - année                : 1y / 1Y (case-insensitive)
+// Chaque entrée : interval = paramètre passé à Yahoo ; ms = durée
+// couverte par la range (nb de bars dépend de l'interval).
 const VALID_RANGES = {
-  '1D': { interval: '5m',  ms: 86_400_000 },
-  '5D': { interval: '15m', ms: 5 * 86_400_000 },
-  '1M': { interval: '1d',  ms: 30 * 86_400_000 },
-  '3M': { interval: '1d',  ms: 90 * 86_400_000 },
-  '6M': { interval: '1d',  ms: 180 * 86_400_000 },
-  '1Y': { interval: '1d',  ms: 365 * 86_400_000 },
+  // Minutes (lowercase m)
+  '1m':  { interval: '1m',  ms: 86_400_000 },        // 1 jour (~390 bars RTH)
+  '2m':  { interval: '2m',  ms: 86_400_000 },        // 1 jour
+  '5m':  { interval: '5m',  ms: 86_400_000 },        // 1 jour
+  '15m': { interval: '15m', ms: 5 * 86_400_000 },    // 5 jours
+  '30m': { interval: '30m', ms: 5 * 86_400_000 },    // 5 jours
+  // Heure (lowercase h)
+  '1h':  { interval: '1h',  ms: 20 * 86_400_000 },   // 20 jours
+  // Jour (case-insensitive)
+  '1D':  { interval: '5m',  ms: 86_400_000 },
+  '1d':  { interval: '5m',  ms: 86_400_000 },
+  '5D':  { interval: '15m', ms: 5 * 86_400_000 },
+  '5d':  { interval: '15m', ms: 5 * 86_400_000 },
+  // Mois (UPPERCASE M uniquement — sinon collision avec minute)
+  '1M':  { interval: '1d',  ms: 30 * 86_400_000 },
+  '3M':  { interval: '1d',  ms: 90 * 86_400_000 },
+  '6M':  { interval: '1d',  ms: 180 * 86_400_000 },
+  // Année (case-insensitive)
+  '1Y':  { interval: '1d',  ms: 365 * 86_400_000 },
+  '1y':  { interval: '1d',  ms: 365 * 86_400_000 },
 };
 
+// Case-sensitive : '1m' et '1M' sont deux ranges différentes.
 function parseRange(arg, now = new Date()) {
-  const key = arg ? String(arg).toUpperCase() : '1D';
+  const key = arg ? String(arg) : '1D';
   const cfg = VALID_RANGES[key];
   if (!cfg) return null;
   return {
@@ -92,7 +115,8 @@ function createYahooClient({
     const parsed = parseRange(range, new Date(now()));
     if (!parsed) throw new Error('Invalid range: ' + range);
     const t = String(ticker).toUpperCase();
-    const key = t + '|' + String(range || '1D').toUpperCase();
+    // Case-sensitive range pour la clé : 1m et 1M sont deux ranges.
+    const key = t + '|' + String(range || '1D');
     const hit = chartCache.get(key);
     if (hit) {
       if (hit.data && (now() - hit.ts) < ttlMs) return hit.data;
@@ -116,11 +140,11 @@ function createYahooClient({
   return { getQuote, getChart };
 }
 
-// Intervalle de bougies par range (pour l'affichage dans le titre).
-const INTERVAL_LABEL = {
-  '1D': '5m', '5D': '15m',
-  '1M': '1d', '3M': '1d', '6M': '1d', '1Y': '1d',
-};
+// Label d'intervalle affiché dans le titre — dérivé du range demandé.
+// Construit à partir de VALID_RANGES pour rester en sync.
+const INTERVAL_LABEL = Object.fromEntries(
+  Object.entries(VALID_RANGES).map(([k, v]) => [k, v.interval])
+);
 
 // Format de prix adaptatif : sous-dollar → 3 décimales, sinon 2.
 function formatPrice(v) {
@@ -256,7 +280,7 @@ function renderChartPng(candles, ticker, range) {
   };
 
   // ── Titre : "TICKER, INTERVAL • $PRICE • ±CHANGE%" ────────────────
-  const interval = INTERVAL_LABEL[String(range).toUpperCase()] || '';
+  const interval = INTERVAL_LABEL[String(range)] || '';
   const firstOpen = opens[0];
   const lastClose = closes[N - 1];
   const changePct = firstOpen !== 0 ? ((lastClose - firstOpen) / firstOpen) * 100 : 0;
@@ -392,11 +416,13 @@ function renderChartPng(candles, ticker, range) {
   ctx.setLineDash([]);
 
   // ── Axe temporel : 5 ticks évenly-spaced + date à gauche ──────────
-  // Labels "HH:mm" seulement pour 1D (session unique). Sinon labels
-  // "MMM dd" — l'heure n'apporte rien quand le range s'étale sur
-  // plusieurs jours, et ça évite les labels ambigus type "22:00"
-  // qui peuvent appartenir à n'importe quel jour du range.
-  const useDateLabels = String(range).toUpperCase() !== '1D';
+  // Labels "HH:mm" pour les ranges qui tiennent en une seule session
+  // (≤ 1 jour : 1m, 2m, 5m, 1D). Sinon labels "MMM dd" — l'heure
+  // n'apporte rien quand le range s'étale sur plusieurs jours, et ça
+  // évite les labels ambigus type "22:00" qui peuvent appartenir à
+  // n'importe quel jour.
+  const rangeCfg = VALID_RANGES[range];
+  const useDateLabels = !rangeCfg || rangeCfg.ms > 86_400_000;
   ctx.font = '11px ' + FONT;
   ctx.fillStyle = TEXT_DIM;
   ctx.textAlign = 'center';
@@ -538,10 +564,11 @@ function registerMarketCommands(client, { yahooClient } = {}) {
       return;
     }
     const ticker = tickerArg.replace(/\$/g, '').toUpperCase();
-    const range = (rangeArg || '1D').toUpperCase();
+    // Case-sensitive : 1m (minute) ≠ 1M (month). On ne normalise pas.
+    const range = rangeArg || '1D';
 
     if (!parseRange(range)) {
-      try { await message.reply('❌ Invalid range. Use: 1D, 5D, 1M, 3M, 6M, 1Y'); } catch (_) {}
+      try { await message.reply('❌ Invalid range. Use: 1m, 2m, 5m, 15m, 30m, 1h, 1D, 5D, 1M, 3M, 6M, 1Y'); } catch (_) {}
       return;
     }
 

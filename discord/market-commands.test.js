@@ -18,17 +18,20 @@ test('parseRange 5D uses 15m interval and 5-day period', () => {
   assert.ok(diffDays >= 4.99 && diffDays <= 5.01);
 });
 
-test('parseRange is case-insensitive', () => {
-  const lower = parseRange('1m', FIXED_NOW);
-  const upper = parseRange('1M', FIXED_NOW);
-  assert.ok(lower, 'lowercase 1m should not return null');
-  assert.strictEqual(lower.interval, '1d');
+test('parseRange treats 1d and 1D as the same range', () => {
+  const lower = parseRange('1d', FIXED_NOW);
+  const upper = parseRange('1D', FIXED_NOW);
+  assert.ok(lower, 'lowercase 1d should not return null');
+  assert.strictEqual(lower.interval, '5m');
   assert.deepStrictEqual(lower, upper);
 });
 
 test('parseRange returns null for invalid input', () => {
   assert.strictEqual(parseRange('42X', FIXED_NOW), null);
   assert.strictEqual(parseRange('10Y', FIXED_NOW), null);
+  // Wrong case for month/minute distinction
+  assert.strictEqual(parseRange('2m', FIXED_NOW).interval, '2m', '2m should be 2-minute');
+  assert.strictEqual(parseRange('2M', FIXED_NOW), null, '2M is not a valid month range');
 });
 
 test('parseRange covers 1M/3M/6M/1Y with 1d interval', () => {
@@ -36,6 +39,27 @@ test('parseRange covers 1M/3M/6M/1Y with 1d interval', () => {
     const out = parseRange(r, FIXED_NOW);
     assert.strictEqual(out.interval, '1d', `${r} should use 1d interval`);
   }
+});
+
+test('parseRange supports minute and hour timeframes (lowercase)', () => {
+  assert.strictEqual(parseRange('1m', FIXED_NOW).interval, '1m');
+  assert.strictEqual(parseRange('2m', FIXED_NOW).interval, '2m');
+  assert.strictEqual(parseRange('5m', FIXED_NOW).interval, '5m');
+  assert.strictEqual(parseRange('15m', FIXED_NOW).interval, '15m');
+  assert.strictEqual(parseRange('30m', FIXED_NOW).interval, '30m');
+  assert.strictEqual(parseRange('1h', FIXED_NOW).interval, '1h');
+});
+
+test('parseRange distinguishes 1M (month) from 1m (minute) by case', () => {
+  assert.strictEqual(parseRange('1M', FIXED_NOW).interval, '1d', 'month → daily bars');
+  assert.strictEqual(parseRange('1m', FIXED_NOW).interval, '1m', 'minute');
+  // Ranges must also be different in duration
+  const month = parseRange('1M', FIXED_NOW);
+  const minute = parseRange('1m', FIXED_NOW);
+  const monthDays = (FIXED_NOW - month.period1) / 86_400_000;
+  const minuteDays = (FIXED_NOW - minute.period1) / 86_400_000;
+  assert.ok(monthDays > 28);
+  assert.ok(minuteDays < 2);
 });
 
 const { formatMarketCap } = require('./market-commands');

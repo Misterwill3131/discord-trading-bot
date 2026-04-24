@@ -66,10 +66,20 @@ function createYahooClient({
   async function getQuote(ticker) {
     const key = String(ticker).toUpperCase();
     const hit = quoteCache.get(key);
-    if (hit && (now() - hit.ts) < ttlMs) return hit.data;
-    const data = await withTimeout(yahoo.quote(key), timeoutMs);
-    quoteCache.set(key, { ts: now(), data });
-    return data;
+    if (hit) {
+      if (hit.data && (now() - hit.ts) < ttlMs) return hit.data;
+      if (hit.inflight) return hit.inflight;
+    }
+    const inflight = withTimeout(yahoo.quote(key), timeoutMs);
+    quoteCache.set(key, { inflight });
+    try {
+      const data = await inflight;
+      quoteCache.set(key, { ts: now(), data });
+      return data;
+    } catch (err) {
+      quoteCache.delete(key);
+      throw err;
+    }
   }
 
   async function getChart(ticker, range) {
@@ -78,13 +88,23 @@ function createYahooClient({
     const t = String(ticker).toUpperCase();
     const key = t + '|' + String(range || '1D').toUpperCase();
     const hit = chartCache.get(key);
-    if (hit && (now() - hit.ts) < ttlMs) return hit.data;
-    const data = await withTimeout(
+    if (hit) {
+      if (hit.data && (now() - hit.ts) < ttlMs) return hit.data;
+      if (hit.inflight) return hit.inflight;
+    }
+    const inflight = withTimeout(
       yahoo.chart(t, { interval: parsed.interval, period1: parsed.period1 }),
       timeoutMs,
     );
-    chartCache.set(key, { ts: now(), data });
-    return data;
+    chartCache.set(key, { inflight });
+    try {
+      const data = await inflight;
+      chartCache.set(key, { ts: now(), data });
+      return data;
+    } catch (err) {
+      chartCache.delete(key);
+      throw err;
+    }
   }
 
   return { getQuote, getChart };
@@ -153,4 +173,86 @@ function renderChartPng(candles, ticker, range) {
   return canvas.toBuffer('image/png');
 }
 
-module.exports = { parseRange, formatMarketCap, createYahooClient, renderChartPng };
+function formatQuoteMessage(quote) {
+  const price = quote.regularMarketPrice;
+  const change = quote.regularMarketChangePercent;
+  const up = change >= 0;
+  const arrow = up ? '🟢' : '🔴';
+  const sign = up ? '+' : '';
+  const vol = (quote.regularMarketVolume || 0).toLocaleString('en-US');
+  const dayLow = quote.regularMarketDayLow != null ? '$' + quote.regularMarketDayLow.toFixed(2) : 'N/A';
+  const dayHigh = quote.regularMarketDayHigh != null ? '$' + quote.regularMarketDayHigh.toFixed(2) : 'N/A';
+  const w52Low = quote.fiftyTwoWeekLow != null ? '$' + quote.fiftyTwoWeekLow.toFixed(2) : 'N/A';
+  const w52High = quote.fiftyTwoWeekHigh != null ? '$' + quote.fiftyTwoWeekHigh.toFixed(2) : 'N/A';
+  const name = quote.longName || quote.shortName || quote.symbol;
+
+  return [
+    '📊 **$' + quote.symbol + ' — ' + name + '**',
+    '> 💰 Prix : $' + price.toFixed(2) + ' ' + arrow + ' ' + sign + change.toFixed(2) + '%',
+    '> 📦 Volume : ' + vol,
+    '> 📉 Day : ' + dayLow + ' → ' + dayHigh,
+    '> 📆 52W : ' + w52Low + ' → ' + w52High,
+    '> 🏦 Market cap : ' + formatMarketCap(quote.marketCap),
+  ].join('\n');
+}
+
+function isRateLimitError(err) {
+  const msg = String(err && err.message || err);
+  return /429|rate/i.test(msg);
+}
+
+function isUnknownTickerError(err) {
+  const msg = String(err && err.message || err);
+  return /not found|quote.*not.*found|invalid symbol|no fundamentals|404/i.test(msg);
+}
+
+function registerMarketCommands(client, { yahooClient } = {}) {
+  const yc = yahooClient || createYahooClient();
+
+  // ── !price TICKER ───────────────────────────────────────────────────
+  client.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
+    const m = message.content.trim().match(/^!price(?:\s+([A-Za-z$.\-]{1,10}))?$/i);
+    if (!m) return;
+
+    const tickerArg = m[1];
+    if (!tickerArg) {
+      try { await message.reply('❌ Usage: !price TICKER (ex: !price AAPL)'); } catch (_) {}
+      return;
+    }
+    const ticker = tickerArg.replace('$', '').toUpperCase();
+
+    try {
+      const quote = await yc.getQuote(ticker);
+      if (!quote || quote.regularMarketPrice == null) {
+        console.log('[!price] Unknown ticker: ' + ticker);
+        try { await message.reply('❌ Ticker $' + ticker + ' introuvable'); } catch (_) {}
+        return;
+      }
+      await message.reply(formatQuoteMessage(quote));
+    } catch (err) {
+      if (isUnknownTickerError(err)) {
+        console.log('[!price] Unknown ticker: ' + ticker);
+        try { await message.reply('❌ Ticker $' + ticker + ' introuvable'); } catch (_) {}
+        return;
+      }
+      if (isRateLimitError(err)) {
+        console.error('[!price] Rate limited');
+        try { await message.reply('❌ Trop de requêtes, patiente 30s'); } catch (_) {}
+        return;
+      }
+      console.error('[yahoo]', err.stack || err.message);
+      try { await message.reply('❌ Yahoo Finance indisponible, réessaye dans quelques minutes'); } catch (_) {}
+    }
+  });
+}
+
+module.exports = {
+  parseRange,
+  formatMarketCap,
+  createYahooClient,
+  renderChartPng,
+  registerMarketCommands,
+  // exposed for tests
+  formatQuoteMessage,
+};

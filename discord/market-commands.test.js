@@ -116,6 +116,64 @@ test('createYahooClient wraps calls with timeout', async () => {
   await assert.rejects(() => client.getQuote('AAPL'), /timeout/i);
 });
 
+test('createYahooClient dedupes concurrent getQuote calls for same ticker', async () => {
+  const yahoo = {
+    calls: { quote: 0, chart: 0 },
+    quote(t) {
+      this.calls.quote++;
+      return new Promise((resolve) => setImmediate(() => resolve({ regularMarketPrice: 100, symbol: t })));
+    },
+    chart() { this.calls.chart++; return Promise.resolve({ quotes: [] }); },
+  };
+  const client = createYahooClient({ yahoo, now: () => 0, ttlMs: 1000 });
+
+  const [a, b] = await Promise.all([
+    client.getQuote('AAPL'),
+    client.getQuote('AAPL'),
+  ]);
+
+  assert.strictEqual(yahoo.calls.quote, 1, 'concurrent calls must share one underlying request');
+  assert.deepStrictEqual(a, b);
+});
+
+test('createYahooClient dedupes concurrent getChart calls for same ticker+range', async () => {
+  const yahoo = {
+    calls: { quote: 0, chart: 0 },
+    quote() { this.calls.quote++; return Promise.resolve({ regularMarketPrice: 100 }); },
+    chart(t, opts) {
+      this.calls.chart++;
+      return new Promise((resolve) => setImmediate(() => resolve({ quotes: [{ close: 1 }], symbol: t, opts })));
+    },
+  };
+  const client = createYahooClient({ yahoo, now: () => 0, ttlMs: 1000 });
+
+  const [a, b] = await Promise.all([
+    client.getChart('AAPL', '1D'),
+    client.getChart('AAPL', '1D'),
+  ]);
+
+  assert.strictEqual(yahoo.calls.chart, 1, 'concurrent calls must share one underlying request');
+  assert.deepStrictEqual(a, b);
+});
+
+test('createYahooClient does not cache failed getQuote calls', async () => {
+  let calls = 0;
+  const yahoo = {
+    quote: async () => {
+      calls++;
+      if (calls === 1) throw new Error('yahoo 500');
+      return { regularMarketPrice: 100 };
+    },
+    chart: async () => ({ quotes: [] }),
+  };
+  const client = createYahooClient({ yahoo, now: () => 0, ttlMs: 1000 });
+
+  await assert.rejects(() => client.getQuote('AAPL'), /yahoo 500/);
+  const ok = await client.getQuote('AAPL');
+  assert.strictEqual(ok.regularMarketPrice, 100);
+  assert.strictEqual(calls, 2, 'failed call must not poison the cache');
+});
+
 const { renderChartPng } = require('./market-commands');
 
 test('renderChartPng returns a non-empty PNG buffer', () => {
@@ -136,4 +194,45 @@ test('renderChartPng returns a non-empty PNG buffer', () => {
 test('renderChartPng handles empty candles gracefully', () => {
   const buf = renderChartPng([], 'AAPL', '1D');
   assert.ok(Buffer.isBuffer(buf));
+});
+
+const { formatQuoteMessage } = require('./market-commands');
+
+test('formatQuoteMessage renders expected lines for a full quote', () => {
+  const msg = formatQuoteMessage({
+    symbol: 'AAPL',
+    longName: 'Apple Inc.',
+    regularMarketPrice: 174.23,
+    regularMarketChangePercent: 1.24,
+    regularMarketVolume: 52_340_120,
+    regularMarketDayLow: 172.10,
+    regularMarketDayHigh: 175.00,
+    fiftyTwoWeekLow: 124.17,
+    fiftyTwoWeekHigh: 199.62,
+    marketCap: 2_720_000_000_000,
+  });
+  assert.match(msg, /\$AAPL — Apple Inc\./);
+  assert.match(msg, /\$174\.23/);
+  assert.match(msg, /\+1\.24%/);
+  assert.match(msg, /52,340,120/);
+  assert.match(msg, /\$172\.10 → \$175\.00/);
+  assert.match(msg, /\$124\.17 → \$199\.62/);
+  assert.match(msg, /\$2\.72T/);
+});
+
+test('formatQuoteMessage uses red arrow on negative change', () => {
+  const msg = formatQuoteMessage({
+    symbol: 'TSLA',
+    longName: 'Tesla',
+    regularMarketPrice: 200,
+    regularMarketChangePercent: -2.5,
+    regularMarketVolume: 1000,
+    regularMarketDayLow: 195,
+    regularMarketDayHigh: 205,
+    fiftyTwoWeekLow: 100,
+    fiftyTwoWeekHigh: 300,
+    marketCap: 6e11,
+  });
+  assert.match(msg, /🔴/);
+  assert.match(msg, /-2\.50%/);
 });

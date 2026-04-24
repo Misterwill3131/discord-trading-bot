@@ -38,4 +38,56 @@ function formatMarketCap(n) {
   return '$' + n.toLocaleString('en-US');
 }
 
-module.exports = { parseRange, formatMarketCap };
+function withTimeout(promise, ms) {
+  let handle;
+  const timeout = new Promise((_, reject) => {
+    handle = setTimeout(() => reject(new Error('yahoo timeout after ' + ms + 'ms')), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(handle));
+}
+
+function createYahooClient({
+  yahoo,
+  now = () => Date.now(),
+  ttlMs = 30_000,
+  timeoutMs = 10_000,
+} = {}) {
+  if (!yahoo) {
+    // Lazy require to keep the module loadable even if yahoo-finance2 is not installed
+    // in some edge path (tests always inject their own fake).
+    yahoo = require('yahoo-finance2').default;
+  }
+
+  const quoteCache = new Map();
+  const chartCache = new Map();
+
+  async function getQuote(ticker) {
+    const key = String(ticker).toUpperCase();
+    const hit = quoteCache.get(key);
+    if (hit && (now() - hit.ts) < ttlMs) return hit.data;
+    const data = await withTimeout(yahoo.quote(key), timeoutMs);
+    quoteCache.set(key, { ts: now(), data });
+    return data;
+  }
+
+  async function getChart(ticker, range) {
+    const parsed = parseRange(range, new Date(now()));
+    if (!parsed) throw new Error('Invalid range: ' + range);
+    const key = String(ticker).toUpperCase() + '|' + String(range || '1D').toUpperCase();
+    const hit = chartCache.get(key);
+    if (hit && (now() - hit.ts) < ttlMs) return hit.data;
+    const data = await withTimeout(
+      yahoo.chart(String(ticker).toUpperCase(), {
+        interval: parsed.interval,
+        period1: parsed.period1,
+      }),
+      timeoutMs,
+    );
+    chartCache.set(key, { ts: now(), data });
+    return data;
+  }
+
+  return { getQuote, getChart };
+}
+
+module.exports = { parseRange, formatMarketCap, createYahooClient };

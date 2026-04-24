@@ -65,3 +65,53 @@ test('formatMarketCap returns N/A for negative, Infinity, and NaN', () => {
   assert.strictEqual(formatMarketCap(-Infinity), 'N/A');
   assert.strictEqual(formatMarketCap(NaN), 'N/A');
 });
+
+const { createYahooClient } = require('./market-commands');
+
+function makeFakeYahoo({ quoteImpl, chartImpl } = {}) {
+  const calls = { quote: 0, chart: 0 };
+  return {
+    calls,
+    quote: async (t) => { calls.quote++; return quoteImpl ? quoteImpl(t) : { regularMarketPrice: 100 }; },
+    chart: async (t, opts) => { calls.chart++; return chartImpl ? chartImpl(t, opts) : { quotes: [] }; },
+  };
+}
+
+test('createYahooClient caches quote within TTL', async () => {
+  const yahoo = makeFakeYahoo();
+  let clock = 0;
+  const client = createYahooClient({ yahoo, now: () => clock, ttlMs: 1000 });
+
+  await client.getQuote('AAPL');
+  clock = 500;
+  await client.getQuote('AAPL');
+  assert.strictEqual(yahoo.calls.quote, 1, 'second call within TTL should hit cache');
+
+  clock = 1500;
+  await client.getQuote('AAPL');
+  assert.strictEqual(yahoo.calls.quote, 2, 'call after TTL should refetch');
+});
+
+test('createYahooClient cache key includes range for getChart', async () => {
+  const yahoo = makeFakeYahoo();
+  const client = createYahooClient({ yahoo, now: () => 0, ttlMs: 1000 });
+
+  await client.getChart('AAPL', '1D');
+  await client.getChart('AAPL', '5D');
+  assert.strictEqual(yahoo.calls.chart, 2, 'different ranges should be cached separately');
+});
+
+test('createYahooClient getChart throws on invalid range', async () => {
+  const yahoo = makeFakeYahoo();
+  const client = createYahooClient({ yahoo, now: () => 0 });
+  await assert.rejects(() => client.getChart('AAPL', '10Y'), /Invalid range/);
+});
+
+test('createYahooClient wraps calls with timeout', async () => {
+  const yahoo = {
+    quote: () => new Promise(() => {}), // never resolves
+    chart: () => new Promise(() => {}),
+  };
+  const client = createYahooClient({ yahoo, now: () => 0, timeoutMs: 20 });
+  await assert.rejects(() => client.getQuote('AAPL'), /timeout/i);
+});

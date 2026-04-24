@@ -201,8 +201,7 @@ function renderChartPng(candles, ticker, range) {
   const priceColor = rising ? '#2fc774' : '#f5515f';
   drawSeries(closes, priceColor, 2);
 
-  // Légende en haut-droite : ● Close  ● EMA9  ● EMA20
-  // Positionnée à droite du titre, tailles proportionnelles à la police.
+  // Légende en bas-gauche : ■ Close  ■ EMA9  ■ EMA20
   ctx.font = '12px ' + FONT;
   ctx.textAlign = 'left';
   const legendItems = [
@@ -211,22 +210,14 @@ function renderChartPng(candles, ticker, range) {
     { label: 'EMA20', color: '#4ac4ff' },
   ];
   const SWATCH = 8, GAP = 4, ITEM_GAP = 14;
-  // Mesure la largeur totale pour aligner à droite.
-  let totalW = 0;
-  const widths = legendItems.map((it) => {
-    const w = SWATCH + GAP + ctx.measureText(it.label).width;
-    totalW += w;
-    return w;
-  });
-  totalW += ITEM_GAP * (legendItems.length - 1);
-  let cx = W - PAD - totalW;
-  const cy = 24; // aligné avec le titre (baseline y=30)
-  legendItems.forEach((it, idx) => {
+  let cx = PAD;
+  const cy = H - 12; // baseline près du bord inférieur
+  legendItems.forEach((it) => {
     ctx.fillStyle = it.color;
     ctx.fillRect(cx, cy - SWATCH + 1, SWATCH, SWATCH);
     ctx.fillStyle = '#e6edf3';
     ctx.fillText(it.label, cx + SWATCH + GAP, cy);
-    cx += widths[idx] + ITEM_GAP;
+    cx += SWATCH + GAP + ctx.measureText(it.label).width + ITEM_GAP;
   });
 
   return canvas.toBuffer('image/png');

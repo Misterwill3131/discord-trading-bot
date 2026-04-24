@@ -394,6 +394,27 @@ function renderChartPng(candles, ticker, range) {
   if (ema20Series.some(v => v != null)) drawSeries(ema20Series, '#4ac4ff', 1.5);
   if (ema9Series.some(v => v != null))  drawSeries(ema9Series,  '#ffd700', 1.5);
 
+  // ── Légende des overlays (haut-gauche, sous le titre) ─────────────
+  // Seules les séries réellement dessinées apparaissent.
+  const legendItems = [];
+  if (ema9Series.some(v => v != null))  legendItems.push({ label: 'EMA9',  color: '#ffd700' });
+  if (ema20Series.some(v => v != null)) legendItems.push({ label: 'EMA20', color: '#4ac4ff' });
+  if (vwapSeries.some(v => v != null))  legendItems.push({ label: 'VWAP',  color: '#ff59b9' });
+  if (legendItems.length > 0) {
+    ctx.font = '11px ' + FONT;
+    ctx.textAlign = 'left';
+    const SWATCH = 8, SG = 4, IG = 12;
+    let lx = LEFT_PAD + 14;
+    const ly = chartY0 + 14;
+    legendItems.forEach((it) => {
+      ctx.fillStyle = it.color;
+      ctx.fillRect(lx, ly - SWATCH + 1, SWATCH, SWATCH);
+      ctx.fillStyle = TEXT_DIM;
+      ctx.fillText(it.label, lx + SWATCH + SG, ly);
+      lx += SWATCH + SG + ctx.measureText(it.label).width + IG;
+    });
+  }
+
   // ── Pill du prix courant (sur l'axe de droite) ────────────────────
   const currentPriceColor = up ? UP : DOWN;
   ctx.font = 'bold 12px ' + FONT;

@@ -69,26 +69,29 @@ function calcRSI(closes, period = 14) {
 
 // VWAP cumulé (anchored) : Σ(typical_price × volume) / Σ(volume) avec
 // typical_price = (H+L+C)/3, ancré depuis la 1re bougie valide.
-// Retourne un array de même longueur que `bars`, avec null aux index où
-// la bougie n'a pas de H/L/C/V finis ou un volume ≤ 0. Le cumul continue
-// à travers ces trous — le prochain bar valide reprend le VWAP global.
+// Retourne un array de même longueur que `bars`. Sur un bar sans volume
+// exploitable, on ne modifie pas le cumul (donc le ratio est inchangé)
+// et on reprend la dernière valeur VWAP connue — la ligne reste
+// continue. Tant qu'aucun bar valide n'a été vu, on retourne null.
 function calcVWAPSeries(bars) {
   if (!Array.isArray(bars) || bars.length === 0) return [];
   const out = new Array(bars.length).fill(null);
   let cumPV = 0;
   let cumV = 0;
+  let lastVwap = null;
   for (let i = 0; i < bars.length; i++) {
     const b = bars[i];
-    if (!b) continue;
-    const h = b.h, l = b.l, c = b.c, v = b.v;
+    const h = b && b.h, l = b && b.l, c = b && b.c, v = b && b.v;
     if (!Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c)
         || !Number.isFinite(v) || v <= 0) {
+      if (lastVwap != null) out[i] = lastVwap;   // carry forward
       continue;
     }
     const tp = (h + l + c) / 3;
     cumPV += tp * v;
     cumV += v;
-    out[i] = cumPV / cumV;
+    lastVwap = cumPV / cumV;
+    out[i] = lastVwap;
   }
   return out;
 }

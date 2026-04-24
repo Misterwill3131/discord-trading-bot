@@ -95,16 +95,26 @@ test('calcVWAPSeries cumulative anchored VWAP over 3 bars', () => {
   assert.ok(close(s[2], 11), `s[2] expected 11, got ${s[2]}`);
 });
 
-test('calcVWAPSeries skips bars with invalid data but carries cumulative forward', () => {
+test('calcVWAPSeries carries forward over bars with invalid data', () => {
   const bars = [
     { h: 11, l:  9, c: 10, v: 100 }, // valid → vwap=10
-    { h: 12, l: 10, c: 11, v: 0 },   // skip (v=0) → null
+    { h: 12, l: 10, c: 11, v: 0 },   // skip (v=0) → inherit previous (10)
     { h: 13, l: 11, c: 12, v: 100 }, // valid → cumPV=1000+1200=2200, cumV=200, vwap=11
   ];
   const s = calcVWAPSeries(bars);
   assert.ok(close(s[0], 10));
-  assert.strictEqual(s[1], null);
+  assert.ok(close(s[1], 10), 'invalid bar inherits previous VWAP (continuous line)');
   assert.ok(close(s[2], 11));
+});
+
+test('calcVWAPSeries returns null for bars before any valid data', () => {
+  const bars = [
+    { h: 12, l: 10, c: 11, v: 0 },   // pas de VWAP à carry-forward
+    { h: 11, l:  9, c: 10, v: 100 }, // 1er valide → vwap=10
+  ];
+  const s = calcVWAPSeries(bars);
+  assert.strictEqual(s[0], null, 'no previous value to carry');
+  assert.ok(close(s[1], 10));
 });
 
 test('calcVWAPSeries returns empty array for empty input', () => {

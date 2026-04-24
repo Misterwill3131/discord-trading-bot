@@ -11,6 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const { createCanvas } = require('@napi-rs/canvas');
+const { computeIndicators } = require('../trading/indicators');
 
 const VALID_RANGES = {
   '1D': { interval: '5m',  ms: 86_400_000 },
@@ -317,6 +318,64 @@ function registerMarketCommands(client, { yahooClient } = {}) {
     } catch (err) {
       console.error('[!chart] send failed', err.message);
     }
+  });
+
+  // ── !indicator TICKER ───────────────────────────────────────────────
+  client.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
+    const m = message.content.trim().match(/^!indicator(?:\s+([A-Za-z$.\-]{1,10}))?$/i);
+    if (!m) return;
+
+    const tickerArg = m[1];
+    if (!tickerArg) {
+      try { await message.reply('❌ Usage: !indicator TICKER (ex: !indicator AAPL)'); } catch (_) {}
+      return;
+    }
+    const ticker = tickerArg.replace(/\$/g, '').toUpperCase();
+    console.log('[!indicator] ' + ticker + ' requested by ' + message.author.username
+      + ' in #' + (message.channel.name || message.channel.id));
+
+    let yahooCandles;
+    try {
+      const chart = await yc.getChart(ticker, '1D');
+      yahooCandles = (chart && chart.quotes) || [];
+      if (yahooCandles.length === 0) {
+        try { await message.reply('❌ Pas de données disponibles pour $' + ticker); } catch (_) {}
+        return;
+      }
+    } catch (err) {
+      if (isUnknownTickerError(err)) {
+        try { await message.reply('❌ Ticker $' + ticker + ' introuvable'); } catch (_) {}
+        return;
+      }
+      if (isRateLimitError(err)) {
+        try { await message.reply('❌ Trop de requêtes, patiente 30s'); } catch (_) {}
+        return;
+      }
+      console.error('[yahoo]', err.stack || err.message);
+      try { await message.reply('❌ Yahoo Finance indisponible, réessaye dans quelques minutes'); } catch (_) {}
+      return;
+    }
+
+    // Adapt Yahoo shape { date, open, high, low, close, volume } → { t, o, h, l, c, v }
+    const bars = yahooCandles
+      .filter(q => typeof q.close === 'number')
+      .map(q => ({ t: q.date, o: q.open, h: q.high, l: q.low, c: q.close, v: q.volume }));
+
+    const ind = computeIndicators(bars);
+    if (ind.rsi == null || ind.ema9 == null || ind.ema20 == null) {
+      try { await message.reply('❌ Pas assez de données historiques pour $' + ticker); } catch (_) {}
+      return;
+    }
+
+    const lines = [
+      '📈 **$' + ticker + ' — Indicators**',
+      '> Prix : $' + ind.lastPrice.toFixed(2),
+      '> RSI(14) : ' + ind.rsi.toFixed(1),
+      '> EMA(9) : $' + ind.ema9.toFixed(2),
+      '> EMA(20) : $' + ind.ema20.toFixed(2),
+    ];
+    try { await message.reply(lines.join('\n')); } catch (e) { console.error('[!indicator]', e.message); }
   });
 }
 

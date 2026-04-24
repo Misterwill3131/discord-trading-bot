@@ -73,14 +73,12 @@ function createYahooClient({
   async function getChart(ticker, range) {
     const parsed = parseRange(range, new Date(now()));
     if (!parsed) throw new Error('Invalid range: ' + range);
-    const key = String(ticker).toUpperCase() + '|' + String(range || '1D').toUpperCase();
+    const t = String(ticker).toUpperCase();
+    const key = t + '|' + String(range || '1D').toUpperCase();
     const hit = chartCache.get(key);
     if (hit && (now() - hit.ts) < ttlMs) return hit.data;
     const data = await withTimeout(
-      yahoo.chart(String(ticker).toUpperCase(), {
-        interval: parsed.interval,
-        period1: parsed.period1,
-      }),
+      yahoo.chart(t, { interval: parsed.interval, period1: parsed.period1 }),
       timeoutMs,
     );
     chartCache.set(key, { ts: now(), data });

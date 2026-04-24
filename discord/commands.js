@@ -8,10 +8,13 @@
 //   !delete-report   → supprime le tout dernier message posté dans
 //                      #profits (peu importe son contenu)
 //   !news            → top 5 dernières headlines RSS (depuis poller)
+//   !commands        → liste statique de toutes les commandes du bot
 //
 // NE couvre PAS !top et !stats TICKER — celles-ci sont scopées au
 // TRADING_CHANNEL et vivent dans le handler principal (discord/handler.js
 // ou encore dans index.js si pas encore extrait).
+// NE couvre PAS !price / !chart / !indicator — celles-ci vivent dans
+// discord/market-commands.js.
 // ─────────────────────────────────────────────────────────────────────
 
 const { todayKey } = require('../utils/persistence');
@@ -103,6 +106,41 @@ function registerDiscordCommands(client, { profitsChannelId }) {
       console.error('[!delete-report]', e.message);
       try { await message.reply('❌ Error: ' + e.message); } catch (_) {}
     }
+  });
+
+  // ── !commands ──────────────────────────────────────────────────────
+  // Liste statique de toutes les commandes. Mettre à jour à la main
+  // quand on ajoute/retire une commande.
+  client.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
+    if (message.content.trim().toLowerCase() !== '!commands') return;
+
+    const lines = [
+      '📖 **Bot Commands**',
+      '',
+      '**Profits**',
+      '> `!profits` — Daily count + all-time record',
+      '> `!bilan` — Post the full daily summary',
+      '> `!delete-report` — Delete the last message in #profits',
+      '',
+      '**News**',
+      '> `!news` — Top 5 latest headlines',
+      '',
+      '**Trading channel** (trading channel only)',
+      '> `!top` — Today\'s top 3 analysts',
+      '> `!stats TICKER` — Today\'s stats for a ticker',
+      '',
+      '**Market data** (Yahoo Finance)',
+      '> `!price TICKER` — Live quote (price, change%, volume, ranges)',
+      '> `!chart TICKER [RANGE]` — PNG chart (1D/5D/1M/3M/6M/1Y, default 1D)',
+      '> `!indicator TICKER` — RSI(14), EMA(9), EMA(20)',
+      '',
+      '**Utility**',
+      '> `!commands` — Show this list',
+    ];
+
+    try { await message.reply(lines.join('\n')); }
+    catch (e) { console.error('[!commands]', e.message); }
   });
 
   // ── !news ──────────────────────────────────────────────────────────

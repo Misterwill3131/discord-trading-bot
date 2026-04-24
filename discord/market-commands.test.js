@@ -37,3 +37,23 @@ test('parseRange covers 1M/3M/6M/1Y with 1d interval', () => {
     assert.strictEqual(out.interval, '1d', `${r} should use 1d interval`);
   }
 });
+
+const { formatMarketCap } = require('./market-commands');
+
+test('formatMarketCap renders trillions with T suffix', () => {
+  assert.strictEqual(formatMarketCap(2_720_000_000_000), '$2.72T');
+});
+
+test('formatMarketCap renders billions with B suffix', () => {
+  assert.strictEqual(formatMarketCap(45_300_000_000), '$45.30B');
+});
+
+test('formatMarketCap renders millions with M suffix', () => {
+  assert.strictEqual(formatMarketCap(12_100_000), '$12.10M');
+});
+
+test('formatMarketCap returns N/A for falsy input', () => {
+  assert.strictEqual(formatMarketCap(null), 'N/A');
+  assert.strictEqual(formatMarketCap(undefined), 'N/A');
+  assert.strictEqual(formatMarketCap(0), 'N/A');
+});

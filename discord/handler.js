@@ -137,7 +137,7 @@ async function sendToMakeWebhook(makeWebhookUrl, payload) {
 // ─────────────────────────────────────────────────────────────────────
 // Handler principal — enregistre le listener sur client.on('messageCreate')
 // ─────────────────────────────────────────────────────────────────────
-function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhookUrl, tradingEngine }) {
+function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhookUrl, tradingEngine, sendEmailAlert }) {
   client.on('messageCreate', async (message) => {
     // Bots OK uniquement s'ils viennent d'un webhook (Make, bridge, etc).
     if (message.author.bot && !message.webhookId) return;
@@ -304,6 +304,22 @@ function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhoo
 
     const sendType = filterType || 'neutral';
     console.log('[' + sendType.toUpperCase() + ']' + (isReply ? ' [REPLY]' : '') + ' ' + content);
+
+    // ── Email alert sur entries originales (non-reply) des analystes ─
+    // sendEmailAlert filtre lui-même sur le préfixe 📥 et no-op si les env
+    // vars Resend manquent. Async + throw-safe — fire & forget.
+    if (sendEmailAlert && filterType === 'entry' && signalTicker && !isReply) {
+      const entryPx = pricesForLog.entry_price;
+      const targetPx = pricesForLog.target_price;
+      const priceLine = [
+        entryPx != null ? 'entry=' + entryPx : null,
+        targetPx != null ? 'target=' + targetPx : null,
+      ].filter(Boolean).join(' ');
+      const emailMsg = '📥 **ENTRY** $' + signalTicker.toUpperCase() + ' — ' + authorName
+        + (priceLine ? '\n• ' + priceLine : '')
+        + '\n• ' + content.slice(0, 500);
+      sendEmailAlert(emailMsg);
+    }
 
     // ── Génération image (signal ou proof si c'est une reply) ────────
     let imageUrl = null;

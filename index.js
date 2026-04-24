@@ -144,24 +144,19 @@ async function sendTradingAlert(message) {
   }
 }
 
+// Email notifier : utilisé par discord/handler pour les alertes d'analystes
+// (et non par le trading engine — les trades réels restent Discord-only).
 const sendEmailAlert = createEmailNotifier({
   apiKey: RESEND_API_KEY,
   to:     ALERT_EMAIL_TO,
   from:   ALERT_EMAIL_FROM,
 });
 
-async function notifyAll(message) {
-  await Promise.allSettled([
-    sendTradingAlert(message),
-    sendEmailAlert(message),
-  ]);
-}
-
 const tradingEngine = createTradingEngine({
   config: loadTradingConfig,     // function — re-read each call
   marketData: tradingMarketData,
   broker: tradingBroker,
-  notifier: notifyAll,
+  notifier: sendTradingAlert,
 });
 
 // Wire broker events → engine.
@@ -229,6 +224,7 @@ registerTradingHandler(client, {
   railwayUrl: RAILWAY_URL,
   makeWebhookUrl: MAKE_WEBHOOK_URL,
   tradingEngine,
+  sendEmailAlert,
 });
 startScheduler({ client, tradingChannel: TRADING_CHANNEL });
 

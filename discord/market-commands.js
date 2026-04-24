@@ -30,7 +30,8 @@ function parseRange(arg, now = new Date()) {
 }
 
 function formatMarketCap(n) {
-  if (!n || typeof n !== 'number') return 'N/A';
+  // Yahoo peut renvoyer -1 comme sentinel "unavailable" → on traite comme N/A.
+  if (!Number.isFinite(n) || n <= 0) return 'N/A';
   if (n >= 1e12) return '$' + (n / 1e12).toFixed(2) + 'T';
   if (n >= 1e9)  return '$' + (n / 1e9).toFixed(2)  + 'B';
   if (n >= 1e6)  return '$' + (n / 1e6).toFixed(2)  + 'M';

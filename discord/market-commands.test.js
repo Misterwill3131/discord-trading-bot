@@ -57,3 +57,11 @@ test('formatMarketCap returns N/A for falsy input', () => {
   assert.strictEqual(formatMarketCap(undefined), 'N/A');
   assert.strictEqual(formatMarketCap(0), 'N/A');
 });
+
+test('formatMarketCap returns N/A for negative, Infinity, and NaN', () => {
+  assert.strictEqual(formatMarketCap(-1), 'N/A', 'Yahoo -1 sentinel');
+  assert.strictEqual(formatMarketCap(-2_700_000_000_000), 'N/A');
+  assert.strictEqual(formatMarketCap(Infinity), 'N/A');
+  assert.strictEqual(formatMarketCap(-Infinity), 'N/A');
+  assert.strictEqual(formatMarketCap(NaN), 'N/A');
+});

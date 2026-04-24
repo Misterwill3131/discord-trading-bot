@@ -12,6 +12,7 @@
 
 const { createCanvas } = require('@napi-rs/canvas');
 const { computeIndicators } = require('../trading/indicators');
+const { FONT } = require('../canvas/config');
 
 const VALID_RANGES = {
   '1D': { interval: '5m',  ms: 86_400_000 },
@@ -126,13 +127,13 @@ function renderChartPng(candles, ticker, range) {
 
   // Title
   ctx.fillStyle = '#e6edf3';
-  ctx.font = 'bold 20px sans-serif';
+  ctx.font = 'bold 20px ' + FONT;
   ctx.fillText('$' + ticker + ' — ' + range, PAD, 30);
 
   const closes = (candles || []).map(c => c.close).filter(c => Number.isFinite(c));
   if (closes.length < 2) {
     ctx.fillStyle = '#8b949e';
-    ctx.font = '16px sans-serif';
+    ctx.font = '16px ' + FONT;
     ctx.fillText('Not enough data to render chart.', PAD, H / 2);
     return canvas.toBuffer('image/png');
   }
@@ -159,7 +160,7 @@ function renderChartPng(candles, ticker, range) {
     ctx.lineTo(W - PAD, y(v));
     ctx.stroke();
     ctx.fillStyle = '#8b949e';
-    ctx.font = '12px sans-serif';
+    ctx.font = '12px ' + FONT;
     ctx.fillText('$' + v.toFixed(2), PAD - 4, y(v) + 4);
   });
   ctx.textAlign = 'left';

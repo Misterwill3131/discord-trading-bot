@@ -27,6 +27,7 @@ const {
 const { setDiscordClient: setCanvasDiscordClient } = require('./canvas/proof');
 const { registerTradingHandler } = require('./discord/handler');
 const { registerDiscordCommands } = require('./discord/commands');
+const { registerMarketCommands } = require('./discord/market-commands');
 const { registerProfitListener } = require('./discord/profit-listener');
 const { startScheduler } = require('./discord/jobs');
 const newsPoller = require('./news/poller');
@@ -223,6 +224,7 @@ discordClientRef = client;  // active sendTradingAlert()
 // Listeners + scheduler. Les helpers internes font eux-mêmes leur
 // `client.once('ready')` si nécessaire — pas de ordre requis ici.
 registerDiscordCommands(client, { profitsChannelId: PROFITS_CHANNEL_ID });
+registerMarketCommands(client);
 registerProfitListener(client, { profitsChannelId: PROFITS_CHANNEL_ID });
 registerTradingHandler(client, {
   tradingChannel: TRADING_CHANNEL,

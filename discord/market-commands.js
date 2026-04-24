@@ -392,7 +392,11 @@ function renderChartPng(candles, ticker, range) {
   ctx.setLineDash([]);
 
   // ── Axe temporel : 5 ticks évenly-spaced + date à gauche ──────────
-  const daily = interval === '1d';
+  // Labels "HH:mm" seulement pour 1D (session unique). Sinon labels
+  // "MMM dd" — l'heure n'apporte rien quand le range s'étale sur
+  // plusieurs jours, et ça évite les labels ambigus type "22:00"
+  // qui peuvent appartenir à n'importe quel jour du range.
+  const useDateLabels = String(range).toUpperCase() !== '1D';
   ctx.font = '11px ' + FONT;
   ctx.fillStyle = TEXT_DIM;
   ctx.textAlign = 'center';
@@ -401,7 +405,7 @@ function renderChartPng(candles, ticker, range) {
     const idx = Math.round((k / (tickCount - 1)) * (N - 1));
     const xx = xCenter(idx);
     const date = validCandles[idx].date;
-    ctx.fillText(formatTimeLabel(date, daily), xx, timeY);
+    ctx.fillText(formatTimeLabel(date, useDateLabels), xx, timeY);
   }
   // Date complète sous la zone des labels de temps, alignée à gauche
   // dans la marge pour ne jamais sortir du canvas.

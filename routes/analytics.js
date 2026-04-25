@@ -199,6 +199,9 @@ function registerAnalyticsRoutes(app, requireAuth, messageLog) {
       msgs.forEach(m => {
         if (!m.passed || !m.author) return;
         if (!m.ticker) return;
+        // Skip self-referenced tickers : analyste qui signe avec son nom
+        // (ex. auteur "ZZ" + ticker détecté "ZZ"). Pas un vrai signal.
+        if (m.ticker.toUpperCase() === m.author.toUpperCase()) return;
         const prices = extractPrices(m.content || '');
         if (prices.entry_price === null || prices.target_price === null) return;
         if (!authorStats[m.author]) authorStats[m.author] = { signals: 0, tickers: {} };
@@ -235,6 +238,8 @@ function registerAnalyticsRoutes(app, requireAuth, messageLog) {
       msgs.forEach(m => {
         if (!m.passed || !m.author || m.author !== author) return;
         if (!m.ticker) return;
+        // Skip self-referenced tickers (cohérent avec /api/leaderboard).
+        if (m.ticker.toUpperCase() === m.author.toUpperCase()) return;
         const prices = extractPrices(m.content || '');
         if (prices.entry_price === null || prices.target_price === null) return;
         signals.push({

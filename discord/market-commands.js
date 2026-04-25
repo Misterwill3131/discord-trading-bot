@@ -314,7 +314,9 @@ function renderChartPng(candles, ticker, range) {
   //    outlier (spike illiquide pre/post-market chez Yahoo) compresse
   //    toute la zone principale. On prend le 2e/98e percentile des
   //    highs et lows, puis on ajoute un padding 5% de chaque côté.
-  //    Les wicks qui dépassent seront clippés à la bbox du plot. ─────
+  //    Les valeurs hors percentile sont visuellement CLAMPED à
+  //    [minY, maxY] (PAS [minC, maxC]) pour qu'un wick extrême
+  //    s'arrête à 5% du bord du chart, pas pile sur le bord. ────────
   function percentile(arr, p) {
     if (arr.length === 0) return 0;
     const sorted = [...arr].sort((a, b) => a - b);
@@ -334,6 +336,7 @@ function renderChartPng(candles, ticker, range) {
   const minC = minY - yPad;
   const maxC = maxY + yPad;
   const span = maxC - minC;
+  const clampToRange = (v) => Math.max(minY, Math.min(maxY, v));
 
   // ── Helpers de projection ─────────────────────────────────────────
   // Candle centre en x = plotX0 + (i + 0.5) * slotW, slotW = plotW / N.
@@ -467,58 +470,35 @@ function renderChartPng(candles, ticker, range) {
 
   // ── Candlesticks ──────────────────────────────────────────────────
   // Body : max 80% du slot, min 1px, wick toujours au centre.
-  // Pour éviter que les outliers (single-print pre/post-market) tracent
-  // des lignes verticales jusqu'au bord du chart :
-  //   - on skip la bougie si elle est intégralement hors du scale
-  //     (percentile-clipped)
-  //   - on omet la portion haute de la mèche si high > maxC
-  //   - on omet la portion basse de la mèche si low  < minC
-  // → le body reste visible, les mèches extrêmes sont tronquées
-  //   proprement sans "spike" jusqu'au bord.
+  // On dessine TOUTES les bougies (pas de filtre/skip qui crée des gaps
+  // visuels). Les valeurs hors percentile [minY, maxY] sont clampées
+  // visuellement : un wick extrême s'arrête à 5% du bord du chart au
+  // lieu de tracer une ligne verticale jusqu'à l'edge.
   const bodyW = Math.max(1, Math.min(slotW * 0.7, 12));
-  const outOfScale = (v) => v < minC || v > maxC;
-
-  // Filtre anti-outlier basé sur la range (H−L) de chaque bar.
-  // Un single-print en after-hours peut produire un bar "in-scale" mais
-  // avec une range démesurée (ex: 5pt sur SPY 5m alors que la médiane
-  // est 0.2pt) — visuellement une grosse ligne verticale. On skip tout
-  // bar dont la range > 8× la médiane des ranges.
-  const ranges = [];
-  for (let i = 0; i < N; i++) {
-    const r = highs[i] - lows[i];
-    if (Number.isFinite(r) && r >= 0) ranges.push(r);
-  }
-  const sortedRanges = [...ranges].sort((a, b) => a - b);
-  const medianRange = sortedRanges.length
-    ? sortedRanges[Math.floor(sortedRanges.length / 2)]
-    : 0;
-  const maxReasonableRange = medianRange > 0
-    ? medianRange * 8
-    : Number.POSITIVE_INFINITY;
-
   for (let i = 0; i < N; i++) {
     const o = opens[i], h = highs[i], l = lows[i], c = closes[i];
-    // Skip toute bougie dont un OHLC sort du scale percentile-clipped,
-    // OU dont la range est clairement aberrante vs la médiane.
-    if (outOfScale(o) || outOfScale(h) || outOfScale(l) || outOfScale(c)) continue;
-    if ((h - l) > maxReasonableRange) continue;
-
     const cx = xCenter(i);
     const isUp = c >= o;
     const color = isUp ? UP : DOWN;
 
-    const yOpen = y(o), yClose = y(c);
+    const yOpen = y(clampToRange(o));
+    const yClose = y(clampToRange(c));
     const bodyTop = Math.min(yOpen, yClose);
     const bodyBottom = Math.max(yOpen, yClose);
     const bodyH = Math.max(1, bodyBottom - bodyTop);
 
-    // Wick complet (high → low) puisqu'on a déjà filtré les outliers.
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(cx, y(h));
-    ctx.lineTo(cx, y(l));
-    ctx.stroke();
+    // Wick clampé au percentile range — évite les outlier bars qui
+    // tracent des lignes verticales jusqu'au bord du chart.
+    const yH = y(clampToRange(h));
+    const yL = y(clampToRange(l));
+    if (yH < yL) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx, yH);
+      ctx.lineTo(cx, yL);
+      ctx.stroke();
+    }
 
     ctx.fillStyle = color;
     ctx.fillRect(cx - bodyW / 2, bodyTop, bodyW, bodyH);

@@ -202,23 +202,31 @@ function startScheduler({ client, tradingChannel }) {
         sendDailySummary(client, tradingChannel);
       }
 
-      // 20:00 EDT → résumé profits (lundi-vendredi uniquement, fuseau NY).
-      // Le weekend on skip : pas de marché US ouvert donc pas de profits à
-      // rapporter. EDT = UTC-4 (été) ou UTC-5 (hiver), donc 20:00 EDT =
-      // 00:00 UTC (été) ou 01:00 UTC (hiver). getDay() en NY :
-      // 0=dim, 6=sam, 1-5=jours ouvrés.
-      const utcH = now.getUTCHours();
-      const utcM = now.getUTCMinutes();
-      const nyDay = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' })).getDay();
-      const isWeekday = nyDay >= 1 && nyDay <= 5;
-      if (isWeekday && (utcH === 0 || utcH === 1) && utcM === 0
+      // 20:00 ET → résumé profits (lundi-vendredi uniquement).
+      // On lit l'heure DIRECTEMENT en fuseau NY plutôt que de jouer avec
+      // les offsets UTC EDT/EST — ça évite le double déclenchement à la
+      // transition d'horaires été/hiver et le bug "redémarrage entre les
+      // deux fenêtres" qui faisait reposter le rapport.
+      const nyParts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York',
+        hour: '2-digit', minute: '2-digit', weekday: 'short', hour12: false,
+      }).formatToParts(now).reduce((acc, p) => (acc[p.type] = p.value, acc), {});
+      const nyHour = parseInt(nyParts.hour, 10);
+      const nyMin  = parseInt(nyParts.minute, 10);
+      const nyDayName = nyParts.weekday; // "Mon", "Sat", etc.
+      const isWeekday = !['Sat', 'Sun'].includes(nyDayName);
+
+      if (isWeekday && nyHour === 20 && nyMin === 0
           && profitCounter.getLastSummaryDate() !== todayStr) {
-        profitCounter.setLastSummaryDate(todayStr);
-        profitCounter.sendDailyProfitSummary();
+        // On envoie d'abord ; on ne marque comme "déjà fait" que sur succès.
+        // Comme ça, si Discord est down on retentera à la minute suivante.
+        profitCounter.sendDailyProfitSummary()
+          .then(() => profitCounter.setLastSummaryDate(todayStr))
+          .catch(err => console.error('[profits] Daily summary retry-able:', err.message));
       }
 
-      // Minuit EDT → backup git. Minuit EDT = 04:00 UTC (été) ou 05:00 UTC (hiver).
-      if ((utcH === 4 || utcH === 5) && utcM === 0 && lastBackupDate !== todayStr) {
+      // Minuit ET → backup git. Lecture en fuseau NY pour la même raison.
+      if (nyHour === 0 && nyMin === 0 && lastBackupDate !== todayStr) {
         lastBackupDate = todayStr;
         runGitBackup();
       }

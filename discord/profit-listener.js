@@ -18,7 +18,6 @@
 // Si `counted`, on incrémente aussi le compteur daily via addProfitMessage.
 // ─────────────────────────────────────────────────────────────────────
 
-const { todayKey } = require('../utils/persistence');
 const { detectTicker } = require('../utils/prices');
 const profitCounter = require('../profit/counter');
 
@@ -66,10 +65,9 @@ function registerProfitListener(client, { profitsChannelId }) {
     const { counted, reason } = classifyProfitMessage(content, hasImage);
 
     // On stocke TOUS les messages (même ignorés) pour permettre le review
-    // + feedback learned dans le dashboard /profits.
-    const dateKey = todayKey();
-    const msgs = profitCounter.loadProfitMessages(dateKey);
-    msgs.push({
+    // + feedback learned dans le dashboard /profits. Insert direct en DB
+    // pour rester O(1) — pas de re-chargement de la liste journalière.
+    profitCounter.appendProfitMessage({
       id: Date.now() + '-' + Math.random().toString(36).slice(2, 7),
       ts: new Date().toISOString(),
       author: message.author.username,
@@ -84,7 +82,6 @@ function registerProfitListener(client, { profitsChannelId }) {
       reason,
       feedback: null,
     });
-    profitCounter.saveProfitMessages(dateKey, msgs);
 
     console.log('[profits] ' + reason + ' in #profits from ' + message.author.username + ' → counted=' + counted);
 

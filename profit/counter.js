@@ -26,10 +26,6 @@ const dbMod = require('../db/sqlite');
 
 // ── Constantes partagées ─────────────────────────────────────────────
 
-// Paliers de félicitations (non utilisés actuellement — gardés pour
-// compat avec d'anciennes versions qui taguaient les jalons).
-const PROFIT_MILESTONES = [10, 25, 50, 100, 150, 200];
-
 // Reconnait "0.34-0.55", "1.20 to 4.00", ".97 -- 3.05", "18.60–19.90".
 // Les points leading (.97) sont tolérés (notation trader informelle).
 const PROFIT_PATTERN = /\.?\d+(?:\.\d+)?\s*(?:[-–]+|to)\s*\.?\d+(?:\.\d+)?/gi;
@@ -88,6 +84,10 @@ function loadProfitData(dateKey)       { return dbMod.getProfitData(dateKey); }
 function saveProfitData(dateKey, data) { dbMod.setProfitData(dateKey, data); }
 
 function loadProfitMessages(dateKey)   { return dbMod.getProfitMessagesByDate(dateKey); }
+
+// Insert direct d'un seul message en DB — O(1), évite de recharger
+// toute la liste journalière. À utiliser dans le hot path du listener.
+function appendProfitMessage(msg) { return dbMod.insertProfitMessage(msg); }
 
 // saveProfitMessages : l'ancien caller faisait un dump complet de
 // l'array modifié. On détecte les nouvelles entrées (celles dont l'id
@@ -170,7 +170,6 @@ function setLastSummaryDate(d) { lastProfitSummaryDate = d; }
 async function addProfitMessage(content, forceCount) {
   const dateKey = todayKey();
   const data = loadProfitData(dateKey);
-  if (!data.milestones) data.milestones = [];
   const entries = forceCount !== undefined ? forceCount : countProfitEntries(content);
   data.count = (data.count || 0) + entries;
   saveProfitData(dateKey, data);
@@ -187,7 +186,10 @@ function getProfitRecord() {
   for (let i = 0; i < 90; i++) {
     const d = new Date();
     d.setDate(d.getDate() - i);
-    const dateKey = d.toISOString().slice(0, 10);
+    // Fuseau NY pour rester cohérent avec todayKey() / loadProfitData /
+    // /api/profits-history / buildProfitSummaryMsg. Sans ça, entre 19h et
+    // 23h59 NY (= 00h-04h UTC le lendemain) on lirait une date inexistante.
+    const dateKey = d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
     const data = loadProfitData(dateKey);
     if ((data.count || 0) > recordCount) {
       recordCount = data.count;
@@ -272,7 +274,6 @@ async function sendDailyProfitSummary() {
 
 module.exports = {
   // Constantes
-  PROFIT_MILESTONES,
   PROFIT_PATTERN,
   PROFIT_PHRASE_MAX,
 
@@ -286,6 +287,7 @@ module.exports = {
   loadProfitData,
   saveProfitData,
   loadProfitMessages,
+  appendProfitMessage,
   saveProfitMessages,
   saveProfitFilters,
 

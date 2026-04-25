@@ -6,6 +6,7 @@ profit-messages-*.json
 profit-filters.json
 custom-filters.json
 .claude/worktrees/
+.superpowers/
 *.log
 
 # SQLite database (vit dans DATA_DIR = /data sur Railway, racine en local).

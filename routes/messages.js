@@ -12,7 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const { BLOCKED_AUTHORS } = require('../utils/authors');
-const { extractPrices } = require('../utils/prices');
+const { extractPrices, extractExitGainPct } = require('../utils/prices');
 const { messageLog, registerSSEClient } = require('../state/messages');
 
 // Applique les filtres ?from= et ?to= (timestamps ISO) sur un array de messages.
@@ -48,14 +48,19 @@ function registerMessageRoutes(app, requireAuth) {
     );
     msgs = applyDateRange(msgs, req.query);
 
-    // Enrichit les 'exit' avec exit_price parsé depuis content — permet au
-    // client de calculer le P&L sans dupliquer le parser en JS navigateur.
+    // Enrichit les 'exit' avec exit_price et exit_gain_pct parsés depuis
+    // content. Permet au client de calculer le P&L sans dupliquer le parser
+    // en JS navigateur. exit_gain_pct capture les annonces "TICKER +29%",
+    // "up 8%", "locked in 20%" où l'utilisateur donne directement le P&L
+    // réalisé sans mentionner un prix de sortie explicite.
     msgs = msgs.map(m => {
       if (m.type === 'exit') {
         const parsed = extractPrices(m.content || '');
-        if (parsed.exit_price != null) {
-          return Object.assign({}, m, { exit_price: parsed.exit_price });
-        }
+        const gainPct = extractExitGainPct(m.content || '');
+        const extras = {};
+        if (parsed.exit_price != null) extras.exit_price = parsed.exit_price;
+        if (gainPct != null) extras.exit_gain_pct = gainPct;
+        if (Object.keys(extras).length) return Object.assign({}, m, extras);
       }
       return m;
     });

@@ -5,14 +5,16 @@
 //   !profits         → compteur du jour + record all-time
 //   !bilan           → rapport journalier Markdown (même contenu que
 //                      celui posté automatiquement à 20h EDT)
-//   !delete-report   → supprime le dernier rapport journalier posté
-//                      dans #profits (retrouve par ID sauvegardé ou
-//                      par scan des 50 derniers messages)
+//   !delete-report   → supprime le tout dernier message posté dans
+//                      #profits (peu importe son contenu)
 //   !news            → top 5 dernières headlines RSS (depuis poller)
+//   !commands        → liste statique de toutes les commandes du bot
 //
 // NE couvre PAS !top et !stats TICKER — celles-ci sont scopées au
 // TRADING_CHANNEL et vivent dans le handler principal (discord/handler.js
 // ou encore dans index.js si pas encore extrait).
+// NE couvre PAS !price / !chart / !indicator — celles-ci vivent dans
+// discord/market-commands.js.
 // ─────────────────────────────────────────────────────────────────────
 
 const { todayKey } = require('../utils/persistence');
@@ -69,54 +71,76 @@ function registerDiscordCommands(client, { profitsChannelId }) {
   });
 
   // ── !delete-report ─────────────────────────────────────────────────
-  // Workflow "undo" pour le daily summary : supprime le message posté
-  // par le bot dans #profits. On essaie d'abord l'ID mémorisé (certain
-  // match), fallback vers scan du contenu dans les 50 derniers messages.
+  // Supprime le tout dernier message posté dans #profits, peu importe
+  // son auteur ou son contenu.
   client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
     if (message.content.trim().toLowerCase() !== '!delete-report') return;
 
     if (!profitsChannelId) {
-      try { await message.reply('❌ PROFITS_CHANNEL_ID non configuré.'); } catch (_) {}
+      try { await message.reply('❌ PROFITS_CHANNEL_ID not configured.'); } catch (_) {}
       return;
     }
 
     try {
       const ch = client.channels.cache.get(profitsChannelId);
-      if (!ch) { await message.reply('❌ Salon #profits introuvable.'); return; }
+      if (!ch) { await message.reply('❌ #profits channel not found.'); return; }
 
-      let targetMsg = null;
-
-      // 1. Essai par ID mémorisé — plus rapide + certain match.
-      const savedMsgId = profitCounter.getLastSummaryMessageId();
-      if (savedMsgId) {
-        try { targetMsg = await ch.messages.fetch(savedMsgId); } catch (_) {}
-      }
-
-      // 2. Fallback : scan des 50 derniers messages du canal, on retient
-      //    le message le plus récent posté par le bot (peu importe le contenu).
-      if (!targetMsg) {
-        const fetched = await ch.messages.fetch({ limit: 50 });
-        targetMsg = fetched.find(m => m.author.id === client.user.id) || null;
-      }
+      const fetched = await ch.messages.fetch({ limit: 1 });
+      const targetMsg = fetched.first();
 
       if (!targetMsg) {
-        await message.reply('❌ Aucun message du bot trouvé dans #profits.');
+        await message.reply('❌ No messages found in #profits.');
         return;
       }
 
       await targetMsg.delete();
-      // Évite que !delete-report enchaîné supprime un message plus ancien
-      // en vidant le pointeur si on a bien supprimé celui qu'on visait.
+      // Si le dernier message correspondait au summary sauvegardé,
+      // vide le pointeur pour éviter de pointer vers un message supprimé.
       if (profitCounter.getLastSummaryMessageId() === targetMsg.id) {
         profitCounter.clearLastSummaryMessageId();
       }
-      console.log('[!delete-report] Report deleted by ' + message.author.username);
+      console.log('[!delete-report] Last message deleted by ' + message.author.username);
       try { await message.react('✅'); } catch (_) {}
     } catch (e) {
       console.error('[!delete-report]', e.message);
-      try { await message.reply('❌ Erreur : ' + e.message); } catch (_) {}
+      try { await message.reply('❌ Error: ' + e.message); } catch (_) {}
     }
+  });
+
+  // ── !commands ──────────────────────────────────────────────────────
+  // Liste statique de toutes les commandes. Mettre à jour à la main
+  // quand on ajoute/retire une commande.
+  client.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
+    if (message.content.trim().toLowerCase() !== '!commands') return;
+
+    const lines = [
+      '📖 **Bot Commands**',
+      '',
+      '**Profits**',
+      '> `!profits` — Daily count + all-time record',
+      '> `!bilan` — Post the full daily summary',
+      '> `!delete-report` — Delete the last message in #profits',
+      '',
+      '**News**',
+      '> `!news` — Top 5 latest headlines',
+      '',
+      '**Trading channel** (trading channel only)',
+      '> `!top` — Today\'s top 3 analysts',
+      '> `!stats TICKER` — Today\'s stats for a ticker',
+      '',
+      '**Market data** (Yahoo Finance)',
+      '> `!price TICKER` — Live quote (price, change%, volume, ranges)',
+      '> `!chart TICKER [RANGE]` — PNG chart; RANGE ∈ 1m / 2m / 5m / 15m / 30m / 1h / 4h / 1D / 5D / 1M / 3M / 6M / 1Y (default 1D)',
+      '> `!indicator TICKER` — RSI(14), EMA(9), EMA(20)',
+      '',
+      '**Utility**',
+      '> `!commands` — Show this list',
+    ];
+
+    try { await message.reply(lines.join('\n')); }
+    catch (e) { console.error('[!commands]', e.message); }
   });
 
   // ── !news ──────────────────────────────────────────────────────────

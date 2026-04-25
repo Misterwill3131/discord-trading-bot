@@ -84,13 +84,13 @@ async function handleStatsCommand(message, ticker) {
   const topAuthors = Object.keys(authorMap)
     .map(k => k + ' (' + authorMap[k] + ')')
     .sort((a, b) => authorMap[b.split(' ')[0]] - authorMap[a.split(' ')[0]]);
-  const authorStr = topAuthors.length ? topAuthors.join(', ') : 'Aucun';
+  const authorStr = topAuthors.length ? topAuthors.join(', ') : 'None';
 
   const lines = [
-    '**📈 Stats $' + ticker + ' — aujourd\'hui**',
-    '> Signaux : ' + total,
-    '> Acceptés : ' + accepted + ' | Filtrés : ' + filtered,
-    '> Auteurs : ' + authorStr,
+    '**📈 Stats $' + ticker + ' — Today**',
+    '> Signals: ' + total,
+    '> Accepted: ' + accepted + ' | Filtered: ' + filtered,
+    '> Authors: ' + authorStr,
   ];
   try { await message.reply(lines.join('\n')); } catch (e) { console.error('[!stats]', e.message); }
 }
@@ -135,9 +135,60 @@ async function sendToMakeWebhook(makeWebhookUrl, payload) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Email formatting pour les alertes d'analystes
+// ─────────────────────────────────────────────────────────────────────
+// Username Discord de l'analyste RF : reçoit le message complet au lieu
+// du format minimal utilisé pour les autres analystes.
+const RF_USERNAME = 'rf0496_76497';
+
+// Nettoie le contenu Discord pour un email — contrairement à
+// stripDiscordMeta (utils/prices.js) qui collapse tout en une ligne,
+// cette version PRÉSERVE les retours ligne (critique pour les messages
+// structurés de RF : buy / add / targets / SL sur des lignes séparées).
+function cleanContentForEmail(text) {
+  if (!text) return '';
+  return text
+    // Ligne complète "> *Replying to ... [message](url)*" (+ le \n)
+    .replace(/^>\s*\*?Replying to[^\n]*\n?/gim, '')
+    // Emojis custom Discord : <:name:id> ou <a:name:id>
+    .replace(/<a?:[^:>]+:\d+>/g, '')
+    // Mentions user/role : <@123>, <@!123>, <@&123>
+    .replace(/<@[!&]?\d+>/g, '')
+    // Mentions channel : <#123>
+    .replace(/<#\d+>/g, '')
+    // Markdown liens [text](url) → ne garde que text
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    // URLs discord.com brutes
+    .replace(/https?:\/\/(?:www\.)?discord(?:app)?\.com\/\S+/gi, '')
+    // Espaces horizontaux multiples → un seul (mais pas les \n)
+    .replace(/[ \t]+/g, ' ')
+    // Trim chaque ligne pour virer le whitespace résiduel après strip
+    .split('\n').map(l => l.trim()).join('\n')
+    // Max 2 \n consécutifs (= max 1 ligne vide entre paragraphes)
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// Formate le message email pour une alerte d'entrée d'analyste.
+// - Par défaut : une ligne "📥 $TICKER entry PRICE (author)"
+// - Pour RF    : header + contenu complet nettoyé (multiline)
+// Le préfixe 📥 est requis par le filtre de createEmailNotifier.
+function formatAnalystEntryEmail({ authorName, signalTicker, entryPx, content }) {
+  const ticker = '$' + signalTicker.toUpperCase();
+
+  if (authorName === RF_USERNAME) {
+    const cleaned = cleanContentForEmail(content);
+    return '📥 ' + ticker + ' (' + authorName + ')\n\n' + cleaned;
+  }
+
+  const priceStr = entryPx != null ? String(entryPx) : '—';
+  return '📥 ' + ticker + ' entry ' + priceStr + ' (' + authorName + ')';
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // Handler principal — enregistre le listener sur client.on('messageCreate')
 // ─────────────────────────────────────────────────────────────────────
-function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhookUrl, tradingEngine }) {
+function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhookUrl, tradingEngine, sendEmailAlert }) {
   client.on('messageCreate', async (message) => {
     // Bots OK uniquement s'ils viennent d'un webhook (Make, bridge, etc).
     if (message.author.bot && !message.webhookId) return;
@@ -305,6 +356,19 @@ function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhoo
     const sendType = filterType || 'neutral';
     console.log('[' + sendType.toUpperCase() + ']' + (isReply ? ' [REPLY]' : '') + ' ' + content);
 
+    // ── Email alert sur entries originales (non-reply) des analystes ─
+    // sendEmailAlert filtre lui-même sur le préfixe 📥 et no-op si les env
+    // vars Resend manquent. Async + throw-safe — fire & forget.
+    if (sendEmailAlert && filterType === 'entry' && signalTicker && !isReply) {
+      const emailMsg = formatAnalystEntryEmail({
+        authorName,
+        signalTicker,
+        entryPx: pricesForLog.entry_price,
+        content,
+      });
+      sendEmailAlert(emailMsg);
+    }
+
     // ── Génération image (signal ou proof si c'est une reply) ────────
     let imageUrl = null;
     try {
@@ -399,4 +463,7 @@ module.exports = {
   handleTopCommand,
   handleStatsCommand,
   findOriginalAlert,
+  cleanContentForEmail,
+  formatAnalystEntryEmail,
+  RF_USERNAME,
 };

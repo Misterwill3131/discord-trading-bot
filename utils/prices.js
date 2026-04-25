@@ -205,11 +205,48 @@ function enrichContent(content) {
   return content + ' | Gain: ' + sign + gain_pct + '%';
 }
 
+// Extrait le P&L réalisé annoncé dans un message d'exit.
+// Couvre :
+//   "TICKER +29%"       → 29
+//   "TICKER -5%"        → -5
+//   "NVDA up 8%"        → 8
+//   "AMD down 3.5%"     → -3.5
+//   "locked in 20%"     → 20
+// Retourne un number signé (+ = gain, - = perte) ou null si rien.
+// Utilisé quand ni exit_price ni entry_price ne sont parsables : si on
+// a juste "+29%" dans le message, c'est suffisant pour afficher le P&L
+// sans avoir à apparier l'exit à une entry avec prix.
+function extractExitGainPct(content) {
+  if (!content) return null;
+  const clean = stripDiscordMeta(content);
+
+  // "+N%" / "-N%" — ancré sur début ou espace pour éviter "150-29%" (range).
+  const m1 = clean.match(/(?:^|\s)([+\-])\s*(\d+(?:\.\d+)?)%/);
+  if (m1) {
+    const sign = m1[1] === '-' ? -1 : 1;
+    return sign * parseFloat(m1[2]);
+  }
+
+  // "up N%" / "down N%".
+  const m2 = clean.match(/\b(up|down)\s+(\d+(?:\.\d+)?)%/i);
+  if (m2) {
+    const sign = /down/i.test(m2[1]) ? -1 : 1;
+    return sign * parseFloat(m2[2]);
+  }
+
+  // "locked in N%" — toujours gain positif (on ne « locked in » pas une perte).
+  const m3 = clean.match(/\blocked\s+in\s+(\d+(?:\.\d+)?)%/i);
+  if (m3) return parseFloat(m3[1]);
+
+  return null;
+}
+
 module.exports = {
   extractPrices,
   extractTicker,
   detectTicker,
   enrichContent,
+  extractExitGainPct,
   stripDiscordMeta,
   TICKER_IGNORE,
 };

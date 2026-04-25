@@ -49,11 +49,26 @@ const EXIT_KEYWORDS  = [
 // Complète EXIT_KEYWORDS quand un simple `includes` ne suffit pas :
 //   - "TP2 hit" / "target 3 reached"  (numéros dans le token)
 //   - "out at 158" / "sold at 12.5" / "closed at 3.4"
-// `includesAnyRegex` est appelé après `includesAny(EXIT_KEYWORDS)`.
+//   - "+29%", "-5%"  (annonce de gain/perte réalisé → implicite exit)
+//   - "up 8%", "down 3%"  (idem, formulation verbale)
+//   - "took profits", "cashed out", "scaled out", "locked in 20%"
+//     (formulations courantes de clôture partielle ou totale)
+// `matchesAnyRegex` est appelé après `includesAny(EXIT_KEYWORDS)`.
 const EXIT_REGEX = [
   /\btp\s*\d+\s*(?:hit|reached|done|fill(?:ed)?)\b/i,
   /\btarget\s*\d+\s*(?:hit|reached|done|fill(?:ed)?)\b/i,
   /\b(?:out|sold|closed?)\s+at\b/i,
+  // +N% / -N% : annonce de P&L réalisé. Ancrage sur début/space pour
+  // éviter les faux positifs type "150-29%" (range avec "-" sans espace).
+  /(?:^|\s)[+\-]\s*\d+(?:\.\d+)?%/,
+  // up/down N% : "NVDA up 8%", "AMD down 3.5%".
+  /\b(?:up|down)\s+\d+(?:\.\d+)?%/i,
+  // Formulations verbales de clôture.
+  /\btook\s+profits?\b/i,
+  /\bcashed\s+out\b/i,
+  /\bscaled\s+out\b/i,
+  // "locked in" nécessite un contexte profit pour éviter "locked in a trade".
+  /\blocked\s+in\s+(?:\d|profits?|gains?)/i,
 ];
 
 function matchesAnyRegex(text, patterns) {
@@ -149,6 +164,17 @@ function classifySignal(content, customFilters, options) {
     return { type: 'entry', reason: 'Implicit entry (stop-loss)', confidence: hasPrice ? 75 : 60, ticker };
   }
 
+  // 6. Signal de sortie détecté (substring ou regex).
+  // IMPORTANT : l'exit est évalué AVANT la règle "ticker+prix implicite"
+  // (5c ci-dessous) parce qu'un message comme "ARAI +29%" match les deux :
+  // le `+29%` indique clairement un exit, pas une entrée. Sans cet ordre,
+  // les annonces de gain/perte tomberaient en entrée implicite et le P&L
+  // ne serait jamais calculable.
+  if (includesAny(lower, EXIT_KEYWORDS) || matchesAnyRegex(content, EXIT_REGEX)) {
+    const hasPrice = HAS_PRICE_RE.test(content);
+    return { type: 'exit', reason: 'Accepted', confidence: hasPrice ? 90 : 70, ticker };
+  }
+
   // 5c. Entrée implicite — ticker + un prix dans la suite du message.
   // Ex: "GLND 5.2!", "$NVDA 140 oversold", "$Fchl high risk .23".
   // `ticker` vient de detectTicker (TICKER_IGNORE filtré + Discord meta
@@ -161,12 +187,6 @@ function classifySignal(content, customFilters, options) {
     if (TICKER_ADJACENT_PRICE_RE.test(content)) {
       return { type: 'entry', reason: 'Implicit entry (ticker+price)', confidence: 55, ticker };
     }
-  }
-
-  // 6. Signal de sortie détecté (substring ou regex).
-  if (includesAny(lower, EXIT_KEYWORDS) || matchesAnyRegex(lower, EXIT_REGEX)) {
-    const hasPrice = HAS_PRICE_RE.test(content);
-    return { type: 'exit', reason: 'Accepted', confidence: hasPrice ? 90 : 70, ticker };
   }
 
   // 7. Filtre conversationnel : question ou mot d'ouverture sans aucun prix.

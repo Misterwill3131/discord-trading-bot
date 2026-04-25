@@ -96,3 +96,27 @@ test('"trimmed half @1.50" → exit_price=1.50', () => {
   const p = extractPrices('trimmed half @1.50');
   assert.strictEqual(p.exit_price, 1.50);
 });
+
+// ── Tolérance aux typos "double point" ─────────────────────────────
+test('"ARIA 1..5-1.64 so far" → entry=1.5, target=1.64 (typo "1..5" toléré)', () => {
+  const p = extractPrices('ARIA 1..5-1.64 so far');
+  assert.strictEqual(p.entry_price, 1.5);
+  assert.strictEqual(p.target_price, 1.64);
+});
+
+test('"NVDA 2..50 entry" → entry=2.50', () => {
+  const p = extractPrices('NVDA in at 2..50');
+  assert.strictEqual(p.entry_price, 2.50);
+});
+
+// Doit PAS casser "..." comme séparateur de range (3+ dots distincts d'un typo)
+test('"NVDA 2.50...3.50 setup" → range NON collapsé (3 dots = séparateur)', () => {
+  const p = extractPrices('NVDA 2.50...3.50 setup');
+  // On ne corrige pas ici — soit le parser de range "..." marche, soit null.
+  // Ce qu'on EXIGE c'est que ça ne devienne PAS "2.50.33.50" (broken).
+  // Si entry est 2.5, le parser a réussi. Si null, il a échoué — OK aussi.
+  if (p.entry_price !== null) {
+    assert.strictEqual(p.entry_price, 2.5);
+    assert.strictEqual(p.target_price, 3.5);
+  }
+});

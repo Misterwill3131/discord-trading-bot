@@ -88,7 +88,12 @@ function extractPrices(content) {
   // Nettoie les métadonnées Discord. Remplace virgule → point UNIQUEMENT
   // dans les nombres (format EU "0,46") pour ne pas transformer
   // "BULL, broke 7" en "BULL. broke 7" (le `.` casserait le parsing).
-  const c = stripDiscordMeta(content).replace(/(\d),(\d)/g, '$1.$2');
+  // Tolère aussi le typo "1..5" (deux points entre chiffres) → "1.5".
+  // Limite à EXACTEMENT 2 dots pour ne pas casser le séparateur de range
+  // "..." utilisé en chat trading ("2.50...3.50" reste intact).
+  const c = stripDiscordMeta(content)
+    .replace(/(\d),(\d)/g, '$1.$2')
+    .replace(/(\d)\.\.(\d)/g, '$1.$2');
   let entry = null;
   let target = null;
   let stop = null;

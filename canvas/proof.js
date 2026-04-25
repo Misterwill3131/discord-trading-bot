@@ -66,15 +66,21 @@ function wrapText(ctx, text, maxWidth) {
   return result.length ? result : [''];
 }
 
-// Segmente un texte en {text} ou {emoji} pour gérer les emojis Discord
-// custom du type <a:name:id> (animé) ou <:name:id> (statique).
+// Segmente un texte en {text}, {emoji}, ou {roleMention}.
+// Reconnaît :
+//   • <:name:id>  ou  <a:name:id>   → emoji custom Discord
+//   • <@&id>                         → mention de rôle Discord
 function parseRichSegments(text) {
   const segs = [];
-  const re = /<(a?):(\w+):(\d+)>/g;
+  const re = /<(a?):(\w+):(\d+)>|<@&(\d+)>/g;
   let last = 0, m;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) segs.push({ type: 'text', value: text.slice(last, m.index) });
-    segs.push({ type: 'emoji', animated: m[1] === 'a', name: m[2], id: m[3] });
+    if (m[4] !== undefined) {
+      segs.push({ type: 'roleMention', id: m[4] });
+    } else {
+      segs.push({ type: 'emoji', animated: m[1] === 'a', name: m[2], id: m[3] });
+    }
     last = m.index + m[0].length;
   }
   if (last < text.length) segs.push({ type: 'text', value: text.slice(last) });
@@ -594,5 +600,6 @@ module.exports = {
   drawMessageBlock,
   generateProofImage,
   setDiscordClient,
+  parseRichSegments,
   PROOF_LAYOUT,
 };

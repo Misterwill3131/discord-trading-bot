@@ -136,11 +136,38 @@ function registerDiscordCommands(client, { profitsChannelId }) {
       '> `!indicator TICKER` — RSI(14), EMA(9), EMA(20)',
       '',
       '**Utility**',
+      '> `!undo` — Delete the last bot message in this channel + the command',
       '> `!commands` — Show this list',
     ];
 
     try { await message.reply(lines.join('\n')); }
     catch (e) { console.error('[!commands]', e.message); }
+  });
+
+  // ── !undo ──────────────────────────────────────────────────────────
+  // Supprime le dernier message du bot dans le salon courant,
+  // puis supprime le message de commande lui-même.
+  client.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
+    if (message.content.trim().toLowerCase() !== '!undo') return;
+
+    try {
+      // Chercher le dernier message du bot dans ce salon (hors commande actuelle)
+      const fetched = await message.channel.messages.fetch({ limit: 50 });
+      const botMsg = fetched.find(m => m.author.id === client.user.id);
+
+      if (botMsg) {
+        try { await botMsg.delete(); } catch (_) {}
+      }
+
+      // Supprimer le message de commande
+      try { await message.delete(); } catch (_) {}
+
+      console.log('[!undo] Bot message deleted by ' + message.author.username
+                  + ' in #' + (message.channel.name || message.channel.id));
+    } catch (e) {
+      console.error('[!undo]', e.message);
+    }
   });
 
   // ── !news ──────────────────────────────────────────────────────────

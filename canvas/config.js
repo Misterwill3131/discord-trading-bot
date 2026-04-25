@@ -40,6 +40,7 @@ const CUSTOM_AVATARS = {
   'Michael':        AV('Michael_avatar.png'),
   'thedutchess1':   AV('thedutchess1_avatar.png'),
   'Legacy Trading': AV('Legacy Trading_avatar.png'),
+  'Protrader Alerts': AV('Protrader Alerts_avatar.png'),
 };
 
 // Emojis personnalisés utilisés par le bot Discord (ex. greatcall).

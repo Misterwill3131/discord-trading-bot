@@ -43,6 +43,13 @@ const CUSTOM_AVATARS = {
   'Protrader Alerts': AV('Protrader Alerts_avatar.png'),
 };
 
+// Rôles personnalisés (id Discord → nom affiché + couleur). Si présent
+// dans cette table, une mention <@&id> est rendue comme un pill cyan
+// "@nom". Sinon la chaîne brute reste affichée.
+const CUSTOM_ROLES = {
+  '1497256488274624565': { name: 'Swing', color: '#3498db' },
+};
+
 // Emojis personnalisés utilisés par le bot Discord (ex. greatcall).
 const CUSTOM_EMOJIS = {
   'greatcall': AV('great_call.png'),
@@ -98,4 +105,4 @@ const CONFIG = {
 // Alias de compatibilité — utilisé par les appels directs `FONT` dans le code.
 const FONT = CONFIG.FONT;
 
-module.exports = { CONFIG, FONT, CUSTOM_AVATARS, CUSTOM_EMOJIS };
+module.exports = { CONFIG, FONT, CUSTOM_AVATARS, CUSTOM_ROLES, CUSTOM_EMOJIS };

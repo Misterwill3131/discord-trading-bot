@@ -78,7 +78,11 @@ function reclassifyAllMessages() {
       const newType = result.type;
       const newReason = result.reason;
       const newTicker = result.ticker;
-      const newEntryPrice = prices.entry_price;
+      // Sur un exit, on force entry_price=null : un message comme "ARAI +29%"
+      // est classifié exit mais extractPrices peut quand même renvoyer 29
+      // (pattern ticker+adjacent). Garder cette valeur polluerait l'apparie-
+      // ment FIFO et le calcul P&L côté stats.
+      const newEntryPrice = newType === 'exit' ? null : prices.entry_price;
       const newPassed = newType !== null ? 1 : 0;
       const newConfidence = result.confidence != null ? result.confidence : null;
 

@@ -119,3 +119,30 @@ test('reply body with "targets done" → exit', () => {
   });
   assert.strictEqual(r.type, 'exit');
 });
+
+// ── Trim / scaled out / scaling — partial exits ────────────────────
+test('"ARIA scaled some @1.78" → exit (partial)', () => {
+  assert.strictEqual(classify('ARIA scaled some @1.78/79').type, 'exit');
+});
+
+test('"TSLA scaling out 1.71" → exit', () => {
+  assert.strictEqual(classify('TSLA scaling out 1.71').type, 'exit');
+});
+
+test('"trim NVDA half here" → exit', () => {
+  assert.strictEqual(classify('trim NVDA half here').type, 'exit');
+});
+
+test('"trimmed ARAI partial" → exit', () => {
+  assert.strictEqual(classify('trimmed ARAI partial').type, 'exit');
+});
+
+// ── Recap multi-ticker ─────────────────────────────────────────────
+test('"Live Recap" message with multi-ticker %s → null (filtered)', () => {
+  const c = 'Options Alerts and Live Recap;\nQQQ: 1100% TS alert\nQQQ: 1000% TS alert\nSPY: 606% Z alert';
+  assert.strictEqual(classify(c).type, null);
+});
+
+test('"RECAP: $SNAL 318% $ROLR 87%" → null (filtered)', () => {
+  assert.strictEqual(classify('RECAP:\n\n$SNAL 318%\n$ROLR 87%\n$PMNT 60%').type, null);
+});

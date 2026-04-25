@@ -46,6 +46,18 @@ const TICKER_IGNORE = new Set([
 // Utilisé comme fragment dans toutes les regex de prix.
 const NUM = '(?:\\d+(?:\\.\\d+)?|\\.\\d+)';
 
+// Variante de NUM qui rejette les nombres suivis d'un `%` — un nombre suivi
+// de '%' est un pourcentage de gain ou un autre indicateur, jamais un prix.
+// Sans ce filtre, "QQQ: 1100% TS alert" extrayait 1100 comme entry_price,
+// "RECAP: $SNAL 318%" extrayait 318, et "ARAI +29%" extrayait 29 — tous
+// faux et catastrophiques pour le calcul P&L.
+//
+// Le `(?![\d.])` empêche le backtracking de matcher un préfixe : sur "1100%",
+// sans cette assertion, NUM_NOT_PCT matcherait "110" en abandonnant le "0"
+// final puisque "0%" déclenche le rejet de fin. On exige donc que le nombre
+// soit "complet" (aucun chiffre ni point ne suit) AVANT de tester le %.
+const NUM_NOT_PCT = NUM + '(?![\\d.])(?!\\s*%)';
+
 // Nettoie les métadonnées Discord qui perturbent le parsing :
 //   - mentions de rôles/users/channels/emojis : <@123>, <@&123>, <#123>, <:name:123>, <a:name:123>
 //   - préfixe reply : "> *Replying to X [message](url)*\n"
@@ -82,7 +94,8 @@ function extractPrices(content) {
   let stop = null;
 
   // Priorité 1 — Ticker + range : "$TSLA 150.00-155.00" ou "NCT 2.60-4.06".
-  const rangeM = c.match(new RegExp(`(?:\\$?[A-Z]{1,6}\\s+)\\$?(${NUM})\\s*[-\\u2013]\\s*\\$?(${NUM})`, 'i'));
+  // NUM_NOT_PCT pour éviter "QQQ: 1100%-900%" → range bidon.
+  const rangeM = c.match(new RegExp(`(?:\\$?[A-Z]{1,6}\\s+)\\$?(${NUM_NOT_PCT})\\s*[-\\u2013]\\s*\\$?(${NUM_NOT_PCT})`, 'i'));
   if (rangeM) {
     const a = parseFloat(rangeM[1]);
     const b = parseFloat(rangeM[2]);
@@ -94,7 +107,7 @@ function extractPrices(content) {
   // "3.43-4.32". On ancre au début et à la fin pour éviter de matcher
   // un range à l'intérieur d'une phrase.
   if (!entry) {
-    const standaloneRange = c.match(new RegExp(`^\\s*\\$?(${NUM})\\s*[-\\u2013]\\s*\\$?(${NUM})\\s*$`));
+    const standaloneRange = c.match(new RegExp(`^\\s*\\$?(${NUM_NOT_PCT})\\s*[-\\u2013]\\s*\\$?(${NUM_NOT_PCT})\\s*$`));
     if (standaloneRange) {
       const a = parseFloat(standaloneRange[1]);
       const b = parseFloat(standaloneRange[2]);
@@ -105,30 +118,41 @@ function extractPrices(content) {
 
   // Priorité 2 — Mots-clés d'entrée.
   if (!entry) {
-    const em = c.match(new RegExp(`(?:in\\s+at|entry|bought?|long\\s+at|achat|entree)\\s+\\$?(${NUM})`, 'i'));
+    const em = c.match(new RegExp(`(?:in\\s+at|entry|bought?|long\\s+at|achat|entree)\\s+\\$?(${NUM_NOT_PCT})`, 'i'));
     if (em) entry = parseFloat(em[1]);
   }
 
   // Priorité 2b — Format RF : "buy only above $X" ou "buy above $X".
   if (!entry) {
-    const em = c.match(new RegExp(`buy\\s+(?:only\\s+)?above\\s+\\$?(${NUM})`, 'i'));
+    const em = c.match(new RegExp(`buy\\s+(?:only\\s+)?above\\s+\\$?(${NUM_NOT_PCT})`, 'i'));
     if (em) entry = parseFloat(em[1]);
   }
 
   // Priorité 3 — Mots-clés de sortie/cible.
+  // Inclut maintenant les verbes de clôture partielle (trim, scale) ainsi
+  // que le séparateur `@` utilisé en chat trading ("scaled some @1.78").
+  // Sur un exit partiel à plusieurs prix ("@1.78/79"), on capture le premier.
   if (!target) {
-    const xm = c.match(new RegExp(`(?:targets?|tp|out\\s+at|exit\\s+at|sold?\\s+at|sortie|objectif)\\s+\\$?(${NUM})`, 'i'));
+    const xm = c.match(new RegExp(
+      '(?:'
+      + 'targets?|tp|out\\s+at|exit\\s+at|sold?\\s+at|sortie|objectif'
+      + '|scaled?\\s+(?:out|some|half|partial|down)'
+      + '|scaling\\s+(?:out|some|down|half)'
+      + '|trim(?:m(?:ing|ed))?(?:\\s+(?:half|partial))?'
+      + ')\\s*@?\\s*\\$?(' + NUM_NOT_PCT + ')',
+      'i'
+    ));
     if (xm) target = parseFloat(xm[1]);
   }
 
   // Priorité 4 — Stop loss. Reconnaît : "stop 43", "sl 43", "s.l 43",
   // "stoploss 43", "stop loss 43", "stop-loss 43".
-  const sm = c.match(new RegExp(`(?:stop[-\\s]?loss|stoploss|s\\.?l|stop)\\s+\\$?(${NUM})`, 'i'));
+  const sm = c.match(new RegExp(`(?:stop[-\\s]?loss|stoploss|s\\.?l|stop)\\s+\\$?(${NUM_NOT_PCT})`, 'i'));
   if (sm) stop = parseFloat(sm[1]);
 
   // Priorité 5 — Séparateurs "..." ou " to " : "2.50...3.50", "2.50 to 3.50".
   if (!entry || !target) {
-    const lm = c.match(new RegExp(`\\$?(${NUM})\\s*(?:\\.{2,}|\\bto\\b)\\s*\\$?(${NUM})`, 'i'));
+    const lm = c.match(new RegExp(`\\$?(${NUM_NOT_PCT})\\s*(?:\\.{2,}|\\bto\\b)\\s*\\$?(${NUM_NOT_PCT})`, 'i'));
     if (lm) {
       const a = parseFloat(lm[1]);
       const b = parseFloat(lm[2]);
@@ -140,7 +164,7 @@ function extractPrices(content) {
   // Priorité 5b — Pattern "breaks X for Y" (breakout conditionnel).
   // Ex: "scalping once it breaks 0.83 for 0.99" → entry=0.83, target=0.99.
   if (!entry && !target) {
-    const bm = c.match(new RegExp(`breaks?\\s+\\$?(${NUM})\\s+(?:for|to)\\s+\\$?(${NUM})`, 'i'));
+    const bm = c.match(new RegExp(`breaks?\\s+\\$?(${NUM_NOT_PCT})\\s+(?:for|to)\\s+\\$?(${NUM_NOT_PCT})`, 'i'));
     if (bm) {
       entry  = parseFloat(bm[1]);
       target = parseFloat(bm[2]);
@@ -152,8 +176,9 @@ function extractPrices(content) {
   // "0.46$". `$TICKER` est insensible à la casse (Discord tolère "$Fchl").
   // Gap de 30 chars max pour capturer "$Fchl high risk .23" (11 chars) sans
   // attraper des prix éloignés de 50+ chars dans une longue phrase.
+  // NUM_NOT_PCT pour éviter "QQQ: 1100% TS" → entry_price=1100.
   if (!entry) {
-    const im = c.match(new RegExp(`(?:\\$[A-Za-z]{1,6}|\\b[A-Z]{2,5})\\b[^\\d.]{0,30}\\$?(${NUM})\\$?`));
+    const im = c.match(new RegExp(`(?:\\$[A-Za-z]{1,6}|\\b[A-Z]{2,5})\\b[^\\d.]{0,30}\\$?(${NUM_NOT_PCT})\\$?`));
     if (im) entry = parseFloat(im[1]);
   }
 

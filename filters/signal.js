@@ -31,6 +31,16 @@ const BLOCKED_KEYWORDS = [
   'news', 'sec', 'ipo', 'offering', 'halted', 'form 8-k', 'reverse stock split',
 ];
 
+// Détecte les messages "recap" — résumés multi-tickers de gains réalisés.
+// Exemples : "Options Alerts and Live Recap;\nQQQ: 1100% TS alert"
+//           "RECAP:\n$SNAL 318%\n$ROLR 87%"
+// Ces messages ne représentent ni une entrée ni une sortie : ils référencent
+// des trades passés. Sans ce filtre, ils polluent la DB avec des entries
+// dont entry_price = "1100" (pourcentage interprété comme prix).
+const RECAP_HEADER_RE = /(?:^|\n)\s*(?:options?\s+alerts?\s+and\s+)?(?:live\s+)?recap\b/i;
+// 3+ occurrences de "TICKER: N%" ou "$TICKER N%" → recap déguisé même sans header.
+const RECAP_MULTILINE_RE = /(?:(?:\$[A-Za-z]{1,6}|\b[A-Z]{2,5}\b)[:\s]+\d+(?:\.\d+)?%[^\n]*\n?){3,}/;
+
 // Mots-clés qui classifient un message comme entrée/sortie.
 // RF utilise "buy only above $X" ou "buy above $X" pour signaler ses
 // entrées (format distinct des autres analystes).
@@ -66,7 +76,10 @@ const EXIT_REGEX = [
   // Formulations verbales de clôture.
   /\btook\s+profits?\b/i,
   /\bcashed\s+out\b/i,
-  /\bscaled\s+out\b/i,
+  // scale variations : "scaled out", "scaled some", "scaling out", "scaling down".
+  /\bscal(?:ed?|ing)\s+(?:out|some|down|half|partial)\b/i,
+  // trim variations : "trim", "trimming", "trimmed" — clôture partielle.
+  /\btrim(?:m(?:ing|ed))?\b/i,
   // "locked in" nécessite un contexte profit pour éviter "locked in a trade".
   /\blocked\s+in\s+(?:\d|profits?|gains?)/i,
 ];
@@ -140,6 +153,12 @@ function classifySignal(content, customFilters, options) {
     if (lower.includes(b)) {
       return { type: null, reason: 'Blocked keyword', confidence: 95, ticker };
     }
+  }
+
+  // 3b. Messages recap (résumés multi-tickers de gains passés). Filtrés
+  // pour éviter que "QQQ: 1100% TS alert" devienne une entry à 1100.
+  if (RECAP_HEADER_RE.test(content) || RECAP_MULTILINE_RE.test(content)) {
+    return { type: null, reason: 'Recap', confidence: 95, ticker };
   }
 
   // 4. Un ticker est requis pour tout le reste.

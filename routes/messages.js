@@ -53,14 +53,19 @@ function registerMessageRoutes(app, requireAuth) {
     // en JS navigateur. exit_gain_pct capture les annonces "TICKER +29%",
     // "up 8%", "locked in 20%" où l'utilisateur donne directement le P&L
     // réalisé sans mentionner un prix de sortie explicite.
+    //
+    // On force aussi `entry_price=null` sur les exits : un message comme
+    // "ARAI +29%" classifié exit pouvait avoir entry_price=29 stocké en DB
+    // (artefact de l'ancien parser). C'est faux — un exit n'a pas de prix
+    // d'entrée par définition — et ça polluait l'appariement FIFO.
     msgs = msgs.map(m => {
       if (m.type === 'exit') {
         const parsed = extractPrices(m.content || '');
         const gainPct = extractExitGainPct(m.content || '');
-        const extras = {};
+        const extras = { entry_price: null };
         if (parsed.exit_price != null) extras.exit_price = parsed.exit_price;
         if (gainPct != null) extras.exit_gain_pct = gainPct;
-        if (Object.keys(extras).length) return Object.assign({}, m, extras);
+        return Object.assign({}, m, extras);
       }
       return m;
     });

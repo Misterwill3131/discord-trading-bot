@@ -5,8 +5,8 @@
 //   !profits         → compteur du jour + record all-time
 //   !bilan           → rapport journalier Markdown (même contenu que
 //                      celui posté automatiquement à 20h EDT)
-//   !delete-report   → supprime le tout dernier message posté dans
-//                      #profits (peu importe son contenu)
+//   !delete-report   → supprime le dernier message du bot dans le
+//                      salon courant (n'importe quel salon)
 //   !news            → top 5 dernières headlines RSS (depuis poller)
 //   !commands        → liste statique de toutes les commandes du bot
 //
@@ -71,40 +71,36 @@ function registerDiscordCommands(client, { profitsChannelId }) {
   });
 
   // ── !delete-report ─────────────────────────────────────────────────
-  // Supprime le dernier message posté par le BOT dans #profits.
-  // Stratégie : 1) tenter par ID mémorisé du dernier daily summary
-  //             2) sinon scan des 50 derniers messages, on retient le
-  //                premier qui appartient au bot. Évite de supprimer
-  //                par erreur un post de profit d'un membre.
+  // Supprime le dernier message posté par le BOT dans le salon courant
+  // (peu importe lequel — pas restreint à #profits). Si l'ID du dernier
+  // daily summary est mémorisé ET correspond à un message du salon
+  // courant, on l'utilise pour un match exact ; sinon on scan les 50
+  // derniers messages pour trouver le dernier message du bot.
   client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
     if (message.content.trim().toLowerCase() !== '!delete-report') return;
 
-    if (!profitsChannelId) {
-      try { await message.reply('❌ PROFITS_CHANNEL_ID not configured.'); } catch (_) {}
-      return;
-    }
-
     try {
-      const ch = client.channels.cache.get(profitsChannelId);
-      if (!ch) { await message.reply('❌ #profits channel not found.'); return; }
-
+      const ch = message.channel;
       let targetMsg = null;
 
-      // 1. ID mémorisé — match exact, le plus rapide.
+      // 1. ID mémorisé — uniquement si le salon courant matche le salon
+      //    où le summary a été posté (sinon on récupèrerait un message
+      //    d'un autre salon).
       const savedMsgId = profitCounter.getLastSummaryMessageId();
-      if (savedMsgId) {
+      if (savedMsgId && profitsChannelId && ch.id === profitsChannelId) {
         try { targetMsg = await ch.messages.fetch(savedMsgId); } catch (_) {}
       }
 
-      // 2. Fallback : scan, on prend le dernier message du bot dans #profits.
+      // 2. Fallback : scan du salon courant, on retient le dernier
+      //    message qui appartient au bot.
       if (!targetMsg) {
         const fetched = await ch.messages.fetch({ limit: 50 });
         targetMsg = fetched.find(m => m.author.id === client.user.id) || null;
       }
 
       if (!targetMsg) {
-        await message.reply('❌ No bot message found in the last 50 messages of #profits.');
+        await message.reply('❌ No bot message found in the last 50 messages of this channel.');
         return;
       }
 
@@ -112,7 +108,8 @@ function registerDiscordCommands(client, { profitsChannelId }) {
       if (profitCounter.getLastSummaryMessageId() === targetMsg.id) {
         profitCounter.clearLastSummaryMessageId();
       }
-      console.log('[!delete-report] Bot message deleted by ' + message.author.username);
+      console.log('[!delete-report] Bot message deleted by ' + message.author.username
+                  + ' in #' + (ch.name || ch.id));
       try { await message.react('✅'); } catch (_) {}
     } catch (e) {
       console.error('[!delete-report]', e.message);
@@ -133,7 +130,7 @@ function registerDiscordCommands(client, { profitsChannelId }) {
       '**Profits**',
       '> `!profits` — Daily count + all-time record',
       '> `!bilan` — Post the full daily summary',
-      '> `!delete-report` — Delete the last message in #profits',
+      '> `!delete-report` — Delete the bot\'s last message in this channel',
       '',
       '**News**',
       '> `!news` — Top 5 latest headlines',

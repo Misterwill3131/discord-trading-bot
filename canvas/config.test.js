@@ -12,3 +12,11 @@ test('CUSTOM_AVATARS["Protrader Alerts"] points to an existing PNG', () => {
   assert.ok(fs.existsSync(p),
     'Avatar file does not exist on disk: ' + p);
 });
+
+test('CUSTOM_ROLES["1497256488274624565"] correspond au rôle Swing', () => {
+  const { CUSTOM_ROLES } = require('./config');
+  const role = CUSTOM_ROLES['1497256488274624565'];
+  assert.ok(role, 'CUSTOM_ROLES["1497256488274624565"] is undefined');
+  assert.strictEqual(role.name, 'Swing');
+  assert.strictEqual(role.color, '#3498db');
+});

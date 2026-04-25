@@ -470,13 +470,32 @@ function renderChartPng(candles, ticker, range) {
 
   // ── Candlesticks ──────────────────────────────────────────────────
   // Body : max 80% du slot, min 1px, wick toujours au centre.
-  // On dessine TOUTES les bougies (pas de filtre/skip qui crée des gaps
-  // visuels). Les valeurs hors percentile [minY, maxY] sont clampées
-  // visuellement : un wick extrême s'arrête à 5% du bord du chart au
-  // lieu de tracer une ligne verticale jusqu'à l'edge.
+  //
+  // Single filter conservé : range (H−L) > 8× la médiane. Catch les
+  // single-print aberrants (ex: SPY 5m bar avec L=655 alors que la
+  // médiane des ranges est 0.37) qui apparaissent occasionnellement
+  // dans le flux Yahoo, y compris pendant les heures de marché. Le
+  // 1-bar-gap qui en résulte est préférable au spike artifact.
+  // (Les gaps "naturels" d'overnight/weekend restent intacts —
+  // toutes les autres bougies sont rendues, hors percentile ou non.)
+  const ranges = [];
+  for (let i = 0; i < N; i++) {
+    const r = highs[i] - lows[i];
+    if (Number.isFinite(r) && r >= 0) ranges.push(r);
+  }
+  const sortedRanges = [...ranges].sort((a, b) => a - b);
+  const medianRange = sortedRanges.length
+    ? sortedRanges[Math.floor(sortedRanges.length / 2)]
+    : 0;
+  const maxReasonableRange = medianRange > 0
+    ? medianRange * 8
+    : Number.POSITIVE_INFINITY;
+
   const bodyW = Math.max(1, Math.min(slotW * 0.7, 12));
   for (let i = 0; i < N; i++) {
     const o = opens[i], h = highs[i], l = lows[i], c = closes[i];
+    if ((h - l) > maxReasonableRange) continue;  // bad print → skip
+
     const cx = xCenter(i);
     const isUp = c >= o;
     const color = isUp ? UP : DOWN;

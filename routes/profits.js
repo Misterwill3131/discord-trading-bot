@@ -92,7 +92,13 @@ function registerProfitRoutes(app, requireAuth) {
   });
 
   app.post('/api/profits-bot-silent', requireAuth, (req, res) => {
-    setBotSilent(req.body?.silent);
+    // Validation explicite : on n'accepte qu'un boolean strict pour éviter
+    // les coercitions silencieuses (string "false" → true, etc.).
+    const val = req.body?.silent;
+    if (typeof val !== 'boolean') {
+      return res.status(400).json({ error: 'silent must be a boolean' });
+    }
+    setBotSilent(val);
     console.log('[profits] Bot messages in #profits: ' + (getBotSilent() ? 'DISABLED' : 'ENABLED'));
     res.json({ ok: true, silent: getBotSilent() });
   });

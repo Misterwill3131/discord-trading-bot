@@ -200,13 +200,18 @@ function registerAnalyticsRoutes(app, requireAuth, messageLog) {
         if (!m.passed || !m.author) return;
         if (!m.ticker) return;
         // Skip self-referenced tickers : analyste qui signe avec son nom
-        // (ex. auteur "ZZ" + ticker détecté "ZZ"). Pas un vrai signal.
-        if (m.ticker.toUpperCase() === m.author.toUpperCase()) return;
+        // (ex. auteur "ZZ" + ticker détecté "ZZ"). Compare aussi contre
+        // le display name pour catcher les alias (ex. traderzz1m → ZZ).
+        const display = getDisplayName(m.author);
+        const t = m.ticker.toUpperCase();
+        if (t === m.author.toUpperCase() || t === display.toUpperCase()) return;
         const prices = extractPrices(m.content || '');
         if (prices.entry_price === null || prices.target_price === null) return;
-        if (!authorStats[m.author]) authorStats[m.author] = { signals: 0, tickers: {} };
-        authorStats[m.author].signals++;
-        authorStats[m.author].tickers[m.ticker] = (authorStats[m.author].tickers[m.ticker] || 0) + 1;
+        // Group by display name → les alias (ex. traderzz1m + ZZ → ZZ)
+        // sont comptés comme un seul analyste.
+        if (!authorStats[display]) authorStats[display] = { signals: 0, tickers: {} };
+        authorStats[display].signals++;
+        authorStats[display].tickers[m.ticker] = (authorStats[display].tickers[m.ticker] || 0) + 1;
       });
     });
 
@@ -236,10 +241,13 @@ function registerAnalyticsRoutes(app, requireAuth, messageLog) {
     const signals = [];
     forEachDayOfLog(messageLog, days, (msgs) => {
       msgs.forEach(m => {
-        if (!m.passed || !m.author || m.author !== author) return;
+        if (!m.passed || !m.author) return;
+        // Match par display name → ?author=ZZ retrouve aussi traderzz1m.
+        if (getDisplayName(m.author) !== author) return;
         if (!m.ticker) return;
         // Skip self-referenced tickers (cohérent avec /api/leaderboard).
-        if (m.ticker.toUpperCase() === m.author.toUpperCase()) return;
+        const t = m.ticker.toUpperCase();
+        if (t === m.author.toUpperCase() || t === author.toUpperCase()) return;
         const prices = extractPrices(m.content || '');
         if (prices.entry_price === null || prices.target_price === null) return;
         signals.push({

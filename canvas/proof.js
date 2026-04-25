@@ -20,7 +20,7 @@
 
 const path = require('path');
 const { createCanvas, loadImage } = require('@napi-rs/canvas');
-const { CONFIG, FONT, CUSTOM_AVATARS, CUSTOM_EMOJIS } = require('./config');
+const { CONFIG, FONT, CUSTOM_AVATARS, CUSTOM_ROLES, CUSTOM_EMOJIS } = require('./config');
 const { getDisplayName } = require('../utils/authors');
 
 // Chemins absolus vers les ressources — remonte d'un niveau depuis canvas/.
@@ -33,6 +33,21 @@ const LOGO_PATH     = path.join(__dirname, '..', 'logo_boom.png');
 // (le client Discord est créé plus tard dans le lifecycle de l'app).
 let _discordClient = null;
 function setDiscordClient(client) { _discordClient = client; }
+
+// Lookup couleur+nom d'un rôle Discord par son id.
+// Retourne null si non trouvé — le rendu retombe alors sur la chaîne brute.
+function getRoleStyle(id) {
+  return CUSTOM_ROLES[id] || null;
+}
+
+// Convertit un hex "#rrggbb" en string CSS "rgba(r, g, b, alpha)".
+function hexToRgba(hex, alpha) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return 'rgba(' + r + ', ' + g + ', ' + b + ', ' + alpha + ')';
+}
 
 // Remplace <@id> / <@!id> par @username via le cache Discord. Si le
 // client n'est pas injecté ou l'utilisateur n'est pas en cache, on
@@ -90,7 +105,20 @@ function parseRichSegments(text) {
 function measureRichWidth(ctx, text, emojiSize) {
   let w = 0;
   for (const seg of parseRichSegments(text)) {
-    w += seg.type === 'text' ? ctx.measureText(seg.value).width : emojiSize + 2;
+    if (seg.type === 'text') {
+      w += ctx.measureText(seg.value).width;
+    } else if (seg.type === 'emoji') {
+      w += emojiSize + 2;
+    } else if (seg.type === 'roleMention') {
+      const style = getRoleStyle(seg.id);
+      if (style) {
+        // Pill : '@' + name + 6px de padding total (3 de chaque côté).
+        w += ctx.measureText('@' + style.name).width + 6;
+      } else {
+        // Inconnu : on tombe sur le rendu brut <@&id>.
+        w += ctx.measureText('<@&' + seg.id + '>').width;
+      }
+    }
   }
   return w;
 }
@@ -123,7 +151,7 @@ async function drawRichLine(ctx, text, x, y, fontSize) {
         ctx.fillText(seg.value, cx, y);
         cx += ctx.measureText(seg.value).width;
       }
-    } else {
+    } else if (seg.type === 'emoji') {
       // Préférence aux fichiers locaux pour les emojis custom du bot ; sinon CDN Discord.
       const localPath = CUSTOM_EMOJIS[seg.name];
       const src = localPath || (seg.animated
@@ -137,6 +165,35 @@ async function drawRichLine(ctx, text, x, y, fontSize) {
         // Fallback : afficher le nom entre deux colonnes.
         ctx.fillText(':' + seg.name + ':', cx, y);
         cx += ctx.measureText(':' + seg.name + ':').width;
+      }
+    } else if (seg.type === 'roleMention') {
+      const style = getRoleStyle(seg.id);
+      if (style) {
+        const label = '@' + style.name;
+        const labelW = ctx.measureText(label).width;
+        const pillH = fontSize + 4;
+        const pillY = y - fontSize * 0.85;
+        const prevFill = ctx.fillStyle;
+        // Fond pill (couleur du rôle à 18% d'opacity).
+        ctx.fillStyle = hexToRgba(style.color, 0.18);
+        ctx.beginPath();
+        if (typeof ctx.roundRect === 'function') {
+          ctx.roundRect(cx, pillY, labelW + 6, pillH, 3);
+        } else {
+          // Fallback si roundRect n'est pas dispo dans la version de canvas.
+          ctx.rect(cx, pillY, labelW + 6, pillH);
+        }
+        ctx.fill();
+        // Texte du label par-dessus.
+        ctx.fillStyle = style.color;
+        ctx.fillText(label, cx + 3, y);
+        // Restaurer la couleur précédente pour le texte qui suit.
+        ctx.fillStyle = prevFill;
+        cx += labelW + 6;
+      } else {
+        const raw = '<@&' + seg.id + '>';
+        ctx.fillText(raw, cx, y);
+        cx += ctx.measureText(raw).width;
       }
     }
   }
@@ -157,10 +214,15 @@ async function generateImage(author, content, timestamp /*, parentAuthor, parent
   const MAX_TW    = W - CONTENT_X - PADDING_L;
 
   // Pré-calcul du nombre de lignes pour dimensionner le canvas final.
+  // wrapRichText (et plus tard drawRichLine) rend les emojis Discord et
+  // les mentions de rôle <@&id> ; sans ça, generateImage afficherait
+  // les balises brutes dans l'image.
+  const MSG_FONT_SIZE = 16;
+  const MSG_EMOJI_SIZE = Math.round(MSG_FONT_SIZE * 1.15);
   const tmpC = createCanvas(W, 400);
   const tmpCtx = tmpC.getContext('2d');
-  tmpCtx.font = '16px ' + FONT;
-  const lines = wrapText(tmpCtx, content, MAX_TW);
+  tmpCtx.font = MSG_FONT_SIZE + 'px ' + FONT;
+  const lines = wrapRichText(tmpCtx, content, MAX_TW, MSG_EMOJI_SIZE);
 
   const LINE_H = 22;
   const NAME_H = 20;
@@ -280,12 +342,12 @@ async function generateImage(author, content, timestamp /*, parentAuthor, parent
   ctx.font = '12px ' + FONT;
   ctx.fillText(timeStr, logoEndX, nameY - 1);
 
-  // Corps du message.
+  // Corps du message — rendu rich-text (emojis Discord, mentions de rôle).
   ctx.fillStyle = CONFIG.MESSAGE_COLOR;
-  ctx.font = '16px ' + FONT;
+  ctx.font = MSG_FONT_SIZE + 'px ' + FONT;
   let ty = nameY + LINE_H;
   for (const line of lines) {
-    ctx.fillText(line, CONTENT_X, ty);
+    await drawRichLine(ctx, line, CONTENT_X, ty, MSG_FONT_SIZE);
     ty += LINE_H;
   }
 
@@ -601,5 +663,7 @@ module.exports = {
   generateProofImage,
   setDiscordClient,
   parseRichSegments,
+  getRoleStyle,
+  hexToRgba,
   PROOF_LAYOUT,
 };

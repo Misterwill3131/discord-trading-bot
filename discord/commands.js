@@ -94,16 +94,14 @@ function registerDiscordCommands(client, { profitsChannelId }) {
       }
 
       // 2. Fallback : scan des 50 derniers messages du canal, on retient
-      //    le premier du bot contenant "Daily Profit Report".
+      //    le message le plus récent posté par le bot (peu importe le contenu).
       if (!targetMsg) {
         const fetched = await ch.messages.fetch({ limit: 50 });
-        targetMsg = fetched.find(m =>
-          m.author.id === client.user.id && m.content.includes('Daily Profit Report')
-        ) || null;
+        targetMsg = fetched.find(m => m.author.id === client.user.id) || null;
       }
 
       if (!targetMsg) {
-        await message.reply('❌ Aucun rapport journalier trouvé dans #profits.');
+        await message.reply('❌ Aucun message du bot trouvé dans #profits.');
         return;
       }
 

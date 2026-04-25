@@ -71,8 +71,11 @@ function registerDiscordCommands(client, { profitsChannelId }) {
   });
 
   // ── !delete-report ─────────────────────────────────────────────────
-  // Supprime le tout dernier message posté dans #profits, peu importe
-  // son auteur ou son contenu.
+  // Supprime le dernier message posté par le BOT dans #profits.
+  // Stratégie : 1) tenter par ID mémorisé du dernier daily summary
+  //             2) sinon scan des 50 derniers messages, on retient le
+  //                premier qui appartient au bot. Évite de supprimer
+  //                par erreur un post de profit d'un membre.
   client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
     if (message.content.trim().toLowerCase() !== '!delete-report') return;
@@ -86,21 +89,30 @@ function registerDiscordCommands(client, { profitsChannelId }) {
       const ch = client.channels.cache.get(profitsChannelId);
       if (!ch) { await message.reply('❌ #profits channel not found.'); return; }
 
-      const fetched = await ch.messages.fetch({ limit: 1 });
-      const targetMsg = fetched.first();
+      let targetMsg = null;
+
+      // 1. ID mémorisé — match exact, le plus rapide.
+      const savedMsgId = profitCounter.getLastSummaryMessageId();
+      if (savedMsgId) {
+        try { targetMsg = await ch.messages.fetch(savedMsgId); } catch (_) {}
+      }
+
+      // 2. Fallback : scan, on prend le dernier message du bot dans #profits.
+      if (!targetMsg) {
+        const fetched = await ch.messages.fetch({ limit: 50 });
+        targetMsg = fetched.find(m => m.author.id === client.user.id) || null;
+      }
 
       if (!targetMsg) {
-        await message.reply('❌ No messages found in #profits.');
+        await message.reply('❌ No bot message found in the last 50 messages of #profits.');
         return;
       }
 
       await targetMsg.delete();
-      // Si le dernier message correspondait au summary sauvegardé,
-      // vide le pointeur pour éviter de pointer vers un message supprimé.
       if (profitCounter.getLastSummaryMessageId() === targetMsg.id) {
         profitCounter.clearLastSummaryMessageId();
       }
-      console.log('[!delete-report] Last message deleted by ' + message.author.username);
+      console.log('[!delete-report] Bot message deleted by ' + message.author.username);
       try { await message.react('✅'); } catch (_) {}
     } catch (e) {
       console.error('[!delete-report]', e.message);

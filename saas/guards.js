@@ -50,7 +50,12 @@ async function leaveGuild(guild, reason) {
 
 // Enregistre le handler guildCreate + démarre le tick périodique.
 // Idempotent : appelable plusieurs fois sans dupliquer les listeners.
-function registerGuildGuard(clientSaas) {
+//
+// `opts.adminGuildId` : si défini, ce guild est TOUJOURS épargné par le
+// guard (jamais kické même sans licence). C'est le guild où sont
+// enregistrées les commandes admin — sans le bot dedans, l'utilisateur
+// perd l'accès au panneau de contrôle.
+function registerGuildGuard(clientSaas, opts = {}) {
   if (!clientSaas) {
     console.warn('[saas/guards] registerGuildGuard called without clientSaas — skip');
     return null;
@@ -58,7 +63,17 @@ function registerGuildGuard(clientSaas) {
   if (clientSaas.__saasGuardRegistered) return null;
   clientSaas.__saasGuardRegistered = true;
 
+  const adminGuildId = opts.adminGuildId || '';
+  const isAdminGuild = (id) => adminGuildId && String(id) === String(adminGuildId);
+
   clientSaas.on('guildCreate', async (guild) => {
+    // Le guild admin est toujours épargné — c'est le panneau de contrôle.
+    if (isAdminGuild(guild.id)) {
+      db.autoLeaveLogInsert({ guild_id: guild.id, guild_name: guild.name, reason: 'joined-admin' });
+      console.log(`[saas/guards] Joined admin guild ${guild.id} (${guild.name}) — never auto-leave`);
+      return;
+    }
+
     const lic = licenses.get(guild.id);
     if (lic && licenses.isActive(lic)) {
       // Licence valide : on log l'arrivée et on reste.
@@ -98,6 +113,9 @@ function registerGuildGuard(clientSaas) {
   const tick = async () => {
     try {
       for (const [guildId, guild] of clientSaas.guilds.cache) {
+        // Skip admin guild — toujours épargné.
+        if (isAdminGuild(guildId)) continue;
+
         const lic = licenses.get(guildId);
         if (!lic) {
           await leaveGuild(guild, 'no-license');

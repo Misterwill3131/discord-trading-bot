@@ -283,7 +283,7 @@ if (SAAS_BOT_TOKEN) {
     intents: [GatewayIntentBits.Guilds],
   });
 
-  registerGuildGuard(clientSaas);
+  registerGuildGuard(clientSaas, { adminGuildId: SAAS_ADMIN_GUILD_ID });
   registerSaasCommands(clientSaas, {
     adminGuildId: SAAS_ADMIN_GUILD_ID,
     adminUserId:  SAAS_ADMIN_USER_ID,

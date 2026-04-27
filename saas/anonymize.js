@@ -113,11 +113,12 @@ function fmtPrice(n) {
 // EmbedBuilder, ne l'envoie pas. Le caller fait le `.send({ embeds: [...] })`
 // avec `allowedMentions: { parse: [] }`.
 //
-// `brand` doit avoir { BRAND_NAME, BRAND_COLOR, BRAND_THUMBNAIL_URL }.
+// `brand` doit avoir { BRAND_NAME, BRAND_COLOR, BRAND_THUMBNAIL_URL?, BRAND_IMAGE_URL? }.
+//
+// Title : `$TICKER` seul (pas de LONG/SHORT — décision design : la couleur
+// et le contexte des prix suffisent à indiquer la direction).
 function brandedEmbed(dto, brand) {
-  const sideTag = dto.side === 'short' ? 'SHORT' : 'LONG';
-  const titleSymbol = dto.ticker ? `$${dto.ticker}` : 'Signal';
-  const title = `${titleSymbol} ${sideTag}`;
+  const title = dto.ticker ? `$${dto.ticker}` : 'Signal';
 
   const eb = new EmbedBuilder()
     .setColor(brand.BRAND_COLOR)
@@ -143,8 +144,15 @@ function brandedEmbed(dto, brand) {
     eb.setDescription(dto.note);
   }
 
+  // Thumbnail (haut-droite, ~80×80) : icône de marque discrète.
   if (brand.BRAND_THUMBNAIL_URL) {
     eb.setThumbnail(brand.BRAND_THUMBNAIL_URL);
+  }
+
+  // Image (bas, large bannière jusqu'à pleine largeur) : pour mettre en
+  // valeur un logo détaillé. Si les deux sont définis, les deux sont rendus.
+  if (brand.BRAND_IMAGE_URL) {
+    eb.setImage(brand.BRAND_IMAGE_URL);
   }
 
   return eb;

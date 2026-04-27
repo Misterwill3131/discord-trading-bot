@@ -9,6 +9,12 @@ custom-filters.json
 .superpowers/
 *.log
 
+# Secrets locaux : tokens Discord, API keys, webhook secrets.
+# .env.example reste commité (template public sans valeurs).
+.env
+.env.local
+.env.*.local
+
 # SQLite database (vit dans DATA_DIR = /data sur Railway, racine en local).
 # boom-backup.db EST commité (snapshot nightly via runGitBackup) — seul
 # mécanisme de backup de la DB vers GitHub.

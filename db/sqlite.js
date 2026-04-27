@@ -168,6 +168,71 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_positions_ticker_status ON positions(ticker, status);
   CREATE INDEX IF NOT EXISTS idx_positions_author_status ON positions(author, status);
   CREATE INDEX IF NOT EXISTS idx_positions_status        ON positions(status);
+
+  -- ═════════════════════════════════════════════════════════════════════
+  -- SaaS relais : licences clients, journal d'envoi, audit admin, leaves
+  -- ═════════════════════════════════════════════════════════════════════
+
+  -- Une licence = un guild Discord client autorisé à recevoir le relais.
+  -- guild_id en TEXT (snowflake Discord = 64-bit, dépasse Number.MAX_SAFE_INTEGER).
+  -- status piloté par les commandes admin et par les webhooks Launchpass/Stripe.
+  -- target_channel_id défini par le client via /setup une fois le bot dans le serveur.
+  CREATE TABLE IF NOT EXISTS licenses (
+    guild_id                   TEXT PRIMARY KEY,
+    status                     TEXT NOT NULL DEFAULT 'pending'
+                               CHECK (status IN ('pending','active','suspended','expired','cancelled')),
+    plan                       TEXT NOT NULL DEFAULT 'standard',
+    created_at                 TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at                 TEXT,
+    last_relay_at              TEXT,
+    launchpass_subscription_id TEXT,
+    launchpass_customer_email  TEXT,
+    target_channel_id          TEXT,
+    guild_name                 TEXT,
+    notes                      TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_licenses_status     ON licenses(status);
+  CREATE INDEX IF NOT EXISTS idx_licenses_expires_at ON licenses(expires_at);
+  CREATE INDEX IF NOT EXISTS idx_licenses_lp_sub     ON licenses(launchpass_subscription_id);
+
+  -- Journal d'envoi : 1 ligne par tentative de relais (succès ou échec).
+  -- Permet le debug et l'analytics ("dernier relais", taux d'erreur par guild).
+  CREATE TABLE IF NOT EXISTS relay_log (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts                  TEXT NOT NULL DEFAULT (datetime('now')),
+    guild_id            TEXT NOT NULL,
+    source_message_id   TEXT NOT NULL,
+    relayed_message_id  TEXT,
+    status              TEXT NOT NULL CHECK (status IN ('ok','skip','error')),
+    error               TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_relay_log_guild_ts          ON relay_log(guild_id, ts);
+  CREATE INDEX IF NOT EXISTS idx_relay_log_source_message_id ON relay_log(source_message_id);
+
+  -- Audit admin : trace immuable des actions sur les licences (pour
+  -- support, conformité, et debug si un client se plaint d'une suspension).
+  CREATE TABLE IF NOT EXISTS admin_actions (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts        TEXT NOT NULL DEFAULT (datetime('now')),
+    admin     TEXT NOT NULL,
+    action    TEXT NOT NULL,
+    guild_id  TEXT,
+    payload   TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_admin_actions_ts ON admin_actions(ts);
+
+  -- Trace des serveurs où le bot SaaS a été invité. 'joined-active' =
+  -- invitation OK, 'grace-timeout' / 'no-license' / 'expired' / 'suspended' =
+  -- raisons de leave. left_at NULL = bot encore présent.
+  CREATE TABLE IF NOT EXISTS auto_leave_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id   TEXT NOT NULL,
+    guild_name TEXT,
+    joined_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    left_at    TEXT,
+    reason     TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_auto_leave_log_guild ON auto_leave_log(guild_id);
 `);
 
 // ── Prepared statements (réutilisables, plus rapides) ────────────────
@@ -714,6 +779,175 @@ function getPositionHistory(limit = 100) {
 }
 
 // ═════════════════════════════════════════════════════════════════════
+//  SaaS — licences clients, journal de relais, audit admin, leaves
+// ═════════════════════════════════════════════════════════════════════
+
+// ── licenses ────────────────────────────────────────────────────────
+
+const stmtLicenseUpsert = db.prepare(`
+  INSERT INTO licenses
+    (guild_id, status, plan, expires_at, launchpass_subscription_id,
+     launchpass_customer_email, target_channel_id, guild_name, notes)
+  VALUES
+    (@guild_id, @status, @plan, @expires_at, @launchpass_subscription_id,
+     @launchpass_customer_email, @target_channel_id, @guild_name, @notes)
+  ON CONFLICT(guild_id) DO UPDATE SET
+    status                     = excluded.status,
+    plan                       = excluded.plan,
+    expires_at                 = excluded.expires_at,
+    launchpass_subscription_id = COALESCE(excluded.launchpass_subscription_id, licenses.launchpass_subscription_id),
+    launchpass_customer_email  = COALESCE(excluded.launchpass_customer_email, licenses.launchpass_customer_email),
+    target_channel_id          = COALESCE(excluded.target_channel_id, licenses.target_channel_id),
+    guild_name                 = COALESCE(excluded.guild_name, licenses.guild_name),
+    notes                      = COALESCE(excluded.notes, licenses.notes)
+`);
+const stmtLicenseGet            = db.prepare('SELECT * FROM licenses WHERE guild_id = ?');
+const stmtLicenseList           = db.prepare('SELECT * FROM licenses ORDER BY created_at DESC');
+const stmtLicenseListByStatus   = db.prepare('SELECT * FROM licenses WHERE status = ? ORDER BY created_at DESC');
+const stmtLicenseSetStatus      = db.prepare('UPDATE licenses SET status = ? WHERE guild_id = ?');
+const stmtLicenseSetExpires     = db.prepare('UPDATE licenses SET expires_at = ?, status = ? WHERE guild_id = ?');
+const stmtLicenseSetTargetCh    = db.prepare('UPDATE licenses SET target_channel_id = ? WHERE guild_id = ?');
+const stmtLicenseTouchRelay     = db.prepare("UPDATE licenses SET last_relay_at = datetime('now') WHERE guild_id = ?");
+const stmtLicenseFindByLpSub    = db.prepare('SELECT * FROM licenses WHERE launchpass_subscription_id = ? LIMIT 1');
+const stmtLicenseDelete         = db.prepare('DELETE FROM licenses WHERE guild_id = ?');
+
+// UPSERT d'une licence. Champs obligatoires : guild_id. Tout le reste a un
+// défaut. Ne touche pas created_at en update (le défaut DB ne s'applique
+// qu'à l'insert grâce à ON CONFLICT … DO UPDATE).
+function licenseUpsert(input) {
+  return stmtLicenseUpsert.run({
+    guild_id:                   String(input.guild_id),
+    status:                     input.status || 'pending',
+    plan:                       input.plan || 'standard',
+    expires_at:                 input.expires_at || null,
+    launchpass_subscription_id: input.launchpass_subscription_id || null,
+    launchpass_customer_email:  input.launchpass_customer_email || null,
+    target_channel_id:          input.target_channel_id || null,
+    guild_name:                 input.guild_name || null,
+    notes:                      input.notes || null,
+  }).changes;
+}
+
+function licenseGet(guildId) {
+  return stmtLicenseGet.get(String(guildId)) || null;
+}
+
+function licenseList(status) {
+  return status ? stmtLicenseListByStatus.all(status) : stmtLicenseList.all();
+}
+
+function licenseSetStatus(guildId, status) {
+  return stmtLicenseSetStatus.run(status, String(guildId)).changes > 0;
+}
+
+// Met à jour expires_at ET status atomiquement (ex: passer 'expired' à
+// 'active' avec une nouvelle expires_at en un seul write).
+function licenseSetExpires(guildId, expiresAtIso, status) {
+  return stmtLicenseSetExpires.run(expiresAtIso, status, String(guildId)).changes > 0;
+}
+
+function licenseSetTargetChannel(guildId, channelId) {
+  return stmtLicenseSetTargetCh.run(channelId ? String(channelId) : null, String(guildId)).changes > 0;
+}
+
+function licenseTouchRelay(guildId) {
+  stmtLicenseTouchRelay.run(String(guildId));
+}
+
+function licenseFindByLaunchpassSub(subId) {
+  return stmtLicenseFindByLpSub.get(subId) || null;
+}
+
+function licenseDelete(guildId) {
+  return stmtLicenseDelete.run(String(guildId)).changes > 0;
+}
+
+// ── relay_log ───────────────────────────────────────────────────────
+
+const stmtRelayLogInsert = db.prepare(`
+  INSERT INTO relay_log (guild_id, source_message_id, relayed_message_id, status, error)
+  VALUES (@guild_id, @source_message_id, @relayed_message_id, @status, @error)
+`);
+const stmtRelayLogRecent = db.prepare(`
+  SELECT * FROM relay_log
+  WHERE guild_id = ?
+  ORDER BY ts DESC
+  LIMIT ?
+`);
+const stmtRelayLogStats = db.prepare(`
+  SELECT status, COUNT(*) AS n FROM relay_log
+  WHERE guild_id = ? AND ts >= ?
+  GROUP BY status
+`);
+
+function relayLogInsert(entry) {
+  stmtRelayLogInsert.run({
+    guild_id:           String(entry.guild_id),
+    source_message_id:  String(entry.source_message_id),
+    relayed_message_id: entry.relayed_message_id ? String(entry.relayed_message_id) : null,
+    status:             entry.status,
+    error:              entry.error || null,
+  });
+}
+
+function relayLogRecent(guildId, limit = 20) {
+  return stmtRelayLogRecent.all(String(guildId), limit | 0);
+}
+
+function relayLogStatsSince(guildId, sinceIso) {
+  const rows = stmtRelayLogStats.all(String(guildId), sinceIso);
+  const out = { ok: 0, skip: 0, error: 0 };
+  for (const r of rows) out[r.status] = r.n;
+  return out;
+}
+
+// ── admin_actions ───────────────────────────────────────────────────
+
+const stmtAdminActionInsert = db.prepare(`
+  INSERT INTO admin_actions (admin, action, guild_id, payload)
+  VALUES (@admin, @action, @guild_id, @payload)
+`);
+
+function adminActionInsert({ admin, action, guild_id, payload }) {
+  stmtAdminActionInsert.run({
+    admin:    String(admin || 'unknown'),
+    action:   String(action),
+    guild_id: guild_id ? String(guild_id) : null,
+    payload:  payload != null ? JSON.stringify(payload) : null,
+  });
+}
+
+// ── auto_leave_log ──────────────────────────────────────────────────
+
+const stmtAutoLeaveInsert = db.prepare(`
+  INSERT INTO auto_leave_log (guild_id, guild_name, reason)
+  VALUES (@guild_id, @guild_name, @reason)
+`);
+const stmtAutoLeaveClose = db.prepare(`
+  UPDATE auto_leave_log
+  SET left_at = datetime('now')
+  WHERE id = (
+    SELECT id FROM auto_leave_log
+    WHERE guild_id = ? AND left_at IS NULL
+    ORDER BY id DESC LIMIT 1
+  )
+`);
+
+function autoLeaveLogInsert({ guild_id, guild_name, reason }) {
+  stmtAutoLeaveInsert.run({
+    guild_id:   String(guild_id),
+    guild_name: guild_name || null,
+    reason:     String(reason),
+  });
+}
+
+// Ferme la dernière entrée ouverte pour ce guild (left_at = NULL → now).
+// Idempotent : si aucune entrée ouverte, no-op.
+function autoLeaveLogClose(guildId) {
+  stmtAutoLeaveClose.run(String(guildId));
+}
+
+// ═════════════════════════════════════════════════════════════════════
 //  Stats — diagnostic global (taille fichier, count + range par table)
 // ═════════════════════════════════════════════════════════════════════
 
@@ -728,6 +962,10 @@ const TIME_COLUMNS = {
   positions:             'created_at',
   profit_filter_phrases: null,
   settings:              null,
+  licenses:              'created_at',
+  relay_log:             'ts',
+  admin_actions:         'ts',
+  auto_leave_log:        'joined_at',
 };
 
 // Retourne un résumé structuré pour la page /db-viewer :
@@ -843,6 +1081,29 @@ module.exports = {
   getPositionByTickerAndAuthor,
   getPositionByIbkrParentId,
   getPositionHistory,
+
+  // SaaS — licences
+  licenseUpsert,
+  licenseGet,
+  licenseList,
+  licenseSetStatus,
+  licenseSetExpires,
+  licenseSetTargetChannel,
+  licenseTouchRelay,
+  licenseFindByLaunchpassSub,
+  licenseDelete,
+
+  // SaaS — relay log
+  relayLogInsert,
+  relayLogRecent,
+  relayLogStatsSince,
+
+  // SaaS — admin audit
+  adminActionInsert,
+
+  // SaaS — auto-leave log
+  autoLeaveLogInsert,
+  autoLeaveLogClose,
 
   // backup
   backupDb,

@@ -53,6 +53,13 @@ const { createEngine: createTradingEngine } = require('./trading/engine');
 const { registerTradingRoutes } = require('./routes/trading');
 const { createEmailNotifier } = require('./notifications/email');
 
+// SaaS relais — feature-flag par SAAS_BOT_TOKEN. Si la variable n'est pas
+// définie, tout ce code reste dormant et le déploiement existant est intact.
+const { registerSaasAdminRoutes } = require('./routes/saas-admin');
+const { registerGuildGuard } = require('./saas/guards');
+const { registerSaasCommands } = require('./saas/commands');
+const { register: registerSaasRelay } = require('./saas/relay');
+
 // ── Configuration env ──────────────────────────────────────────────
 const DISCORD_TOKEN      = process.env.DISCORD_TOKEN;
 const MAKE_WEBHOOK_URL   = process.env.MAKE_WEBHOOK_URL;
@@ -72,6 +79,14 @@ const PORT               = process.env.PORT || 3000;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
   : 'https://templeofboom.up.railway.app';
+
+// ── SaaS relais — env (feature flag : actif uniquement si SAAS_BOT_TOKEN défini) ──
+const SAAS_BOT_TOKEN       = process.env.SAAS_BOT_TOKEN || '';
+const SAAS_ADMIN_GUILD_ID  = process.env.ADMIN_GUILD_ID || '';
+const SAAS_ADMIN_USER_ID   = process.env.ADMIN_USER_ID || '';
+const SAAS_SOURCE_GUILD_ID = process.env.SOURCE_GUILD_ID || '';
+const SAAS_SOURCE_CHANNELS = (process.env.SOURCE_CHANNEL_IDS || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
 
 // ── Serveur HTTP ───────────────────────────────────────────────────
 const app = express();
@@ -104,6 +119,10 @@ registerBackupLogRoutes(app, requireAuth);
 // Profits : injection du channelId avant d'enregistrer les routes.
 profitCounter.setProfitsChannelId(PROFITS_CHANNEL_ID);
 registerProfitRoutes(app, requireAuth);
+
+// SaaS routes — webhooks publics + API admin auth-protégée.
+// Inconditionnel : utile même sans clientSaas (pour gérer les licences via API).
+registerSaasAdminRoutes(app, requireAuth);
 
 // ── Trading engine bootstrap ───────────────────────────────────────
 const tradingSecrets = getTradingSecrets();
@@ -249,4 +268,47 @@ if (!DISCORD_TOKEN) {
   } catch (err) {
     console.error('[discord] login threw synchronously:', err.message);
   }
+}
+
+// ── Client Discord SaaS (2e bot, feature-flagged) ──────────────────
+// Activé UNIQUEMENT si SAAS_BOT_TOKEN est défini. Tant que la variable n'est
+// pas en env, ce bloc est dormant — déploiement actuel non perturbé.
+//
+// NE PAS activer MessageContent intent : ce bot publie des embeds,
+// il n'a pas besoin de lire le contenu des messages dans les serveurs
+// clients. Réduit la surface d'attaque + évite la review Discord
+// (privileged intent au-delà de 100 guilds).
+if (SAAS_BOT_TOKEN) {
+  const clientSaas = new Client({
+    intents: [GatewayIntentBits.Guilds],
+  });
+
+  registerGuildGuard(clientSaas);
+  registerSaasCommands(clientSaas, {
+    adminGuildId: SAAS_ADMIN_GUILD_ID,
+    adminUserId:  SAAS_ADMIN_USER_ID,
+  });
+  // Le relais consomme messageCreate du client SOURCE (bot trading existant)
+  // et publie via clientSaas vers les serveurs clients.
+  registerSaasRelay({
+    clientSource: client,
+    clientSaas,
+    sourceGuildId: SAAS_SOURCE_GUILD_ID,
+    sourceChannelIds: SAAS_SOURCE_CHANNELS,
+  });
+
+  clientSaas.once('ready', () => {
+    console.log('[saas] Bot connected as ' + clientSaas.user.tag);
+    console.log(`[saas] Guilds: ${clientSaas.guilds.cache.size}`);
+  });
+
+  try {
+    Promise.resolve(clientSaas.login(SAAS_BOT_TOKEN)).catch(err => {
+      console.error('[saas] login failed:', err.message);
+    });
+  } catch (err) {
+    console.error('[saas] login threw synchronously:', err.message);
+  }
+} else {
+  console.log('[saas] SAAS_BOT_TOKEN absent — SaaS relay disabled (HTTP API still available)');
 }

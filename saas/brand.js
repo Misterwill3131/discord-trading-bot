@@ -25,13 +25,22 @@ function parseColor(s) {
 }
 const BRAND_COLOR = parseColor(process.env.BRAND_COLOR);
 
-// URL absolue d'une image PNG (max 80×80 recommandé) affichée en haut
+// URL absolue d'une image PNG/WEBP (max 80×80 recommandé) affichée en haut
 // à droite de l'embed. Optionnelle — si vide ou invalide, pas de
-// thumbnail. Doit être hébergée publiquement (CDN, S3, Imgur).
+// thumbnail. Doit être hébergée publiquement (CDN, S3, Imgur, ou notre
+// propre Express via /static/).
 const BRAND_THUMBNAIL_URL = (() => {
   const u = process.env.BRAND_THUMBNAIL_URL || '';
   if (!u) return null;
-  // Validation minimale : doit commencer par https://
+  return /^https:\/\//.test(u) ? u : null;
+})();
+
+// URL d'une image bannière affichée en bas de l'embed (jusqu'à pleine
+// largeur). Idéale pour un logo détaillé qui ne lirait pas bien en
+// thumbnail miniature. Optionnelle. Animated WEBP supporté.
+const BRAND_IMAGE_URL = (() => {
+  const u = process.env.BRAND_IMAGE_URL || '';
+  if (!u) return null;
   return /^https:\/\//.test(u) ? u : null;
 })();
 
@@ -39,4 +48,5 @@ module.exports = {
   BRAND_NAME,
   BRAND_COLOR,
   BRAND_THUMBNAIL_URL,
+  BRAND_IMAGE_URL,
 };

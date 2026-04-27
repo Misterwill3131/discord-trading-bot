@@ -93,6 +93,11 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
+// Static assets (logo SaaS, etc.) — servis publiquement sans auth.
+// Cache long (1 jour) car les assets changent rarement et sont versionnés
+// implicitement par leur nom de fichier.
+app.use('/static', express.static('static', { maxAge: '1d', immutable: false }));
+
 // Auth + pages statiques en premier (ne nécessitent aucun state runtime).
 registerAuthRoutes(app);
 app.get('/', (_req, res) => res.redirect('/dashboard'));

@@ -239,24 +239,38 @@ test('brandedEmbed: type EmbedBuilder, color/title/footer corrects', () => {
   const eb = brandedEmbed(dto, SAMPLE_BRAND);
   const json = eb.toJSON();
   assert.strictEqual(json.color, 0x06b6d4);
-  assert.strictEqual(json.title, '$TSLA LONG');
+  assert.strictEqual(json.title, '$TSLA');
   assert.strictEqual(json.footer.text, 'via TestBrand');
   assert.ok(typeof json.timestamp === 'string');
 });
 
-test('brandedEmbed: title=Signal LONG si pas de ticker détecté', () => {
+test('brandedEmbed: title=Signal si pas de ticker détecté', () => {
   const dto = buildSignalDTO({ id: '1', content: 'random note', createdAt: new Date() });
   const eb = brandedEmbed(dto, SAMPLE_BRAND);
-  assert.strictEqual(eb.toJSON().title, 'Signal LONG');
+  assert.strictEqual(eb.toJSON().title, 'Signal');
 });
 
-test('brandedEmbed: short side rendu correctement', () => {
-  const dto = buildSignalDTO({
-    id: '1', content: 'TSLA short at 250 target 230',
-    createdAt: new Date(),
+test('brandedEmbed: titre identique long/short (pas de side dans le titre)', () => {
+  const dtoLong = buildSignalDTO({
+    id: '1', content: 'TSLA in at 250 target 270', createdAt: new Date(),
   });
-  const eb = brandedEmbed(dto, SAMPLE_BRAND);
-  assert.strictEqual(eb.toJSON().title, '$TSLA SHORT');
+  const dtoShort = buildSignalDTO({
+    id: '2', content: 'TSLA short at 250 target 230', createdAt: new Date(),
+  });
+  assert.strictEqual(brandedEmbed(dtoLong, SAMPLE_BRAND).toJSON().title, '$TSLA');
+  assert.strictEqual(brandedEmbed(dtoShort, SAMPLE_BRAND).toJSON().title, '$TSLA');
+});
+
+test('brandedEmbed: BRAND_IMAGE_URL rendu en bannière bas si défini', () => {
+  const dto = buildSignalDTO({ id: '1', content: 'TSLA at 1', createdAt: new Date() });
+  const without = brandedEmbed(dto, SAMPLE_BRAND).toJSON();
+  assert.strictEqual(without.image, undefined);
+
+  const withImg = brandedEmbed(dto, {
+    ...SAMPLE_BRAND,
+    BRAND_IMAGE_URL: 'https://example.com/banner.png',
+  }).toJSON();
+  assert.strictEqual(withImg.image.url, 'https://example.com/banner.png');
 });
 
 test('brandedEmbed: thumbnail SEULEMENT si BRAND_THUMBNAIL_URL défini', () => {

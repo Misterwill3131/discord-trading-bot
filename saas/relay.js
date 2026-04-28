@@ -17,21 +17,15 @@ const licenses = require('./licenses');
 const { buildSignalDTO, brandedEmbed } = require('./anonymize');
 const brand = require('./brand');
 
-// Filtres heuristiques avant relais. On ne relaye PAS :
-//   - Les messages du bot lui-même
-//   - Les messages vides (après sanitize)
-//   - Les messages qui n'ont ni ticker ni prix extraits (= bavardage,
-//     pas un signal exploitable)
+// Filtres heuristiques avant relais. On ne relaye QUE les messages où un
+// prix d'entrée a été extrait — c'est le critère minimal d'un signal
+// actionnable côté client. Tout le reste (recaps, commentaires, FYI,
+// exits sans prix, news, etc.) est ignoré.
 function shouldRelay(message, dto) {
   if (!message) return false;
   if (message.author?.bot) return false;
   if (!dto) return false;
-  // Au moins un signal exploitable (ticker OU au moins un prix)
-  const hasSignal = dto.ticker
-    || dto.entry_price != null
-    || dto.target_price != null
-    || dto.stop_price != null;
-  return Boolean(hasSignal);
+  return dto.entry_price != null && Number.isFinite(dto.entry_price);
 }
 
 // Envoie un embed à UN guild client. Retourne l'objet { status, error, msgId }

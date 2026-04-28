@@ -78,8 +78,48 @@ async function broadcast(clientSaas, dto) {
   return { ok, skip, error, total: targets.length };
 }
 
+// Clé KV settings où sont persistées les overrides runtime.
+// Si présente, l'array de channel IDs override l'env var SOURCE_CHANNEL_IDS.
+// Modifiable à chaud via /saas source — pas de redeploy nécessaire.
+const SETTINGS_KEY_SOURCE_CHANNELS = 'saas_source_channels';
+
+// Lit les channels source effectifs à appliquer maintenant. Priorité :
+//   1. Override DB (settings KV) si défini et non vide
+//   2. Env var (csv) sinon
+// Retourne un Set de strings.
+function loadSourceChannels(envFallbackArray) {
+  const override = db.getSetting(SETTINGS_KEY_SOURCE_CHANNELS, null);
+  if (Array.isArray(override) && override.length > 0) {
+    return new Set(override.map(String));
+  }
+  // Fallback env var
+  const set = new Set();
+  if (Array.isArray(envFallbackArray)) {
+    for (const id of envFallbackArray) if (id) set.add(String(id).trim());
+  } else if (typeof envFallbackArray === 'string') {
+    for (const id of envFallbackArray.split(',')) if (id.trim()) set.add(id.trim());
+  }
+  return set;
+}
+
+// Persiste l'override en DB. Passer null/[] efface l'override (retombe sur env).
+function setSourceChannels(channelIds) {
+  if (!channelIds || (Array.isArray(channelIds) && channelIds.length === 0)) {
+    db.setSetting(SETTINGS_KEY_SOURCE_CHANNELS, null);
+    return [];
+  }
+  const arr = Array.isArray(channelIds)
+    ? channelIds.map(String).map(s => s.trim()).filter(Boolean)
+    : String(channelIds).split(',').map(s => s.trim()).filter(Boolean);
+  db.setSetting(SETTINGS_KEY_SOURCE_CHANNELS, arr);
+  return arr;
+}
+
 // Wire-up : enregistre le messageCreate listener sur clientSource.
 // `opts` = { clientSource, clientSaas, sourceGuildId, sourceChannelIds (Set or csv) }.
+//
+// sourceChannelIds est utilisé comme FALLBACK uniquement — la liste effective
+// est lue à chaque message via loadSourceChannels (qui priorise l'override DB).
 function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds }) {
   if (!clientSource || !clientSaas) {
     console.warn('[saas/relay] clientSource and clientSaas required — skipping wire-up');
@@ -88,28 +128,16 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
   if (clientSource.__saasRelayRegistered) return;
   clientSource.__saasRelayRegistered = true;
 
-  // Normaliser sourceChannelIds en Set
-  const channelSet = new Set();
-  if (Array.isArray(sourceChannelIds)) {
-    for (const id of sourceChannelIds) if (id) channelSet.add(String(id).trim());
-  } else if (typeof sourceChannelIds === 'string') {
-    for (const id of sourceChannelIds.split(',')) if (id.trim()) channelSet.add(id.trim());
-  } else if (sourceChannelIds instanceof Set) {
-    for (const id of sourceChannelIds) channelSet.add(String(id));
-  }
-
   if (!sourceGuildId) {
     console.warn('[saas/relay] SOURCE_GUILD_ID not set — relay will accept any guild (NOT recommended)');
-  }
-  if (channelSet.size === 0) {
-    console.warn('[saas/relay] SOURCE_CHANNEL_IDS empty — relay disabled until configured');
   }
 
   clientSource.on('messageCreate', async (message) => {
     try {
       // Filtre 1 : guild source
       if (sourceGuildId && message.guildId !== sourceGuildId) return;
-      // Filtre 2 : channel source
+      // Filtre 2 : channel source — lecture dynamique (override DB possible)
+      const channelSet = loadSourceChannels(sourceChannelIds);
       if (channelSet.size > 0 && !channelSet.has(message.channelId)) return;
       // Filtre 3 : pas de bot, pas de DM
       if (!message.guildId) return;
@@ -134,13 +162,20 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
     }
   });
 
+  // Log initial du channelSet effectif (DB override OR env fallback)
+  const effective = loadSourceChannels(sourceChannelIds);
   console.log(
-    `[saas/relay] Registered. sourceGuild=${sourceGuildId || '*'} channels=[${[...channelSet].join(',') || '*'}]`
+    `[saas/relay] Registered. sourceGuild=${sourceGuildId || '*'} ` +
+    `channels=[${[...effective].join(',') || '*'}] ` +
+    `(source: ${db.getSetting(SETTINGS_KEY_SOURCE_CHANNELS, null) ? 'DB override' : 'env fallback'})`
   );
 }
 
 module.exports = {
   register,
-  broadcast,    // exposé pour tests
-  shouldRelay,  // exposé pour tests
+  broadcast,             // exposé pour tests
+  shouldRelay,           // exposé pour tests
+  loadSourceChannels,    // exposé pour /saas source list
+  setSourceChannels,     // exposé pour /saas source set
+  SETTINGS_KEY_SOURCE_CHANNELS,
 };

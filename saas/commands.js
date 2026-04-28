@@ -28,6 +28,7 @@ const {
 
 const db = require('../db/sqlite');
 const licenses = require('./licenses');
+const relay = require('./relay');
 const { adminOnly, manageGuildOnly, leaveGuild } = require('./guards');
 const { BRAND_NAME, BRAND_COLOR } = require('./brand');
 const { STATUSES } = licenses;
@@ -82,6 +83,12 @@ function buildAdminCommands() {
     )
     .addSubcommand(s => s.setName('pending')
       .setDescription('List pending claim codes (Launchpass subs not yet claimed)')
+    )
+    .addSubcommand(s => s.setName('source')
+      .setDescription('View or change which source channel(s) the relay listens to')
+      .addStringOption(o => o.setName('channels')
+        .setDescription('CSV of channel IDs to listen to. Leave empty to view current. "clear" to reset to env var.')
+        .setRequired(false))
     );
   return [saas.toJSON()];
 }
@@ -213,6 +220,50 @@ async function handleSaasForceLeave(interaction, clientSaas) {
   return safeReply(interaction, { content: `Left guild \`${guildId}\`.` });
 }
 
+async function handleSaasSource(interaction, relay, envFallback) {
+  const arg = interaction.options.getString('channels');
+  // Pas d'argument → affiche l'état courant
+  if (!arg) {
+    const current = [...relay.loadSourceChannels(envFallback)];
+    const override = db.getSetting(relay.SETTINGS_KEY_SOURCE_CHANNELS, null);
+    const source = override ? 'DB override' : 'env fallback';
+    const lines = current.length > 0
+      ? current.map(id => `• \`${id}\` (<#${id}>)`).join('\n')
+      : '_(none — relay accepts all channels of source guild)_';
+    const embed = new EmbedBuilder()
+      .setColor(BRAND_COLOR)
+      .setTitle('Source channels')
+      .setDescription(lines)
+      .setFooter({ text: `Source: ${source}` });
+    return safeReply(interaction, { embeds: [embed] });
+  }
+  // Cas spécial : "clear" → efface l'override DB, retombe sur l'env var
+  if (arg.trim().toLowerCase() === 'clear') {
+    relay.setSourceChannels(null);
+    db.adminActionInsert({ admin: interaction.user.id, action: 'source-clear', payload: { previous: arg } });
+    return safeReply(interaction, { content: 'Override cleared — relay now uses the env var SOURCE_CHANNEL_IDS.' });
+  }
+  // Sinon : on parse le csv et on remplace
+  // Validation minimale : chaque ID doit être numérique (snowflake Discord = 17-20 digits)
+  const ids = arg.split(',').map(s => s.trim()).filter(Boolean);
+  for (const id of ids) {
+    if (!/^\d{17,20}$/.test(id)) {
+      return safeReply(interaction, {
+        content: `Invalid channel ID: \`${id}\`. Expected a Discord snowflake (17-20 digits).`,
+      });
+    }
+  }
+  const saved = relay.setSourceChannels(ids);
+  db.adminActionInsert({
+    admin: interaction.user.id,
+    action: 'source-set',
+    payload: { channels: saved },
+  });
+  return safeReply(interaction, {
+    content: `Source channels updated to: ${saved.map(id => `<#${id}>`).join(', ')}. Effect is immediate (no redeploy needed).`,
+  });
+}
+
 async function handleSaasPending(interaction) {
   const map = licenses.listPendingSubs();
   const entries = Object.entries(map);
@@ -340,6 +391,7 @@ function registerSaasCommands(clientSaas, opts) {
           if (sub === 'info')        return handleSaasInfo(interaction);
           if (sub === 'force-leave') return handleSaasForceLeave(interaction, clientSaas);
           if (sub === 'pending')     return handleSaasPending(interaction);
+          if (sub === 'source')      return handleSaasSource(interaction, relay, opts.sourceChannelIdsEnv);
           return safeReply(interaction, { content: `Unknown subcommand: ${sub}` });
         }
         case 'setup':   return handleSetup(interaction, clientSaas);

@@ -292,6 +292,8 @@ if (SAAS_BOT_TOKEN) {
   registerSaasCommands(clientSaas, {
     adminGuildId: SAAS_ADMIN_GUILD_ID,
     adminUserId:  SAAS_ADMIN_USER_ID,
+    // Fallback env pour `/saas source` quand l'override DB est absent
+    sourceChannelIdsEnv: SAAS_SOURCE_CHANNELS,
   });
   // Le relais consomme messageCreate du client SOURCE (bot trading existant)
   // et publie via clientSaas vers les serveurs clients.

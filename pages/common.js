@@ -95,8 +95,152 @@ function sidebarHTML(active) {
 </nav>`;
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Layout PUBLIC — utilisé par les pages marketing (/ /pricing /faq etc.)
+// et le panel customer (/account/*). Différent du dashboard admin :
+//   - Header haut (pas de sidebar gauche)
+//   - Footer avec liens légaux
+//   - Pas de bouton dépendant de l'admin (pas de DB Viewer, etc.)
+// ─────────────────────────────────────────────────────────────────────
+
+const PUBLIC_CSS = `
+  /* Header public */
+  .public-header { display: flex; align-items: center; gap: 28px; padding: 16px 32px; border-bottom: 1px solid rgba(255,255,255,0.06); background: rgba(10,10,15,0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); position: sticky; top: 0; z-index: 50; }
+  .public-brand { font-size: 18px; font-weight: 800; letter-spacing: -0.02em; background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: transparent; text-decoration: none; }
+  .public-nav { display: flex; gap: 24px; flex: 1; }
+  .public-nav a { color: #a0a0b0; text-decoration: none; font-size: 14px; font-weight: 500; }
+  .public-nav a:hover, .public-nav a.active { color: #fafafa; }
+  .public-nav-cta { display: flex; gap: 12px; align-items: center; }
+  .public-nav-cta a { font-size: 13px; font-weight: 600; padding: 8px 16px; border-radius: 8px; text-decoration: none; }
+  .public-nav-cta a.ghost { color: #a0a0b0; }
+  .public-nav-cta a.ghost:hover { color: #fafafa; background: rgba(255,255,255,0.04); }
+  .public-nav-cta a.primary { background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); color: #fff; box-shadow: 0 2px 8px rgba(59,130,246,0.3); }
+  .public-nav-cta a.primary:hover { box-shadow: 0 4px 16px rgba(139,92,246,0.4); transform: translateY(-1px); }
+
+  /* Body wrapper public */
+  .public-body { display: flex; flex-direction: column; min-height: 100vh; flex: 1; min-width: 0; }
+  .public-main { flex: 1; padding: 48px 32px; max-width: 1200px; width: 100%; margin: 0 auto; }
+  .public-section { margin-bottom: 80px; }
+  .public-h1 { font-size: 56px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.05; background: linear-gradient(135deg, #fafafa 0%, #c4b5fd 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: transparent; max-width: 900px; }
+  .public-h2 { font-size: 36px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.15; color: #fafafa; margin-bottom: 16px; }
+  .public-h3 { font-size: 20px; font-weight: 700; color: #fafafa; margin-bottom: 8px; letter-spacing: -0.01em; }
+  .public-lead { font-size: 19px; color: #a0a0b0; max-width: 720px; line-height: 1.5; margin-top: 18px; }
+  .public-prose p { color: #c0c0cc; font-size: 15px; line-height: 1.7; margin-bottom: 14px; }
+
+  /* Footer public */
+  .public-footer { padding: 32px; border-top: 1px solid rgba(255,255,255,0.06); display: flex; flex-wrap: wrap; gap: 24px; align-items: center; color: #707080; font-size: 13px; max-width: 1200px; width: 100%; margin: 0 auto; }
+  .public-footer .links { display: flex; gap: 18px; flex: 1; }
+  .public-footer a { color: #a0a0b0; text-decoration: none; }
+  .public-footer a:hover { color: #fafafa; }
+
+  /* Hero CTA */
+  .hero-cta { display: flex; gap: 14px; margin-top: 32px; flex-wrap: wrap; }
+  .hero-cta a { padding: 14px 26px; border-radius: 10px; font-size: 15px; font-weight: 600; text-decoration: none; }
+  .hero-cta a.primary { background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); color: #fff; box-shadow: 0 4px 16px rgba(59,130,246,0.4); }
+  .hero-cta a.primary:hover { box-shadow: 0 8px 32px rgba(139,92,246,0.5); transform: translateY(-2px); }
+  .hero-cta a.secondary { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); color: #fafafa; }
+  .hero-cta a.secondary:hover { background: rgba(255,255,255,0.08); }
+
+  /* Feature grid */
+  .feature-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-top: 32px; }
+  .feature-icon { font-size: 28px; margin-bottom: 12px; }
+
+  /* Pricing cards */
+  .pricing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 32px; }
+  .pricing-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 16px; padding: 32px; display: flex; flex-direction: column; position: relative; }
+  .pricing-card.highlight { border-color: rgba(139,92,246,0.5); box-shadow: 0 0 0 1px rgba(139,92,246,0.3), 0 12px 40px rgba(139,92,246,0.15); }
+  .pricing-card .badge { position: absolute; top: -12px; right: 24px; background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); color: #fff; font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 999px; letter-spacing: 0.04em; text-transform: uppercase; }
+  .pricing-card .name { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #a0a0b0; margin-bottom: 12px; }
+  .pricing-card .price { font-size: 44px; font-weight: 800; color: #fafafa; letter-spacing: -0.03em; line-height: 1; }
+  .pricing-card .price-suffix { font-size: 14px; color: #a0a0b0; font-weight: 500; }
+  .pricing-card .desc { color: #a0a0b0; font-size: 14px; margin: 16px 0; min-height: 40px; }
+  .pricing-card ul { list-style: none; margin: 8px 0 24px; flex: 1; }
+  .pricing-card li { color: #c0c0cc; font-size: 14px; padding: 6px 0 6px 24px; position: relative; }
+  .pricing-card li:before { content: '✓'; position: absolute; left: 0; color: #3ba55d; font-weight: 700; }
+  .pricing-card .pay-buttons { display: flex; flex-direction: column; gap: 8px; }
+  .pricing-card .pay-buttons button, .pricing-card .pay-buttons a { padding: 11px 18px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; border: none; text-decoration: none; text-align: center; display: block; }
+  .pricing-card .pay-buttons .stripe { background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); color: #fff; box-shadow: 0 2px 8px rgba(59,130,246,0.3); }
+  .pricing-card .pay-buttons .stripe:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(139,92,246,0.4); }
+  .pricing-card .pay-buttons .launchpass { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); color: #fafafa; }
+  .pricing-card .pay-buttons .launchpass:hover { background: rgba(255,255,255,0.08); }
+
+  /* FAQ accordion */
+  .faq-item { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; margin-bottom: 12px; }
+  .faq-item summary { padding: 18px 22px; cursor: pointer; font-weight: 600; color: #fafafa; font-size: 15px; list-style: none; display: flex; justify-content: space-between; align-items: center; }
+  .faq-item summary::-webkit-details-marker { display: none; }
+  .faq-item summary:after { content: '+'; font-size: 22px; font-weight: 300; color: #a0a0b0; }
+  .faq-item[open] summary:after { content: '−'; }
+  .faq-item[open] summary { border-bottom: 1px solid rgba(255,255,255,0.06); }
+  .faq-item .answer { padding: 16px 22px 22px; color: #c0c0cc; font-size: 14px; line-height: 1.7; }
+`;
+
+// Génère un layout public complet (header + main + footer).
+// `activePath` : marque le lien actif dans le header.
+// `content` : HTML du <main>.
+// `opts` : { title, brandName, brandDomain, year, isCustomerLoggedIn }.
+function publicLayoutHTML(activePath, content, opts = {}) {
+  const title = opts.title || 'Trading Signals';
+  const brandName = opts.brandName || 'Trading Signals';
+  const year = opts.year || new Date().getFullYear();
+  const accountLink = opts.isCustomerLoggedIn
+    ? `<a href="/account" class="ghost">My account</a>`
+    : `<a href="/account/login" class="ghost">Login</a>`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title}</title>
+<style>${COMMON_CSS}${PUBLIC_CSS}</style>
+</head>
+<body>
+<div class="public-body">
+  <header class="public-header">
+    <a href="/" class="public-brand">${brandName}</a>
+    <nav class="public-nav">
+      <a href="/"${activePath === '/' ? ' class="active"' : ''}>Home</a>
+      <a href="/pricing"${activePath === '/pricing' ? ' class="active"' : ''}>Pricing</a>
+      <a href="/faq"${activePath === '/faq' ? ' class="active"' : ''}>FAQ</a>
+    </nav>
+    <div class="public-nav-cta">
+      ${accountLink}
+      <a href="/pricing" class="primary">Get started</a>
+    </div>
+  </header>
+  <main class="public-main">
+    ${content}
+  </main>
+  <footer class="public-footer">
+    <div class="links">
+      <a href="/terms">Terms</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/faq">FAQ</a>
+    </div>
+    <div>© ${year} ${brandName}. All rights reserved.</div>
+  </footer>
+</div>
+</body>
+</html>`;
+}
+
+// Helper pour échapper du HTML user-input quand on injecte du contenu admin
+// dans le DOM. Sécurise contre XSS sur les champs marketing/plans éditables.
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 module.exports = {
   COMMON_CSS,
+  PUBLIC_CSS,
   SIDEBAR_LINKS,
   sidebarHTML,
+  publicLayoutHTML,
+  escapeHtml,
 };

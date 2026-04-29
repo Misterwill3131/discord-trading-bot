@@ -250,6 +250,83 @@ db.exec(`
     PRIMARY KEY (ticker, alert_type, fired_date_et)
   );
   CREATE INDEX IF NOT EXISTS idx_market_alert_state_date ON market_alert_state(fired_date_et);
+
+  -- ═════════════════════════════════════════════════════════════════════
+  -- Site public de vente : plans tarifaires, customers, sessions, magic-links
+  -- ═════════════════════════════════════════════════════════════════════
+
+  -- Plans tarifaires éditables par l'admin via /admin/plans (CMS pricing).
+  -- Affichés dynamiquement sur /pricing. Changements appliqués sans redeploy.
+  CREATE TABLE IF NOT EXISTS plans (
+    id                       TEXT PRIMARY KEY,           -- ex: 'starter', 'pro'
+    name                     TEXT NOT NULL,
+    description              TEXT,
+    price_monthly_cents      INTEGER,
+    price_annual_cents       INTEGER,
+    currency                 TEXT NOT NULL DEFAULT 'USD',
+    is_active                INTEGER NOT NULL DEFAULT 1,  -- 0/1
+    display_order            INTEGER NOT NULL DEFAULT 0,
+    features_json            TEXT NOT NULL DEFAULT '[]',  -- ['1 server','Unlimited signals',...]
+    highlight_label          TEXT,                        -- ex: 'Most Popular'
+    stripe_price_id_monthly  TEXT,
+    stripe_price_id_annual   TEXT,
+    launchpass_url           TEXT,
+    created_at               TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at               TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_plans_active_order ON plans(is_active, display_order);
+
+  -- Customers indexés par email (identité primaire du panel client self-service).
+  -- Lié informellement à licenses.guild_id quand le claim_code a été consommé.
+  CREATE TABLE IF NOT EXISTS customers (
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    email                    TEXT UNIQUE NOT NULL,
+    guild_id                 TEXT,
+    stripe_customer_id       TEXT,
+    launchpass_customer_id   TEXT,
+    created_at               TEXT NOT NULL DEFAULT (datetime('now')),
+    last_login_at            TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_customers_guild ON customers(guild_id);
+  CREATE INDEX IF NOT EXISTS idx_customers_stripe ON customers(stripe_customer_id);
+
+  -- Sessions persistées du panel client. Cookie 'tob_customer_session' = token.
+  -- Distinct des sessions admin (cookie 'boom_session' / DASHBOARD_PASSWORD).
+  CREATE TABLE IF NOT EXISTS customer_sessions (
+    token                    TEXT PRIMARY KEY,
+    customer_id              INTEGER NOT NULL,
+    created_at               TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at               TEXT NOT NULL,
+    user_agent               TEXT,
+    ip                       TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_customer_sessions_expires ON customer_sessions(expires_at);
+  CREATE INDEX IF NOT EXISTS idx_customer_sessions_customer ON customer_sessions(customer_id);
+
+  -- Magic-links one-shot pour login customer (email envoyé avec lien temporaire).
+  -- consumed_at NULL = pas encore utilisé. Sinon = horodate la consommation.
+  CREATE TABLE IF NOT EXISTS magic_links (
+    token                    TEXT PRIMARY KEY,
+    email                    TEXT NOT NULL,
+    created_at               TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at               TEXT NOT NULL,
+    consumed_at              TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_magic_links_email ON magic_links(email);
+  CREATE INDEX IF NOT EXISTS idx_magic_links_expires ON magic_links(expires_at);
+
+  -- Idempotence webhook events (Stripe + Launchpass). event_id stocké pour
+  -- éviter de traiter 2x le même event en cas de retry du provider.
+  CREATE TABLE IF NOT EXISTS webhook_events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider     TEXT NOT NULL,                              -- 'stripe' | 'launchpass'
+    event_id     TEXT NOT NULL,                              -- id unique fourni par le provider
+    event_type   TEXT,
+    received_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    processed_at TEXT,
+    UNIQUE(provider, event_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_webhook_events_received ON webhook_events(received_at);
 `);
 
 // ── Prepared statements (réutilisables, plus rapides) ────────────────
@@ -1002,6 +1079,220 @@ function purgeMarketAlertStateOlderThan(keepDateEt) {
 }
 
 // ═════════════════════════════════════════════════════════════════════
+//  Site public : plans, customers, customer_sessions, magic_links
+// ═════════════════════════════════════════════════════════════════════
+
+// ── plans (CMS pricing, éditable par admin) ────────────────────────
+
+const stmtPlanUpsert = db.prepare(`
+  INSERT INTO plans
+    (id, name, description, price_monthly_cents, price_annual_cents, currency,
+     is_active, display_order, features_json, highlight_label,
+     stripe_price_id_monthly, stripe_price_id_annual, launchpass_url, updated_at)
+  VALUES
+    (@id, @name, @description, @price_monthly_cents, @price_annual_cents, @currency,
+     @is_active, @display_order, @features_json, @highlight_label,
+     @stripe_price_id_monthly, @stripe_price_id_annual, @launchpass_url, datetime('now'))
+  ON CONFLICT(id) DO UPDATE SET
+    name                    = excluded.name,
+    description             = excluded.description,
+    price_monthly_cents     = excluded.price_monthly_cents,
+    price_annual_cents      = excluded.price_annual_cents,
+    currency                = excluded.currency,
+    is_active               = excluded.is_active,
+    display_order           = excluded.display_order,
+    features_json           = excluded.features_json,
+    highlight_label         = excluded.highlight_label,
+    stripe_price_id_monthly = excluded.stripe_price_id_monthly,
+    stripe_price_id_annual  = excluded.stripe_price_id_annual,
+    launchpass_url          = excluded.launchpass_url,
+    updated_at              = datetime('now')
+`);
+const stmtPlanGet         = db.prepare('SELECT * FROM plans WHERE id = ?');
+const stmtPlanListAll     = db.prepare('SELECT * FROM plans ORDER BY display_order ASC, name ASC');
+const stmtPlanListActive  = db.prepare('SELECT * FROM plans WHERE is_active = 1 ORDER BY display_order ASC, name ASC');
+const stmtPlanDelete      = db.prepare('DELETE FROM plans WHERE id = ?');
+
+function planRowFromInput(p) {
+  return {
+    id:                      String(p.id),
+    name:                    p.name || p.id,
+    description:             p.description || null,
+    price_monthly_cents:     p.price_monthly_cents != null ? (p.price_monthly_cents | 0) : null,
+    price_annual_cents:      p.price_annual_cents != null ? (p.price_annual_cents | 0) : null,
+    currency:                p.currency || 'USD',
+    is_active:               p.is_active === 0 || p.is_active === false ? 0 : 1,
+    display_order:           (p.display_order | 0) || 0,
+    features_json:           Array.isArray(p.features) ? JSON.stringify(p.features)
+                              : (p.features_json || '[]'),
+    highlight_label:         p.highlight_label || null,
+    stripe_price_id_monthly: p.stripe_price_id_monthly || null,
+    stripe_price_id_annual:  p.stripe_price_id_annual || null,
+    launchpass_url:          p.launchpass_url || null,
+  };
+}
+
+// Parse `features_json` en array pour faciliter la consommation côté pages.
+function planRowToView(row) {
+  if (!row) return null;
+  let features = [];
+  try { features = JSON.parse(row.features_json || '[]'); } catch (_) {}
+  return { ...row, features, is_active: row.is_active === 1 };
+}
+
+function planUpsert(input) {
+  return stmtPlanUpsert.run(planRowFromInput(input)).changes;
+}
+function planGet(id) {
+  return planRowToView(stmtPlanGet.get(String(id)));
+}
+function planList(activeOnly) {
+  const rows = activeOnly ? stmtPlanListActive.all() : stmtPlanListAll.all();
+  return rows.map(planRowToView);
+}
+function planDelete(id) {
+  return stmtPlanDelete.run(String(id)).changes > 0;
+}
+
+// ── customers (identités email pour panel client) ──────────────────
+
+const stmtCustomerUpsert = db.prepare(`
+  INSERT INTO customers (email)
+  VALUES (?)
+  ON CONFLICT(email) DO NOTHING
+`);
+const stmtCustomerGetByEmail = db.prepare('SELECT * FROM customers WHERE email = ? LIMIT 1');
+const stmtCustomerGetById    = db.prepare('SELECT * FROM customers WHERE id = ?');
+const stmtCustomerSetGuild   = db.prepare('UPDATE customers SET guild_id = ? WHERE id = ?');
+const stmtCustomerSetStripe  = db.prepare('UPDATE customers SET stripe_customer_id = ? WHERE id = ?');
+const stmtCustomerSetLp      = db.prepare('UPDATE customers SET launchpass_customer_id = ? WHERE id = ?');
+const stmtCustomerTouchLogin = db.prepare("UPDATE customers SET last_login_at = datetime('now') WHERE id = ?");
+
+// Crée le customer s'il n'existe pas, retourne la ligne (avec id auto-généré).
+function customerUpsertByEmail(email) {
+  const norm = String(email).trim().toLowerCase();
+  stmtCustomerUpsert.run(norm);
+  return stmtCustomerGetByEmail.get(norm);
+}
+function customerGet(id) {
+  return stmtCustomerGetById.get(id | 0) || null;
+}
+function customerGetByEmail(email) {
+  return stmtCustomerGetByEmail.get(String(email).trim().toLowerCase()) || null;
+}
+function customerLinkGuild(customerId, guildId) {
+  return stmtCustomerSetGuild.run(guildId ? String(guildId) : null, customerId | 0).changes > 0;
+}
+function customerSetStripeId(customerId, stripeId) {
+  return stmtCustomerSetStripe.run(stripeId || null, customerId | 0).changes > 0;
+}
+function customerSetLaunchpassId(customerId, lpId) {
+  return stmtCustomerSetLp.run(lpId || null, customerId | 0).changes > 0;
+}
+function customerTouchLogin(customerId) {
+  stmtCustomerTouchLogin.run(customerId | 0);
+}
+
+// ── customer_sessions (cookie 'tob_customer_session') ──────────────
+
+const stmtCustomerSessionInsert = db.prepare(`
+  INSERT INTO customer_sessions (token, customer_id, expires_at, user_agent, ip)
+  VALUES (?, ?, ?, ?, ?)
+`);
+const stmtCustomerSessionGet = db.prepare(`
+  SELECT s.*, c.email, c.guild_id, c.stripe_customer_id, c.launchpass_customer_id
+  FROM customer_sessions s
+  INNER JOIN customers c ON c.id = s.customer_id
+  WHERE s.token = ? AND s.expires_at > datetime('now')
+`);
+const stmtCustomerSessionDelete = db.prepare('DELETE FROM customer_sessions WHERE token = ?');
+const stmtCustomerSessionPurgeExpired = db.prepare("DELETE FROM customer_sessions WHERE expires_at <= datetime('now')");
+
+function customerSessionCreate({ customer_id, expires_at, user_agent, ip }) {
+  const token = require('crypto').randomBytes(32).toString('hex');
+  stmtCustomerSessionInsert.run(
+    token, customer_id | 0, expires_at, user_agent || null, ip || null
+  );
+  return token;
+}
+function customerSessionGet(token) {
+  if (!token) return null;
+  return stmtCustomerSessionGet.get(String(token)) || null;
+}
+function customerSessionDelete(token) {
+  return stmtCustomerSessionDelete.run(String(token)).changes > 0;
+}
+function customerSessionPurgeExpired() {
+  return stmtCustomerSessionPurgeExpired.run().changes;
+}
+
+// ── magic_links (login one-shot par email) ─────────────────────────
+
+const stmtMagicLinkInsert = db.prepare(`
+  INSERT INTO magic_links (token, email, expires_at)
+  VALUES (?, ?, ?)
+`);
+const stmtMagicLinkGet = db.prepare(`
+  SELECT * FROM magic_links WHERE token = ? LIMIT 1
+`);
+const stmtMagicLinkConsume = db.prepare(`
+  UPDATE magic_links SET consumed_at = datetime('now')
+  WHERE token = ? AND consumed_at IS NULL AND expires_at > datetime('now')
+`);
+const stmtMagicLinkCountRecent = db.prepare(`
+  SELECT COUNT(*) AS n FROM magic_links
+  WHERE email = ? AND created_at > datetime('now', ?)
+`);
+const stmtMagicLinkPurgeExpired = db.prepare("DELETE FROM magic_links WHERE expires_at <= datetime('now', '-1 day')");
+
+function magicLinkCreate({ email, expires_at }) {
+  const token = require('crypto').randomBytes(32).toString('hex');
+  stmtMagicLinkInsert.run(token, String(email).trim().toLowerCase(), expires_at);
+  return token;
+}
+// Atomic : passe consumed_at et retourne la ligne SI le link était valide.
+// Renvoie null si invalide / expiré / déjà consommé.
+function magicLinkConsume(token) {
+  const result = stmtMagicLinkConsume.run(String(token));
+  if (result.changes === 0) return null;
+  return stmtMagicLinkGet.get(String(token));
+}
+// Compte les magic-links créés pour un email dans les N dernières minutes.
+// Utilisé pour rate-limiter (max 5 / heure / email).
+function magicLinkCountRecent(email, minutes) {
+  return stmtMagicLinkCountRecent.get(
+    String(email).trim().toLowerCase(),
+    `-${(minutes | 0) || 60} minutes`
+  ).n;
+}
+function magicLinkPurgeExpired() {
+  return stmtMagicLinkPurgeExpired.run().changes;
+}
+
+// ── webhook_events (idempotence Stripe + Launchpass) ───────────────
+
+const stmtWebhookEventInsert = db.prepare(`
+  INSERT OR IGNORE INTO webhook_events (provider, event_id, event_type)
+  VALUES (?, ?, ?)
+`);
+const stmtWebhookEventMarkProcessed = db.prepare(`
+  UPDATE webhook_events SET processed_at = datetime('now')
+  WHERE provider = ? AND event_id = ?
+`);
+
+// Tente d'insérer l'event. Retourne true si nouveau (à traiter), false si
+// déjà vu (idempotence — skip pour éviter double traitement).
+function webhookEventClaim({ provider, event_id, event_type }) {
+  const result = stmtWebhookEventInsert.run(
+    String(provider), String(event_id), event_type || null
+  );
+  return result.changes > 0;
+}
+function webhookEventMarkProcessed({ provider, event_id }) {
+  stmtWebhookEventMarkProcessed.run(String(provider), String(event_id));
+}
+
+// ═════════════════════════════════════════════════════════════════════
 //  Stats — diagnostic global (taille fichier, count + range par table)
 // ═════════════════════════════════════════════════════════════════════
 
@@ -1021,6 +1312,11 @@ const TIME_COLUMNS = {
   admin_actions:         'ts',
   auto_leave_log:        'joined_at',
   market_alert_state:    'fired_date_et',
+  plans:                 'created_at',
+  customers:             'created_at',
+  customer_sessions:     'created_at',
+  magic_links:           'created_at',
+  webhook_events:        'received_at',
 };
 
 // Retourne un résumé structuré pour la page /db-viewer :
@@ -1164,6 +1460,37 @@ module.exports = {
   alertWasFired,
   markAlertFired,
   purgeMarketAlertStateOlderThan,
+
+  // Site public — plans (CMS pricing)
+  planUpsert,
+  planGet,
+  planList,
+  planDelete,
+
+  // Site public — customers
+  customerUpsertByEmail,
+  customerGet,
+  customerGetByEmail,
+  customerLinkGuild,
+  customerSetStripeId,
+  customerSetLaunchpassId,
+  customerTouchLogin,
+
+  // Site public — customer sessions
+  customerSessionCreate,
+  customerSessionGet,
+  customerSessionDelete,
+  customerSessionPurgeExpired,
+
+  // Site public — magic links
+  magicLinkCreate,
+  magicLinkConsume,
+  magicLinkCountRecent,
+  magicLinkPurgeExpired,
+
+  // Site public — webhook events idempotence
+  webhookEventClaim,
+  webhookEventMarkProcessed,
 
   // backup
   backupDb,

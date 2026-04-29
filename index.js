@@ -107,6 +107,17 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
+// Headers de sécurité minimaux — appliqués à toutes les réponses.
+// nosniff : empêche le navigateur de deviner un Content-Type différent.
+// X-Frame-Options : interdit l'embed dans une iframe (anti-clickjacking).
+// Referrer-Policy : ne fuite pas l'URL complète vers les domaines tiers.
+app.use((req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
 // Static assets (logo SaaS, etc.) — servis publiquement sans auth.
 // Cache long (1 jour) car les assets changent rarement et sont versionnés
 // implicitement par leur nom de fichier.

@@ -60,6 +60,11 @@ const { registerGuildGuard } = require('./saas/guards');
 const { registerSaasCommands } = require('./saas/commands');
 const { register: registerSaasRelay } = require('./saas/relay');
 
+// Site public de vente (landing, pricing, FAQ, legal, funnel post-action).
+// Routes sans auth — montées AVANT le dashboard pour que GET / serve la
+// landing au lieu de rediriger vers /dashboard.
+const { registerPublicRoutes } = require('./routes/public');
+
 // ── Configuration env ──────────────────────────────────────────────
 const DISCORD_TOKEN      = process.env.DISCORD_TOKEN;
 const MAKE_WEBHOOK_URL   = process.env.MAKE_WEBHOOK_URL;
@@ -104,9 +109,13 @@ app.use(express.urlencoded({ extended: false }));
 // implicitement par leur nom de fichier.
 app.use('/static', express.static('static', { maxAge: '1d', immutable: false }));
 
-// Auth + pages statiques en premier (ne nécessitent aucun state runtime).
+// Routes publiques marketing (landing, pricing, FAQ, legal, funnel). Sans auth.
+// Doivent être enregistrées AVANT registerPageRoutes pour que GET / serve la
+// landing au lieu de la redirection vers /dashboard.
+registerPublicRoutes(app);
+
+// Auth + pages statiques. Le dashboard reste accessible via /dashboard direct.
 registerAuthRoutes(app);
-app.get('/', (_req, res) => res.redirect('/dashboard'));
 registerPageRoutes(app, requireAuth);
 
 // APIs lectures/écritures sur l'état partagé.

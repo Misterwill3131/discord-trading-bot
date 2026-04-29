@@ -45,8 +45,14 @@ function parseCookies(cookieHeader) {
   return result;
 }
 
-// Middleware désactivé — accès libre au dashboard sans mot de passe.
-function requireAuth(_req, _res, next) {
+// Vérifie le cookie de session ; redirige vers /login sinon.
+// Le SESSION_TOKEN est régénéré à chaque restart : toutes les sessions
+// existantes sont invalidées au boot, ce qui force une re-authentification.
+function requireAuth(req, res, next) {
+  const cookies = parseCookies(req.headers.cookie);
+  if (cookies[SESSION_COOKIE_NAME] !== SESSION_TOKEN) {
+    return res.redirect('/login');
+  }
   return next();
 }
 

@@ -66,6 +66,7 @@ const { register: registerSaasRelay } = require('./saas/relay');
 const { registerPublicRoutes } = require('./routes/public');
 const { registerCheckoutRoutes } = require('./routes/checkout');
 const { registerCustomerAccountRoutes } = require('./routes/customer-account');
+const { registerAdminCmsRoutes } = require('./routes/admin-cms');
 
 // ── Configuration env ──────────────────────────────────────────────
 const DISCORD_TOKEN      = process.env.DISCORD_TOKEN;
@@ -105,6 +106,17 @@ const SAAS_SOURCE_CHANNELS = (process.env.SOURCE_CHANNEL_IDS || '')
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
+
+// Headers de sécurité minimaux — appliqués à toutes les réponses.
+// nosniff : empêche le navigateur de deviner un Content-Type différent.
+// X-Frame-Options : interdit l'embed dans une iframe (anti-clickjacking).
+// Referrer-Policy : ne fuite pas l'URL complète vers les domaines tiers.
+app.use((req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'DENY');
+  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
 
 // Static assets (logo SaaS, etc.) — servis publiquement sans auth.
 // Cache long (1 jour) car les assets changent rarement et sont versionnés
@@ -152,6 +164,10 @@ registerProfitRoutes(app, requireAuth);
 // SaaS routes — webhooks publics + API admin auth-protégée.
 // Inconditionnel : utile même sans clientSaas (pour gérer les licences via API).
 registerSaasAdminRoutes(app, requireAuth);
+
+// Admin CMS (plans + marketing copy). Auth-protected via requireAuth.
+// /admin/plans + /admin/marketing + API JSON /api/admin/*.
+registerAdminCmsRoutes(app, requireAuth);
 
 // ── Trading engine bootstrap ───────────────────────────────────────
 const tradingSecrets = getTradingSecrets();

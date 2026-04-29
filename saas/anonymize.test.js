@@ -17,6 +17,8 @@ const {
   buildSignalDTO,
   brandedEmbed,
   fmtPrice,
+  parseScenarios,
+  parseTargetForPattern,
 } = require('./anonymize');
 
 const SAMPLE_BRAND = {
@@ -217,6 +219,9 @@ test('buildSignalDTO: ne contient AUCUN champ identifiant la source', () => {
   const allowed = new Set([
     'ticker', 'side', 'entry_price', 'target_price', 'stop_price',
     'gain_pct', 'note', 'ts_minute', 'source_message_id',
+    // Champs ajoutés pour le layout conditionnel — ne contiennent que des
+    // données déjà dérivées du texte sanitisé (ticker, prix, type d'entrée).
+    'scenarios', 'is_conditional',
   ]);
   for (const key of Object.keys(dto)) {
     assert.ok(allowed.has(key), `DTO contient le champ interdit: ${key}`);
@@ -321,6 +326,87 @@ test('brandedEmbed: SNAPSHOT — JSON ne contient AUCUN pattern interdit', () =>
   assert.ok(!json.includes('PrivateBoom'));
   // Le ticker, lui, doit bien arriver — c'est le but du relais.
   assert.ok(json.includes('TSLA'));
+});
+
+// ── parseScenarios / parseTargetForPattern ──────────────────────────
+
+test('parseScenarios: 2 scénarios break + bounce', () => {
+  const sc = parseScenarios('SAGT will enter 2.49 break or 1.88 bounce for 2.97');
+  assert.strictEqual(sc.length, 2);
+  assert.strictEqual(sc[0].type, 'break');
+  assert.strictEqual(sc[0].price, 2.49);
+  assert.strictEqual(sc[1].type, 'bounce');
+  assert.strictEqual(sc[1].price, 1.88);
+});
+
+test('parseScenarios: vide si aucun keyword', () => {
+  assert.deepStrictEqual(parseScenarios('TSLA in at 250'), []);
+  assert.deepStrictEqual(parseScenarios('BIYA 1.38'), []);
+});
+
+test('parseScenarios: tolère pluriel/conjugaison', () => {
+  const a = parseScenarios('2.49 breaks or 1.88 bouncing');
+  assert.strictEqual(a.length, 2);
+  const b = parseScenarios('2.49 breakout or 1.88 reclaim');
+  assert.strictEqual(b.length, 2);
+  assert.strictEqual(b[0].type, 'break');
+  assert.strictEqual(b[1].type, 'reclaim');
+});
+
+test('parseTargetForPattern: capture "for X" en fin', () => {
+  assert.strictEqual(parseTargetForPattern('SAGT 2.49 break for 2.97'), 2.97);
+  assert.strictEqual(parseTargetForPattern('break 1.5 for 2'), 2);
+});
+
+test('parseTargetForPattern: ignore les % (gain pct, pas un prix)', () => {
+  assert.strictEqual(parseTargetForPattern('locked in for 30%'), null);
+});
+
+test('parseTargetForPattern: rejette nombres improbables (>10000)', () => {
+  assert.strictEqual(parseTargetForPattern('thanks for 99999'), null);
+});
+
+// ── brandedEmbed conditional layout ─────────────────────────────────
+
+test('buildSignalDTO: SAGT conditional → is_conditional=true, target via "for"', () => {
+  const dto = buildSignalDTO({
+    id: '1', content: 'SAGT will enter 2.49 break or 1.88 bounce for 2.97',
+    createdAt: new Date(),
+  });
+  assert.strictEqual(dto.ticker, 'SAGT');
+  assert.strictEqual(dto.is_conditional, true);
+  assert.strictEqual(dto.scenarios.length, 2);
+  assert.strictEqual(dto.target_price, 2.97);
+});
+
+test('brandedEmbed: layout conditionnel utilisé pour signal multi-scénarios', () => {
+  const dto = buildSignalDTO({
+    id: '1', content: 'SAGT 2.49 break or 1.88 bounce for 2.97',
+    createdAt: new Date(),
+  });
+  const json = brandedEmbed(dto, SAMPLE_BRAND).toJSON();
+  assert.strictEqual(json.title, '$SAGT — Only if');
+  // Les 2 scénarios + OR IF + target doivent apparaître dans la description
+  assert.ok(json.description.includes('Break entry'));
+  assert.ok(json.description.includes('Bounce entry'));
+  assert.ok(json.description.includes('OR IF'));
+  assert.ok(json.description.includes('Target'));
+  assert.ok(json.description.includes('2.97'));
+  // Pas de fields inline sur le layout conditionnel
+  assert.ok(!json.fields || json.fields.length === 0);
+});
+
+test('brandedEmbed: layout simple pour signal mono-scénario même avec break', () => {
+  const dto = buildSignalDTO({
+    id: '1', content: 'TSLA 2.49 break for 2.97',
+    createdAt: new Date(),
+  });
+  // Un seul scénario → pas conditional
+  assert.strictEqual(dto.is_conditional, false);
+  const json = brandedEmbed(dto, SAMPLE_BRAND).toJSON();
+  assert.strictEqual(json.title, '$TSLA');
+  // Layout classique avec fields
+  assert.ok(json.fields && json.fields.length >= 3);
 });
 
 // ── fmtPrice ─────────────────────────────────────────────────────────

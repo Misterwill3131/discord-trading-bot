@@ -75,23 +75,93 @@ function detectSide(text) {
 // pas de guild_id, pas de channel_id. Seul `source_message_id` est
 // présent — il sert au logging interne (relay_log) et NE doit JAMAIS
 // apparaître dans l'embed envoyé au client.
+// Détecte les scénarios conditionnels d'un signal multi-trigger.
+// Pattern : "<prix> <break|bounce|reclaim|hold|reject>"
+// Ex: "2.49 break or 1.88 bounce" → 2 scénarios.
+const SCENARIO_RE = /\$?(\d+(?:\.\d+)?)\s+(breakout|breaks?|bouncing?|bounces?|reclaim(?:s|ing)?|reject(?:s|ing)?|hold(?:s|ing)?)\b/gi;
+
+const SCENARIO_META = {
+  break:    { type: 'break',   emoji: '🔼', label: 'Break entry' },
+  breakout: { type: 'break',   emoji: '🔼', label: 'Break entry' },
+  bounce:   { type: 'bounce',  emoji: '🔽', label: 'Bounce entry' },
+  reclaim:  { type: 'reclaim', emoji: '🔼', label: 'Reclaim entry' },
+  hold:     { type: 'hold',    emoji: '🔽', label: 'Hold entry' },
+  reject:   { type: 'reject',  emoji: '🔻', label: 'Reject entry' },
+};
+
+function parseScenarios(text) {
+  if (!text) return [];
+  const out = [];
+  SCENARIO_RE.lastIndex = 0;
+  let m;
+  while ((m = SCENARIO_RE.exec(text)) !== null) {
+    const price = parseFloat(m[1]);
+    if (!Number.isFinite(price)) continue;
+    // Normalise le mot-clé (strip 's', 'ing')
+    const word = m[2].toLowerCase()
+      .replace(/^breakouts?$/, 'breakout')
+      .replace(/^breaks?$/, 'break')
+      .replace(/^bouncing|bounces?$/, 'bounce')
+      .replace(/^reclaim(s|ing)?$/, 'reclaim')
+      .replace(/^reject(s|ing)?$/, 'reject')
+      .replace(/^hold(s|ing)?$/, 'hold');
+    const meta = SCENARIO_META[word];
+    if (!meta) continue;
+    out.push({ ...meta, price });
+  }
+  return out;
+}
+
+// Détecte un target via "for X" — pattern stricte : "for $X" en fin de
+// phrase ou suivi d'espaces, avec X price-like (< 10 000).
+// Ex: "for 2.97" → 2.97.
+function parseTargetForPattern(text) {
+  if (!text) return null;
+  const m = text.match(/\bfor\s+\$?(\d+(?:\.\d+)?)\b(?!\s*%)/i);
+  if (!m) return null;
+  const v = parseFloat(m[1]);
+  if (!Number.isFinite(v) || v <= 0 || v >= 10000) return null;
+  return v;
+}
+
 function buildSignalDTO(message) {
   const rawContent = message?.content || '';
   const cleanContent = sanitizeText(rawContent);
   const prices = extractPrices(cleanContent);
   const ticker = detectTicker(cleanContent);
   const side = detectSide(rawContent);
+  const scenarios = parseScenarios(cleanContent);
+  const targetFromFor = parseTargetForPattern(cleanContent);
   const createdAt = message?.createdAt instanceof Date
     ? message.createdAt
     : new Date(message?.createdAt || message?.createdTimestamp || Date.now());
 
+  // Si un target n'a pas été extrait par les patterns existants, on retombe
+  // sur le pattern "for X". Couvre "X break for Y", "X bounce for Y", etc.
+  const target_price = prices.target_price != null ? prices.target_price : targetFromFor;
+
+  // Si plusieurs scénarios sont présents, on s'assure que entry_price reflète
+  // au moins le premier scénario (sinon shouldRelay rejeterait à tort un
+  // signal conditionnel valide).
+  const entry_price = prices.entry_price != null
+    ? prices.entry_price
+    : (scenarios.length > 0 ? scenarios[0].price : null);
+
+  // Recalcule gain_pct si on a maintenant entry+target via scenarios+for
+  let gain_pct = prices.gain_pct;
+  if (gain_pct == null && entry_price != null && target_price != null && entry_price > 0) {
+    gain_pct = parseFloat((((target_price - entry_price) / entry_price) * 100).toFixed(2));
+  }
+
   return {
     ticker:           ticker || null,
     side:             side,
-    entry_price:      prices.entry_price,
-    target_price:     prices.target_price,
+    entry_price,
+    target_price,
     stop_price:       prices.stop_price,
-    gain_pct:         prices.gain_pct,
+    gain_pct,
+    scenarios,                                    // [{ type, emoji, label, price }, ...]
+    is_conditional:   scenarios.length >= 2,      // multi-scenario signal flag
     note:             cleanContent ? cleanContent.slice(0, 300) : null,
     ts_minute:        roundToMinute(createdAt),
     source_message_id: String(message?.id || ''),
@@ -109,6 +179,47 @@ function fmtPrice(n) {
   return n.toFixed(4); // sub-dollar : plus de précision
 }
 
+// Construit un embed pour un signal CONDITIONNEL multi-scénarios.
+// Layout dédié : titre "$TICKER — Only if", description avec scénarios
+// listés et séparés par "OR IF", target+stop en fin.
+function brandedEmbedConditional(dto, brand) {
+  const eb = new EmbedBuilder()
+    .setColor(brand.BRAND_COLOR)
+    .setTitle(`${dto.ticker ? '$' + dto.ticker : 'Signal'} — Only if`)
+    .setFooter({ text: `via ${brand.BRAND_NAME}` })
+    .setTimestamp(dto.ts_minute);
+
+  const lines = [];
+  for (let i = 0; i < dto.scenarios.length; i++) {
+    const s = dto.scenarios[i];
+    lines.push(`${s.emoji} **${s.label}:** ${fmtPrice(s.price)}`);
+    if (i < dto.scenarios.length - 1) {
+      lines.push('**OR IF**');
+    }
+  }
+  // Sépare la section trigger de la section objectif.
+  if (dto.target_price != null || dto.stop_price != null) {
+    lines.push('');
+  }
+  if (dto.target_price != null) {
+    lines.push(`🎯 **Target:** ${fmtPrice(dto.target_price)}`);
+  }
+  if (dto.stop_price != null) {
+    lines.push(`🛑 **Stop:** ${fmtPrice(dto.stop_price)}`);
+  }
+  if (dto.gain_pct != null && Number.isFinite(dto.gain_pct)) {
+    const sign = dto.gain_pct >= 0 ? '+' : '';
+    lines.push(`📈 **Potential:** ${sign}${dto.gain_pct.toFixed(2)}%`);
+  }
+
+  eb.setDescription(lines.join('\n'));
+
+  if (brand.BRAND_THUMBNAIL_URL) eb.setThumbnail(brand.BRAND_THUMBNAIL_URL);
+  if (brand.BRAND_IMAGE_URL) eb.setImage(brand.BRAND_IMAGE_URL);
+
+  return eb;
+}
+
 // Construit l'embed Discord branded depuis un DTO. PURE : retourne un
 // EmbedBuilder, ne l'envoie pas. Le caller fait le `.send({ embeds: [...] })`
 // avec `allowedMentions: { parse: [] }`.
@@ -117,7 +228,13 @@ function fmtPrice(n) {
 //
 // Title : `$TICKER` seul (pas de LONG/SHORT — décision design : la couleur
 // et le contexte des prix suffisent à indiquer la direction).
+//
+// Si le signal est conditionnel (>=2 scénarios), on switche vers le layout
+// dédié `brandedEmbedConditional`. Sinon, layout classique avec fields inline.
 function brandedEmbed(dto, brand) {
+  if (dto.is_conditional) {
+    return brandedEmbedConditional(dto, brand);
+  }
   const title = dto.ticker ? `$${dto.ticker}` : 'Signal';
 
   const eb = new EmbedBuilder()
@@ -164,5 +281,8 @@ module.exports = {
   detectSide,
   buildSignalDTO,
   brandedEmbed,
+  brandedEmbedConditional,
   fmtPrice,
+  parseScenarios,
+  parseTargetForPattern,
 };

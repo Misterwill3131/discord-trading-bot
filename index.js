@@ -70,6 +70,12 @@ const NEWS_CHANNEL_ID    = process.env.NEWS_CHANNEL_ID || '';
 // Doit être un CHANNEL ID (pas un guild ID). Le bot doit être invité
 // dans ce serveur avec la permission "Send Messages".
 const TRADING_ALERTS_CHANNEL_ID = process.env.TRADING_ALERTS_CHANNEL_ID || '';
+// Salon dédié aux alertes market-data (yesterday/weekly H/L break,
+// volume spike). Si vide → fallback sur TRADING_ALERTS_CHANNEL_ID
+// (utile si on veut tout sur le même salon). Définir une valeur
+// distincte pour isoler ces alertes (ex : serveur de test).
+const MARKET_ALERTS_CHANNEL_ID = process.env.MARKET_ALERTS_CHANNEL_ID
+  || TRADING_ALERTS_CHANNEL_ID;
 // Alertes email via Resend (optionnel). Si l'une des 3 vars manque,
 // sendEmailAlert est un no-op silencieux — pas d'erreur, pas de fetch.
 const RESEND_API_KEY    = process.env.RESEND_API_KEY || '';
@@ -169,6 +175,25 @@ async function sendTradingAlert(message) {
   }
 }
 
+// Notifier dédié aux alertes market-data. Même mécanique que
+// sendTradingAlert mais pointe sur MARKET_ALERTS_CHANNEL_ID, qui peut
+// être distinct (ex : serveur de test). Si MARKET_ALERTS_CHANNEL_ID
+// n'est pas défini, retombe sur TRADING_ALERTS_CHANNEL_ID via la
+// constante calculée plus haut.
+async function sendMarketAlert(message) {
+  if (!discordClientRef || !discordClientRef.isReady() || !MARKET_ALERTS_CHANNEL_ID) return;
+  try {
+    const ch = await discordClientRef.channels.fetch(MARKET_ALERTS_CHANNEL_ID);
+    if (ch && ch.isTextBased && ch.isTextBased()) {
+      await ch.send(message);
+    } else {
+      console.error('[market-alerts] channel not text-based or not found:', MARKET_ALERTS_CHANNEL_ID);
+    }
+  } catch (err) {
+    console.error('[market-alerts] send failed:', err.message);
+  }
+}
+
 // Email notifier : utilisé par discord/handler pour les alertes d'analystes
 // (et non par le trading engine — les trades réels restent Discord-only).
 const sendEmailAlert = createEmailNotifier({
@@ -252,7 +277,7 @@ registerTradingHandler(client, {
   tradingEngine,
   sendEmailAlert,
 });
-startScheduler({ client, tradingChannel: TRADING_CHANNEL });
+startScheduler({ client, tradingChannel: TRADING_CHANNEL, sendAlert: sendMarketAlert });
 
 // Log de connexion + démarrage du poller RSS au ready.
 client.once('ready', () => {

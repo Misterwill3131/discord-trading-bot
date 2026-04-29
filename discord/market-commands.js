@@ -857,6 +857,8 @@ function registerMarketCommands(client, { yahooClient } = {}) {
 module.exports = {
   parseRange,
   formatMarketCap,
+  formatPrice,
+  formatVolume,
   createYahooClient,
   renderChartPng,
   registerMarketCommands,

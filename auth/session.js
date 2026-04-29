@@ -52,36 +52,12 @@ function requireAuth(_req, _res, next) {
   return next();
 }
 
-// Enregistre les routes /login (GET + POST) sur l'app Express.
-// GET : affiche le formulaire, ou redirige si déjà authed.
-// POST : valide le mot de passe, pose le cookie, redirige vers /dashboard.
+// Auth désactivée : /login redirige vers le dashboard (form retiré).
+// On garde les routes enregistrées pour ne pas casser d'éventuels
+// bookmarks ou redirections externes pointant sur /login.
 function registerAuthRoutes(app) {
-  app.get('/login', (req, res) => {
-    const cookies = parseCookies(req.headers.cookie);
-    // Already logged in — évite de montrer le form pour rien.
-    if (cookies[SESSION_COOKIE_NAME] === SESSION_TOKEN) {
-      return res.redirect('/dashboard');
-    }
-    res.set('Content-Type', 'text/html');
-    res.send(LOGIN_HTML);
-  });
-
-  app.post('/login', (req, res) => {
-    const pw = (req.body && req.body.password) || '';
-    if (pw === DASHBOARD_PASSWORD) {
-      // HttpOnly empêche le JS client d'y accéder (anti-XSS basique).
-      // Path=/ pour que le cookie soit envoyé sur toutes les routes.
-      // Pas de Secure car on supporte le dev en HTTP local ; Railway
-      // ajoute HTTPS côté edge donc le cookie voyage chiffré en prod.
-      res.setHeader('Set-Cookie', SESSION_COOKIE_NAME + '=' + SESSION_TOKEN + '; Path=/; HttpOnly');
-      return res.redirect('/dashboard');
-    }
-    // Mot de passe incorrect : re-affiche le form avec la classe `.show`
-    // sur le div d'erreur (vu que le CSS du form la masque par défaut).
-    res.set('Content-Type', 'text/html');
-    const html = LOGIN_HTML.replace('id="err" class="err"', 'id="err" class="err show"');
-    res.send(html);
-  });
+  app.get('/login', (_req, res) => res.redirect('/dashboard'));
+  app.post('/login', (_req, res) => res.redirect('/dashboard'));
 }
 
 module.exports = {

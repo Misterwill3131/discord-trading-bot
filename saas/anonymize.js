@@ -124,6 +124,66 @@ function parseTargetForPattern(text) {
   return v;
 }
 
+// "buy only above $X" / "buy above $X" / "buy only below $X" — trigger
+// conditionnel sur le prix d'entrée.
+function parseBuyCondition(text) {
+  if (!text) return null;
+  const above = text.match(/\bbuy\s+(?:only\s+)?above\s+\$?(\d+(?:\.\d+)?)/i);
+  if (above) {
+    const price = parseFloat(above[1]);
+    if (Number.isFinite(price) && price > 0 && price < 100000) {
+      return { condition: 'above', price };
+    }
+  }
+  const below = text.match(/\bbuy\s+(?:only\s+)?below\s+\$?(\d+(?:\.\d+)?)/i);
+  if (below) {
+    const price = parseFloat(below[1]);
+    if (Number.isFinite(price) && price > 0 && price < 100000) {
+      return { condition: 'below', price };
+    }
+  }
+  return null;
+}
+
+// "add @$X" / "add at $X" / "DCA $X" / "averaged in @$X" — entrée DCA
+// secondaire (renforcer la position si le prix baisse après l'entrée
+// primaire).
+function parseAddEntry(text) {
+  if (!text) return null;
+  const m = text.match(/\b(?:add|dca|averaged?(?:\s+in)?|scale\s+in)\b\s*(?:@|at)?\s*\$?(\d+(?:\.\d+)?)/i);
+  if (!m) return null;
+  const v = parseFloat(m[1]);
+  return Number.isFinite(v) && v > 0 && v < 100000 ? v : null;
+}
+
+// "Targets $X/$Y/$Z" / "TP $X, $Y, $Z" — ladder de targets multiples.
+// Retourne [] si keyword non trouvé. Préserve l'ordre du message.
+function parseTargetLadder(text) {
+  if (!text) return [];
+  // Match "targets" / "target" / "tp" / "tps" suivi du segment de prix.
+  // (?!\sloss) pour éviter de matcher "stop loss" ou "target loss".
+  const m = text.match(/\b(?:targets?|tps?)\b[:.\-=]?\s+([^\n]+)/i);
+  if (!m) return [];
+  // Tronque au premier mot-clé d'une autre section (sl, stop, note, etc.)
+  const segment = m[1].split(/\b(?:sl|stop|note|sl\b|target\s+loss)\b/i)[0];
+  const nums = (segment.match(/\d+(?:\.\d+)?/g) || [])
+    .map(n => parseFloat(n))
+    .filter(n => Number.isFinite(n) && n > 0 && n < 100000);
+  return nums;
+}
+
+// "Note: ..." → texte de la note du trader (typiquement gestion du risque
+// ou conseil de safety). Limité à 200 chars pour éviter de dump tout le
+// message si le pattern matche trop large.
+function parseSignalNote(text) {
+  if (!text) return null;
+  const m = text.match(/\bnote\s*[:.\-–]?\s*(.+)$/i);
+  if (!m) return null;
+  const note = m[1].trim();
+  if (!note) return null;
+  return note.slice(0, 200);
+}
+
 function buildSignalDTO(message) {
   const rawContent = message?.content || '';
   const cleanContent = sanitizeText(rawContent);
@@ -132,26 +192,46 @@ function buildSignalDTO(message) {
   const side = detectSide(rawContent);
   const scenarios = parseScenarios(cleanContent);
   const targetFromFor = parseTargetForPattern(cleanContent);
+  const buy_condition = parseBuyCondition(cleanContent);
+  const add_entry_price = parseAddEntry(cleanContent);
+  const targets_ladder = parseTargetLadder(cleanContent);
+  const signal_note = parseSignalNote(cleanContent);
   const createdAt = message?.createdAt instanceof Date
     ? message.createdAt
     : new Date(message?.createdAt || message?.createdTimestamp || Date.now());
 
-  // Si un target n'a pas été extrait par les patterns existants, on retombe
-  // sur le pattern "for X". Couvre "X break for Y", "X bounce for Y", etc.
-  const target_price = prices.target_price != null ? prices.target_price : targetFromFor;
+  // Liste finale de targets : priorité au ladder explicite, fallback sur
+  // target_price (single) ou targetFromFor.
+  let targets = targets_ladder.slice();
+  if (targets.length === 0) {
+    if (prices.target_price != null) targets.push(prices.target_price);
+    else if (targetFromFor != null) targets.push(targetFromFor);
+  }
 
-  // Si plusieurs scénarios sont présents, on s'assure que entry_price reflète
-  // au moins le premier scénario (sinon shouldRelay rejeterait à tort un
-  // signal conditionnel valide).
+  // target_price (champ legacy) = premier target du ladder pour rétrocompat
+  const target_price = targets[0] != null ? targets[0] : null;
+
+  // entry_price : extraction classique en priorité, sinon buy_condition,
+  // sinon premier scénario. shouldRelay exige cette valeur.
   const entry_price = prices.entry_price != null
     ? prices.entry_price
-    : (scenarios.length > 0 ? scenarios[0].price : null);
+    : (buy_condition ? buy_condition.price : (scenarios[0]?.price || null));
 
-  // Recalcule gain_pct si on a maintenant entry+target via scenarios+for
+  // Recalcule gain_pct si nécessaire
   let gain_pct = prices.gain_pct;
   if (gain_pct == null && entry_price != null && target_price != null && entry_price > 0) {
     gain_pct = parseFloat((((target_price - entry_price) / entry_price) * 100).toFixed(2));
   }
+
+  // is_structured : le signal a une structure multi-section (multi-target,
+  // entrée DCA, condition explicite, note du trader). Déclenche le layout
+  // dédié structuré.
+  const is_structured = (
+    targets_ladder.length >= 2 ||
+    add_entry_price != null ||
+    signal_note != null ||
+    buy_condition != null
+  );
 
   return {
     ticker:           ticker || null,
@@ -161,7 +241,12 @@ function buildSignalDTO(message) {
     stop_price:       prices.stop_price,
     gain_pct,
     scenarios,                                    // [{ type, emoji, label, price }, ...]
-    is_conditional:   scenarios.length >= 2,      // multi-scenario signal flag
+    is_conditional:   scenarios.length >= 2,      // signal conditionnel break/bounce
+    targets,                                       // ladder complet (1+ éléments)
+    buy_condition,                                 // { condition: 'above'|'below', price }
+    add_entry_price,                               // entrée DCA si présente
+    signal_note,                                   // texte note du trader
+    is_structured,                                 // signal multi-section
     note:             cleanContent ? cleanContent.slice(0, 300) : null,
     ts_minute:        roundToMinute(createdAt),
     source_message_id: String(message?.id || ''),
@@ -177,6 +262,61 @@ function fmtPrice(n) {
   if (abs >= 10) return n.toFixed(2);
   if (abs >= 1) return n.toFixed(2);
   return n.toFixed(4); // sub-dollar : plus de précision
+}
+
+// Construit un embed pour un signal STRUCTURÉ : entrée principale (avec
+// condition above/below), entrée DCA optionnelle, ladder de 1-N targets,
+// stop loss, et note optionnelle du trader.
+function brandedEmbedStructured(dto, brand) {
+  const eb = new EmbedBuilder()
+    .setColor(brand.BRAND_COLOR)
+    .setTitle(dto.ticker ? `$${dto.ticker}` : 'Signal')
+    .setFooter({ text: `via ${brand.BRAND_NAME}` })
+    .setTimestamp(dto.ts_minute);
+
+  const lines = [];
+
+  // ── Section entrées ──
+  if (dto.buy_condition) {
+    const cond = dto.buy_condition.condition === 'above' ? 'above' : 'below';
+    lines.push(`🟢 **Buy ${cond}:** $${fmtPrice(dto.buy_condition.price)}`);
+  } else if (dto.entry_price != null) {
+    lines.push(`🟢 **Entry:** $${fmtPrice(dto.entry_price)}`);
+  }
+  if (dto.add_entry_price != null) {
+    lines.push(`➕ **Add (if down):** $${fmtPrice(dto.add_entry_price)}`);
+  }
+
+  // ── Section targets ──
+  if (dto.targets && dto.targets.length > 0) {
+    lines.push('');
+    if (dto.targets.length === 1) {
+      lines.push(`🎯 **Target:** $${fmtPrice(dto.targets[0])}`);
+    } else {
+      lines.push(`🎯 **Targets:**`);
+      for (const t of dto.targets) {
+        lines.push(`  • $${fmtPrice(t)}`);
+      }
+    }
+  }
+
+  // ── Section risque ──
+  if (dto.stop_price != null) {
+    lines.push(`🛑 **Stop:** $${fmtPrice(dto.stop_price)}`);
+  }
+
+  // ── Note du trader ──
+  if (dto.signal_note) {
+    lines.push('');
+    lines.push(`📝 ${dto.signal_note}`);
+  }
+
+  eb.setDescription(lines.join('\n'));
+
+  if (brand.BRAND_THUMBNAIL_URL) eb.setThumbnail(brand.BRAND_THUMBNAIL_URL);
+  if (brand.BRAND_IMAGE_URL) eb.setImage(brand.BRAND_IMAGE_URL);
+
+  return eb;
 }
 
 // Construit un embed pour un signal CONDITIONNEL multi-scénarios.
@@ -229,9 +369,13 @@ function brandedEmbedConditional(dto, brand) {
 // Title : `$TICKER` seul (pas de LONG/SHORT — décision design : la couleur
 // et le contexte des prix suffisent à indiquer la direction).
 //
-// Si le signal est conditionnel (>=2 scénarios), on switche vers le layout
-// dédié `brandedEmbedConditional`. Sinon, layout classique avec fields inline.
+// Dispatcher : structured > conditional > simple. Le premier qui matche
+// gagne. is_structured prime sur is_conditional (un signal peut être les
+// deux : ex. "buy above X / 1.5 break or 1.0 bounce / Targets A/B/C").
 function brandedEmbed(dto, brand) {
+  if (dto.is_structured) {
+    return brandedEmbedStructured(dto, brand);
+  }
   if (dto.is_conditional) {
     return brandedEmbedConditional(dto, brand);
   }
@@ -282,7 +426,12 @@ module.exports = {
   buildSignalDTO,
   brandedEmbed,
   brandedEmbedConditional,
+  brandedEmbedStructured,
   fmtPrice,
   parseScenarios,
   parseTargetForPattern,
+  parseBuyCondition,
+  parseAddEntry,
+  parseTargetLadder,
+  parseSignalNote,
 };

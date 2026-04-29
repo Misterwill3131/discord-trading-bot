@@ -30,6 +30,8 @@ const { DATA_DIR, todayKey } = require('../utils/persistence');
 const { messageLog } = require('../state/messages');
 const profitCounter = require('../profit/counter');
 const { backupDb, purgeFilteredMessagesWithoutData } = require('../db/sqlite');
+const { createMarketAlertsScheduler, registerMarketAlertCommands } = require('./market-alerts');
+const { createFmpClient } = require('./fmp-client');
 
 // Dernière exécution de chaque job — évite les doublons si
 // l'intervalle de 60s tombe deux fois dans la même minute cible.
@@ -190,8 +192,56 @@ async function runGitBackup() {
 // Attend le ready, puis arme un setInterval(60_000) qui vérifie l'heure
 // et déclenche les jobs quand ça tombe. Chaque job a son propre flag de
 // déduplication journalier.
-function startScheduler({ client, tradingChannel }) {
+function startScheduler({ client, tradingChannel, sendAlert } = {}) {
   client.once('ready', () => {
+    // ── Market alerts (FMP) ────────────────────────────────────────
+    // Activé seulement si WATCHED_TICKERS et FMP_API_KEY sont définis.
+    // Cadence par défaut = 5 min (free tier ~250 req/jour). Ajustable
+    // via MARKET_ALERTS_INTERVAL_MIN.
+    const tickers = (process.env.WATCHED_TICKERS || '')
+      .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+    const fmpKey = process.env.FMP_API_KEY || '';
+    const intervalMin = Math.max(1, parseInt(
+      process.env.MARKET_ALERTS_INTERVAL_MIN || '5', 10) || 5);
+    let marketAlerts = null;
+    if (tickers.length > 0 && fmpKey && typeof sendAlert === 'function') {
+      try {
+        const marketClient = createFmpClient({ apiKey: fmpKey });
+        marketAlerts = createMarketAlertsScheduler({
+          marketClient,
+          sendAlert,
+          tickers,
+        });
+        console.log('[market-alerts] watching ' + tickers.length + ' tickers (every '
+          + intervalMin + ' min): ' + tickers.join(', '));
+        // Free-tier guard : >3 tickers à cadence 5min sature les 250 req/jour.
+        const dailyBudget = (390 / intervalMin) * tickers.length + tickers.length;
+        if (dailyBudget > 250) {
+          console.warn('[market-alerts] estimated ' + Math.round(dailyBudget)
+            + ' FMP calls/day exceeds free-tier 250/day budget — consider raising '
+            + 'MARKET_ALERTS_INTERVAL_MIN or upgrading FMP plan');
+        }
+      } catch (err) {
+        console.error('[market-alerts] init failed:', err.message);
+      }
+    } else {
+      const reasons = [];
+      if (tickers.length === 0) reasons.push('WATCHED_TICKERS empty');
+      if (!fmpKey) reasons.push('FMP_API_KEY missing');
+      if (typeof sendAlert !== 'function') reasons.push('sendAlert not provided');
+      console.log('[market-alerts] disabled (' + reasons.join(', ') + ')');
+    }
+
+    // Diagnostic commands (!testalert, !alertstatus) — actives même si
+    // marketAlerts est null, pour que `!alertstatus` puisse signaler la
+    // raison du disabled.
+    if (typeof sendAlert === 'function') {
+      registerMarketAlertCommands(client, {
+        sendAlert,
+        scheduler: marketAlerts,
+      });
+    }
+
     setInterval(() => {
       const now = new Date();
       const todayStr = now.toISOString().slice(0, 10);
@@ -229,6 +279,16 @@ function startScheduler({ client, tradingChannel }) {
       if (nyHour === 0 && nyMin === 0 && lastBackupDate !== todayStr) {
         lastBackupDate = todayStr;
         runGitBackup();
+      }
+
+      // Market alerts — cadence configurable. Le tick lui-même filtre
+      // sur RTH (no-op hors marché), donc fire-and-forget chaque
+      // intervalle suffit. now.getMinutes() utilise local time, pas ET ;
+      // pour notre besoin (cadence régulière) c'est équivalent — un
+      // multiple de 5 minutes locale = un multiple en ET.
+      if (marketAlerts && now.getMinutes() % intervalMin === 0) {
+        marketAlerts.tick(now).catch(err =>
+          console.error('[market-alerts] tick failed:', err.message));
       }
     }, 60000);
   });

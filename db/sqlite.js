@@ -233,6 +233,23 @@ db.exec(`
     reason     TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_auto_leave_log_guild ON auto_leave_log(guild_id);
+
+  -- Dedup state pour les market-data alerts (yesterday H/L break, weekly
+  -- H/L break, volume spike). Une ligne par (ticker, alert_type) par jour
+  -- ET. PK composite garantit qu'on ne déclenche qu'une fois par jour ;
+  -- INSERT OR IGNORE (markAlertFired) sert d'atomic check.
+  CREATE TABLE IF NOT EXISTS market_alert_state (
+    ticker        TEXT NOT NULL,
+    alert_type    TEXT NOT NULL CHECK (alert_type IN (
+                    'yday_high', 'yday_low',
+                    'week_high', 'week_low',
+                    'volume_spike'
+                  )),
+    fired_date_et TEXT NOT NULL,                -- 'YYYY-MM-DD' America/New_York
+    fired_at_ms   INTEGER NOT NULL,             -- Date.now() au moment du fire
+    PRIMARY KEY (ticker, alert_type, fired_date_et)
+  );
+  CREATE INDEX IF NOT EXISTS idx_market_alert_state_date ON market_alert_state(fired_date_et);
 `);
 
 // ── Prepared statements (réutilisables, plus rapides) ────────────────
@@ -948,6 +965,43 @@ function autoLeaveLogClose(guildId) {
 }
 
 // ═════════════════════════════════════════════════════════════════════
+//  Market alert state — dedup pour les alertes prix/volume
+// ═════════════════════════════════════════════════════════════════════
+
+const stmtAlertWasFired = db.prepare(`
+  SELECT 1 FROM market_alert_state
+  WHERE ticker = ? AND alert_type = ? AND fired_date_et = ?
+  LIMIT 1
+`);
+const stmtMarkAlertFired = db.prepare(`
+  INSERT OR IGNORE INTO market_alert_state
+    (ticker, alert_type, fired_date_et, fired_at_ms)
+  VALUES (?, ?, ?, ?)
+`);
+const stmtPurgeOldAlertState = db.prepare(`
+  DELETE FROM market_alert_state WHERE fired_date_et < ?
+`);
+
+function alertWasFired(ticker, alertType, etDate) {
+  return !!stmtAlertWasFired.get(String(ticker), String(alertType), String(etDate));
+}
+
+// INSERT OR IGNORE : retourne true ssi cet appel a réellement inséré
+// (donc qu'on est le PREMIER à marquer ce combo aujourd'hui). À utiliser
+// comme check atomique : ne pas faire "wasFired? mark : nothing" qui est
+// race-prone. Au lieu de ça : try markAlertFired() ; si true → send.
+function markAlertFired(ticker, alertType, etDate, firedAtMs) {
+  return stmtMarkAlertFired.run(
+    String(ticker), String(alertType), String(etDate),
+    firedAtMs | 0,
+  ).changes > 0;
+}
+
+function purgeMarketAlertStateOlderThan(keepDateEt) {
+  return stmtPurgeOldAlertState.run(String(keepDateEt)).changes;
+}
+
+// ═════════════════════════════════════════════════════════════════════
 //  Stats — diagnostic global (taille fichier, count + range par table)
 // ═════════════════════════════════════════════════════════════════════
 
@@ -966,6 +1020,7 @@ const TIME_COLUMNS = {
   relay_log:             'ts',
   admin_actions:         'ts',
   auto_leave_log:        'joined_at',
+  market_alert_state:    'fired_date_et',
 };
 
 // Retourne un résumé structuré pour la page /db-viewer :
@@ -1104,6 +1159,11 @@ module.exports = {
   // SaaS — auto-leave log
   autoLeaveLogInsert,
   autoLeaveLogClose,
+
+  // market alert state (dedup)
+  alertWasFired,
+  markAlertFired,
+  purgeMarketAlertStateOlderThan,
 
   // backup
   backupDb,

@@ -219,9 +219,10 @@ test('buildSignalDTO: ne contient AUCUN champ identifiant la source', () => {
   const allowed = new Set([
     'ticker', 'side', 'entry_price', 'target_price', 'stop_price',
     'gain_pct', 'note', 'ts_minute', 'source_message_id',
-    // Champs ajoutés pour le layout conditionnel — ne contiennent que des
-    // données déjà dérivées du texte sanitisé (ticker, prix, type d'entrée).
+    // Champs ajoutés pour les layouts conditionnel et structuré — tous
+    // dérivés du texte sanitisé (ticker, prix, condition d'entrée, note du trader).
     'scenarios', 'is_conditional',
+    'targets', 'buy_condition', 'add_entry_price', 'signal_note', 'is_structured',
   ]);
   for (const key of Object.keys(dto)) {
     assert.ok(allowed.has(key), `DTO contient le champ interdit: ${key}`);

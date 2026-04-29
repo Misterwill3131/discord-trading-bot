@@ -64,6 +64,7 @@ const { register: registerSaasRelay } = require('./saas/relay');
 // Routes sans auth — montées AVANT le dashboard pour que GET / serve la
 // landing au lieu de rediriger vers /dashboard.
 const { registerPublicRoutes } = require('./routes/public');
+const { registerCheckoutRoutes } = require('./routes/checkout');
 
 // ── Configuration env ──────────────────────────────────────────────
 const DISCORD_TOKEN      = process.env.DISCORD_TOKEN;
@@ -113,6 +114,7 @@ app.use('/static', express.static('static', { maxAge: '1d', immutable: false }))
 // Doivent être enregistrées AVANT registerPageRoutes pour que GET / serve la
 // landing au lieu de la redirection vers /dashboard.
 registerPublicRoutes(app);
+registerCheckoutRoutes(app);
 
 // Auth + pages statiques. Le dashboard reste accessible via /dashboard direct.
 registerAuthRoutes(app);

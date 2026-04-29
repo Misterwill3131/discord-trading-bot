@@ -65,6 +65,7 @@ const { register: registerSaasRelay } = require('./saas/relay');
 // landing au lieu de rediriger vers /dashboard.
 const { registerPublicRoutes } = require('./routes/public');
 const { registerCheckoutRoutes } = require('./routes/checkout');
+const { registerCustomerAccountRoutes } = require('./routes/customer-account');
 
 // ── Configuration env ──────────────────────────────────────────────
 const DISCORD_TOKEN      = process.env.DISCORD_TOKEN;
@@ -115,6 +116,12 @@ app.use('/static', express.static('static', { maxAge: '1d', immutable: false }))
 // landing au lieu de la redirection vers /dashboard.
 registerPublicRoutes(app);
 registerCheckoutRoutes(app);
+
+// Panel client self-service. Magic-link auth (cookie distinct du dashboard
+// admin). `clientSaasRef.current` est défini plus bas, après la création de
+// clientSaas — utilisé par /account/preferences/disconnect pour kicker le bot.
+const clientSaasRef = { current: null };
+registerCustomerAccountRoutes(app, clientSaasRef);
 
 // Auth + pages statiques. Le dashboard reste accessible via /dashboard direct.
 registerAuthRoutes(app);
@@ -323,6 +330,9 @@ if (SAAS_BOT_TOKEN) {
   const clientSaas = new Client({
     intents: [GatewayIntentBits.Guilds],
   });
+
+  // Expose à customer-account.js (pour /account/preferences/disconnect).
+  clientSaasRef.current = clientSaas;
 
   registerGuildGuard(clientSaas, { adminGuildId: SAAS_ADMIN_GUILD_ID });
   registerSaasCommands(clientSaas, {

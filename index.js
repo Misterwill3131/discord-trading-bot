@@ -66,6 +66,7 @@ const { register: registerSaasRelay } = require('./saas/relay');
 const { registerPublicRoutes } = require('./routes/public');
 const { registerCheckoutRoutes } = require('./routes/checkout');
 const { registerCustomerAccountRoutes } = require('./routes/customer-account');
+const { registerAdminCmsRoutes } = require('./routes/admin-cms');
 
 // ── Configuration env ──────────────────────────────────────────────
 const DISCORD_TOKEN      = process.env.DISCORD_TOKEN;
@@ -152,6 +153,10 @@ registerProfitRoutes(app, requireAuth);
 // SaaS routes — webhooks publics + API admin auth-protégée.
 // Inconditionnel : utile même sans clientSaas (pour gérer les licences via API).
 registerSaasAdminRoutes(app, requireAuth);
+
+// Admin CMS (plans + marketing copy). Auth-protected via requireAuth.
+// /admin/plans + /admin/marketing + API JSON /api/admin/*.
+registerAdminCmsRoutes(app, requireAuth);
 
 // ── Trading engine bootstrap ───────────────────────────────────────
 const tradingSecrets = getTradingSecrets();

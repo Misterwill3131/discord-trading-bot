@@ -9,7 +9,7 @@
 const { publicLayoutHTML, escapeHtml } = require('../common');
 
 function renderSuccess(opts = {}) {
-  const brandName = opts.brandName || 'Trading Signals';
+  const brandName = opts.brandName || 'Temple of Boom';
   const sessionId = opts.sessionId ? escapeHtml(opts.sessionId) : null;
 
   const content = `
@@ -46,7 +46,7 @@ function renderSuccess(opts = {}) {
 }
 
 function renderCheckEmail(opts = {}) {
-  const brandName = opts.brandName || 'Trading Signals';
+  const brandName = opts.brandName || 'Temple of Boom';
   const email = opts.email ? escapeHtml(opts.email) : null;
 
   const content = `
@@ -75,7 +75,7 @@ function renderCheckEmail(opts = {}) {
 }
 
 function renderConnectHelp(opts = {}) {
-  const brandName = opts.brandName || 'Trading Signals';
+  const brandName = opts.brandName || 'Temple of Boom';
   const code = opts.code ? escapeHtml(opts.code) : null;
   const inviteUrl = opts.inviteUrl ? escapeHtml(opts.inviteUrl) : '#';
 

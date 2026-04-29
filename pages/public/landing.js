@@ -28,19 +28,9 @@ const DEFAULT_FEATURES = [
     description: 'Messages from our analyst feed reach your Discord server within ~500ms. Your members see signals as they break.',
   },
   {
-    icon: '🔒',
-    title: 'Source-blind delivery',
-    description: 'Embeds are stripped of all source identifiers — no analyst name, no server, no channel ID. Your subscribers can never reverse-engineer the feed.',
-  },
-  {
     icon: '🎯',
     title: 'Smart signal parsing',
     description: 'Our parser auto-extracts ticker, entry, target, stop, and conditional triggers (break / bounce). Embed layout adapts to each signal type.',
-  },
-  {
-    icon: '🛡️',
-    title: 'Paywall enforcement',
-    description: 'Your bot auto-leaves any server without an active license. License tied to Discord guild ID — un-shareable.',
   },
   {
     icon: '🔧',
@@ -69,7 +59,7 @@ function renderLanding(opts = {}) {
   const hero = getMarketing('hero', DEFAULT_HERO);
   const features = getMarketing('features', DEFAULT_FEATURES);
   const steps = getMarketing('steps', DEFAULT_STEPS);
-  const brandName = opts.brandName || 'Trading Signals';
+  const brandName = opts.brandName || 'Temple of Boom';
 
   const featuresHtml = features.map(f => `
     <div class="card">

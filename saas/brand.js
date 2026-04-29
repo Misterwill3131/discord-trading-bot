@@ -12,7 +12,7 @@
 // Nom court qui apparaît dans le footer "via X" et le titre de l'embed.
 // Ex: "Boom Trading", "Mighty Forest Signals". Évite les caractères
 // spéciaux (apostrophes, emojis) — ils peuvent casser le rendu Discord.
-const BRAND_NAME = process.env.BRAND_NAME || 'Trading Signals';
+const BRAND_NAME = process.env.BRAND_NAME || 'Temple of Boom';
 
 // Couleur de la barre verticale de l'embed Discord. Format hex 0xRRGGBB
 // (number, pas string). Discord accepte aussi un int décimal.

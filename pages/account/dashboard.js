@@ -53,7 +53,7 @@ function fmtDate(iso) {
 //   inviteUrl, helpUrl,
 // }
 function renderAccountDashboard(opts = {}) {
-  const brandName = opts.brandName || 'Trading Signals';
+  const brandName = opts.brandName || 'Temple of Boom';
   const customer = opts.customer || {};
   const license = opts.license;
   const inviteUrl = opts.inviteUrl || '#';

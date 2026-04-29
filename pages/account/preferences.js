@@ -12,7 +12,7 @@ const { publicLayoutHTML, escapeHtml } = require('../common');
 const { accountNavHTML } = require('./dashboard');
 
 function renderAccountPreferences(opts = {}) {
-  const brandName = opts.brandName || 'Trading Signals';
+  const brandName = opts.brandName || 'Temple of Boom';
   const customer = opts.customer || {};
   const license = opts.license;
   const success = opts.success ? escapeHtml(opts.success) : null;

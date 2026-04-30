@@ -34,9 +34,15 @@ const { BRAND_NAME, BRAND_COLOR } = require('./brand');
 const { STATUSES } = licenses;
 
 // Helper: réponse safe (try/catch — éviter de crash si interaction expirée).
+// Choisit la bonne API selon l'état de l'interaction :
+//   - deferred (deferReply called, pas encore éditée) → editReply
+//   - replied (reply OR editReply déjà appelé)        → followUp
+//   - sinon                                           → reply
 async function safeReply(interaction, payload) {
   try {
-    if (interaction.replied || interaction.deferred) {
+    if (interaction.deferred && !interaction.replied) {
+      await interaction.editReply(payload);
+    } else if (interaction.replied) {
       await interaction.followUp({ ...payload, ephemeral: true });
     } else {
       await interaction.reply({ ...payload, ephemeral: true });
@@ -325,8 +331,11 @@ async function handleStatus(interaction) {
 
 async function handleConnect(interaction) {
   if (!manageGuildOnly(interaction)) return;
+  // Defer immédiat — claimWithCode peut faire 1+ round-trip Postgres,
+  // dépasser les 3s de l'auto-ack Discord.
+  await interaction.deferReply({ ephemeral: true }).catch(() => {});
   const code = interaction.options.getString('code', true).trim().toUpperCase();
-  const created = licenses.claimWithCode(code, {
+  const created = await licenses.claimWithCode(code, {
     guild_id: interaction.guildId,
     guild_name: interaction.guild?.name || null,
   });

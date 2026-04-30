@@ -12,6 +12,7 @@
 
 const crypto = require('crypto');
 const db = require('../db/sqlite');
+const pg = require('../db/postgres');
 
 const STATUSES = ['pending', 'active', 'suspended', 'expired', 'cancelled'];
 const PENDING_KV_KEY = 'pending_launchpass_subs';
@@ -151,13 +152,63 @@ function registerPendingSub({ subId, email, plan, expires_at }) {
 }
 
 // Consomme un claim_code et active la licence pour ce guild_id.
-// Retourne la licence créée, ou null si code invalide/déjà utilisé.
-function claimWithCode(code, { guild_id, guild_name }) {
+// Retourne la licence créée (objet SQLite), ou null si code invalide/déjà
+// utilisé.
+//
+// Stratégie hybride :
+//   1. Tente Postgres en premier (claim codes générés par le site
+//      temple-of-boom-site post-Stripe checkout, format "XK4-9PQ-7M2").
+//   2. Si pas trouvé en Postgres, fallback SQLite (legacy Launchpass flow,
+//      format "8 chars").
+//   3. Sur succès Postgres : on miroir la license vers SQLite pour que
+//      le relay et les autres helpers la trouvent (eventual consistency).
+async function claimWithCode(code, { guild_id, guild_name }) {
   if (!code || !guild_id) return null;
+
+  // ── 1. Tentative Postgres ─────────────────────────────────────────
+  if (pg.isEnabled) {
+    try {
+      const customer = await pg.findCustomerByClaimCode(code);
+      if (customer) {
+        const planId = customer.plan_id || 'standard';
+        const ok = await pg.consumeClaimCodeAndCreateLicense({
+          customerId: customer.id,
+          guildId: guild_id,
+          guildName: guild_name,
+          plan: planId,
+        });
+        if (ok) {
+          // Miroir SQLite (le relay + /status + /saas info regardent SQLite).
+          db.licenseUpsert({
+            guild_id,
+            status: 'active',
+            plan: planId,
+            guild_name,
+          });
+          db.adminActionInsert({
+            admin: 'system',
+            action: 'claim',
+            guild_id,
+            payload: {
+              code,
+              source: 'postgres',
+              customer_id: customer.id,
+              email: customer.email,
+            },
+          });
+          return db.licenseGet(guild_id);
+        }
+      }
+    } catch (err) {
+      console.error('[licenses] Postgres claim failed, falling back to SQLite:', err.message);
+      // Continue vers le fallback SQLite ci-dessous.
+    }
+  }
+
+  // ── 2. Fallback SQLite (legacy Launchpass) ────────────────────────
   const map = _readPendingSubs();
   const entry = map[code];
   if (!entry) return null;
-  // Active la licence
   db.licenseUpsert({
     guild_id,
     status: 'active',
@@ -167,14 +218,13 @@ function claimWithCode(code, { guild_id, guild_name }) {
     launchpass_customer_email: entry.email,
     guild_name,
   });
-  // Consomme le code (suppression atomique)
   delete map[code];
   _writePendingSubs(map);
   db.adminActionInsert({
     admin: 'system',
     action: 'claim',
     guild_id,
-    payload: { code, subId: entry.subId, email: entry.email },
+    payload: { code, subId: entry.subId, email: entry.email, source: 'sqlite' },
   });
   return db.licenseGet(guild_id);
 }

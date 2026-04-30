@@ -138,7 +138,28 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
       if (sourceGuildId && message.guildId !== sourceGuildId) return;
       // Filtre 2 : channel source — lecture dynamique (override DB possible)
       const channelSet = loadSourceChannels(sourceChannelIds);
-      if (channelSet.size > 0 && !channelSet.has(message.channelId)) return;
+      if (channelSet.size > 0 && !channelSet.has(message.channelId)) {
+        // Diagnostic : si le message AURAIT été un signal valide (entry_price
+        // extrait), on log l'ID du channel manquant. Permet à l'admin de
+        // découvrir quels channels ajouter à SOURCE_CHANNEL_IDS sans avoir à
+        // copier les IDs un par un depuis Discord.
+        // Logue silencieusement les non-signaux (sinon flood).
+        try {
+          if (!message.author?.bot && message.guildId) {
+            const dto = buildSignalDTO(message);
+            if (shouldRelay(message, dto)) {
+              console.log(
+                `[saas/relay] MISSED signal — channel="${message.channel?.name || '?'}" ` +
+                `id=${message.channelId} ticker=${dto.ticker || '-'} entry=${dto.entry_price} ` +
+                `(add to SOURCE_CHANNEL_IDS to relay)`
+              );
+            }
+          }
+        } catch (_) {
+          // best-effort log only
+        }
+        return;
+      }
       // Filtre 3 : pas de bot, pas de DM
       if (!message.guildId) return;
       if (message.author?.bot) return;

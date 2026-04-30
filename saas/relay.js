@@ -21,11 +21,41 @@ const brand = require('./brand');
 // prix d'entrée a été extrait — c'est le critère minimal d'un signal
 // actionnable côté client. Tout le reste (recaps, commentaires, FYI,
 // exits sans prix, news, etc.) est ignoré.
+//
+// Les bots sont autorisés par défaut (les alertes des serveurs source
+// proviennent souvent d'un webhook ou bot upstream). Le filtrage par auteur
+// se fait via la denylist nommée (isAuthorBlocked) plus bas.
 function shouldRelay(message, dto) {
   if (!message) return false;
-  if (message.author?.bot) return false;
   if (!dto) return false;
   return dto.entry_price != null && Number.isFinite(dto.entry_price);
+}
+
+// Denylist par défaut — bots upstream connus pour spammer / poster des
+// messages qui matchent les heuristiques mais ne sont PAS des signaux
+// actionnables (auto-trends, oracles automatisés). Override via env
+// SAAS_BLOCKED_BOT_NAMES (csv, ex: "trendvision,frogoracle,otherbot").
+// Match case-insensitive substring sur author.username.
+const DEFAULT_BLOCKED_BOT_NAMES = ['trendvision', 'frogoracle'];
+
+function loadBlockedBotNames() {
+  const env = process.env.SAAS_BLOCKED_BOT_NAMES;
+  if (env == null) return DEFAULT_BLOCKED_BOT_NAMES.slice();
+  const arr = String(env).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  return arr.length > 0 ? arr : DEFAULT_BLOCKED_BOT_NAMES.slice();
+}
+
+// Vrai si l'auteur du message est un bot dont le username matche la
+// denylist. Les humains et les bots non listés passent.
+function isAuthorBlocked(message, blockedBotNames) {
+  if (!message?.author?.bot) return false;
+  const username = String(message.author.username || '').toLowerCase();
+  if (!username) return false;
+  const list = blockedBotNames || DEFAULT_BLOCKED_BOT_NAMES;
+  for (const blocked of list) {
+    if (blocked && username.includes(blocked)) return true;
+  }
+  return false;
 }
 
 // Envoie un embed à UN guild client. Retourne l'objet { status, error, msgId }
@@ -138,6 +168,7 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
       if (sourceGuildId && message.guildId !== sourceGuildId) return;
       // Filtre 2 : channel source — lecture dynamique (override DB possible)
       const channelSet = loadSourceChannels(sourceChannelIds);
+      const blockedBotNames = loadBlockedBotNames();
       if (channelSet.size > 0 && !channelSet.has(message.channelId)) {
         // Diagnostic : si le message AURAIT été un signal valide (entry_price
         // extrait), on log l'ID du channel manquant. Permet à l'admin de
@@ -145,7 +176,7 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
         // copier les IDs un par un depuis Discord.
         // Logue silencieusement les non-signaux (sinon flood).
         try {
-          if (!message.author?.bot && message.guildId) {
+          if (!isAuthorBlocked(message, blockedBotNames) && message.guildId) {
             const dto = buildSignalDTO(message);
             if (shouldRelay(message, dto)) {
               console.log(
@@ -169,10 +200,12 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
         console.log(`[saas/relay] reject: no guildId (DM?) msg=${message.id}`);
         return;
       }
-      // Filtre 4 : pas de bot
-      if (message.author?.bot) {
+      // Filtre 4 : auteur dans la denylist (bots upstream blacklistés).
+      // Les humains et les bots non listés passent — un signal valide d'un
+      // bot autorisé (ex: webhook upstream) est relayé normalement.
+      if (isAuthorBlocked(message, blockedBotNames)) {
         console.log(
-          `[saas/relay] reject: author is bot — author="${message.author?.username || '?'}" ` +
+          `[saas/relay] reject: author blocked — author="${message.author?.username || '?'}" ` +
           `id=${message.author?.id} msg=${message.id}`
         );
         return;
@@ -223,7 +256,10 @@ module.exports = {
   register,
   broadcast,             // exposé pour tests
   shouldRelay,           // exposé pour tests
+  isAuthorBlocked,       // exposé pour tests
+  loadBlockedBotNames,   // exposé pour tests
   loadSourceChannels,    // exposé pour /saas source list
   setSourceChannels,     // exposé pour /saas source set
+  DEFAULT_BLOCKED_BOT_NAMES,
   SETTINGS_KEY_SOURCE_CHANNELS,
 };

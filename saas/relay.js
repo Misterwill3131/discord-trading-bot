@@ -160,12 +160,39 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
         }
         return;
       }
-      // Filtre 3 : pas de bot, pas de DM
-      if (!message.guildId) return;
-      if (message.author?.bot) return;
+      // À ce stade : message dans source guild + channel listé. Diagnostic
+      // détaillé pour comprendre pourquoi un signal pourrait ne pas passer.
+      // On log sur chaque rejet POST-channel-filter pour voir ce qui se passe.
+
+      // Filtre 3 : pas de DM
+      if (!message.guildId) {
+        console.log(`[saas/relay] reject: no guildId (DM?) msg=${message.id}`);
+        return;
+      }
+      // Filtre 4 : pas de bot
+      if (message.author?.bot) {
+        console.log(
+          `[saas/relay] reject: author is bot — author="${message.author?.username || '?'}" ` +
+          `id=${message.author?.id} msg=${message.id}`
+        );
+        return;
+      }
 
       const dto = buildSignalDTO(message);
-      if (!shouldRelay(message, dto)) return;
+      if (!shouldRelay(message, dto)) {
+        // Logge uniquement si le message contient AU MOINS un ticker détecté ou
+        // un nombre — sinon c'est un bavardage banal qu'on n'a pas à diagnostiquer.
+        const rawHasNumber = /\d/.test(message.content || '');
+        if (dto.ticker || rawHasNumber) {
+          const preview = (message.content || '').replace(/\s+/g, ' ').slice(0, 80);
+          console.log(
+            `[saas/relay] reject: shouldRelay=false — ticker=${dto.ticker || '-'} ` +
+            `entry=${dto.entry_price} target=${dto.target_price} ` +
+            `author="${message.author?.username || '?'}" content="${preview}"`
+          );
+        }
+        return;
+      }
 
       // Vérifie clientSaas est ready avant de broadcast
       if (!clientSaas.isReady?.()) {

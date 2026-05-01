@@ -215,3 +215,45 @@ test('detectPDHBreak: never broken yet (alerts=0 and close <= pdh) returns null/
   const result = detectPDHBreak(candles, 100, state, 15 * 60_000, 1_000_000);
   assert.deepStrictEqual(result, { event: null, stateUpdate: null });
 });
+
+test('detectPDLBreak: first break of the day fires alert', () => {
+  const { detectPDLBreak } = require('./trend-engine');
+  const candles = [{ t: 0, o: 101, h: 102, l: 99, c: 99.5, v: 1000 }];
+  const state = { pdl_alerts_today: 0, pdl_above_since: null };
+  const result = detectPDLBreak(candles, 100, state, 15 * 60_000, 1_000_000);
+  assert.ok(result.event);
+  assert.strictEqual(result.event.type, 'pdl_break');
+  assert.strictEqual(result.event.pdl, 100);
+  assert.strictEqual(result.event.price, 99.5);
+  assert.deepStrictEqual(result.stateUpdate, { pdl_alerts_today: 1, pdl_above_since: null });
+});
+
+test('detectPDLBreak: rebounds above PDL sets pdl_above_since', () => {
+  const { detectPDLBreak } = require('./trend-engine');
+  const candles = [{ t: 0, o: 101, h: 102, l: 99, c: 100.5, v: 1000 }];
+  const state = { pdl_alerts_today: 1, pdl_above_since: null };
+  const result = detectPDLBreak(candles, 100, state, 15 * 60_000, 1_000_000);
+  assert.deepStrictEqual(result.stateUpdate, { pdl_above_since: 1_000_000 });
+});
+
+test('detectPDLBreak: clean re-break after >= reentryMs fires alert', () => {
+  const { detectPDLBreak } = require('./trend-engine');
+  const candles = [{ t: 0, o: 101, h: 102, l: 99, c: 99.2, v: 1000 }];
+  const reentryMs = 15 * 60_000;
+  const state = { pdl_alerts_today: 1, pdl_above_since: 1_000_000 };
+  const now = 1_000_000 + reentryMs;
+  const result = detectPDLBreak(candles, 100, state, reentryMs, now);
+  assert.ok(result.event);
+  assert.deepStrictEqual(result.stateUpdate, { pdl_alerts_today: 2, pdl_above_since: null });
+});
+
+test('detectPDLBreak: quick recovery clears above_since without alert', () => {
+  const { detectPDLBreak } = require('./trend-engine');
+  const candles = [{ t: 0, o: 101, h: 102, l: 99, c: 99.2, v: 1000 }];
+  const reentryMs = 15 * 60_000;
+  const state = { pdl_alerts_today: 1, pdl_above_since: 1_000_000 };
+  const now = 1_000_000 + 5 * 60_000;
+  const result = detectPDLBreak(candles, 100, state, reentryMs, now);
+  assert.strictEqual(result.event, null);
+  assert.deepStrictEqual(result.stateUpdate, { pdl_above_since: null });
+});

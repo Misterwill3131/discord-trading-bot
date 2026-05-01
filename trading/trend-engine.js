@@ -185,4 +185,48 @@ function detectPDHBreak(intraday, pdh, state, reentryMs, now = Date.now()) {
   return { event: null, stateUpdate: null };
 }
 
-module.exports = { detectDirection, detectBreakout, detectReversal, detectAll, detectPDHBreak };
+// PDL break : intraday close < yesterday's low. Symétrique de detectPDHBreak,
+// avec inversion < / > et utilisation des colonnes pdl_*.
+function detectPDLBreak(intraday, pdl, state, reentryMs, now = Date.now()) {
+  if (!Array.isArray(intraday) || intraday.length === 0) {
+    return { event: null, stateUpdate: null };
+  }
+  if (!Number.isFinite(pdl)) {
+    return { event: null, stateUpdate: null };
+  }
+  const last = intraday[intraday.length - 1];
+  const close = last.c;
+  if (!Number.isFinite(close)) {
+    return { event: null, stateUpdate: null };
+  }
+
+  const alertsToday = (state && state.pdl_alerts_today) || 0;
+  const aboveSince  = state && state.pdl_above_since;
+
+  if (close < pdl) {
+    if (alertsToday === 0) {
+      return {
+        event: { type: 'pdl_break', pdl, price: close, volume: last.v },
+        stateUpdate: { pdl_alerts_today: 1, pdl_above_since: null },
+      };
+    }
+    if (aboveSince == null) {
+      return { event: null, stateUpdate: null };
+    }
+    if ((now - aboveSince) >= reentryMs) {
+      return {
+        event: { type: 'pdl_break', pdl, price: close, volume: last.v },
+        stateUpdate: { pdl_alerts_today: alertsToday + 1, pdl_above_since: null },
+      };
+    }
+    return { event: null, stateUpdate: { pdl_above_since: null } };
+  }
+
+  // close >= pdl
+  if (alertsToday > 0 && aboveSince == null) {
+    return { event: null, stateUpdate: { pdl_above_since: now } };
+  }
+  return { event: null, stateUpdate: null };
+}
+
+module.exports = { detectDirection, detectBreakout, detectReversal, detectAll, detectPDHBreak, detectPDLBreak };

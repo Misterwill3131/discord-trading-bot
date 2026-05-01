@@ -22,12 +22,18 @@ const brand = require('./brand');
 // actionnable côté client. Tout le reste (recaps, commentaires, FYI,
 // exits sans prix, news, etc.) est ignoré.
 //
+// Rejette aussi les messages de STATUS/EXIT (PT hit, stopped out, scaled
+// out, sold, etc.) même s'ils contiennent un range de prix qui ressemble
+// à un setup. Ex: "UONE first PT hit 6.30-7.50" — l'extracteur voit un
+// range mais c'est en fait l'annonce d'une sortie.
+//
 // Les bots sont autorisés par défaut (les alertes des serveurs source
 // proviennent souvent d'un webhook ou bot upstream). Le filtrage par auteur
 // se fait via la denylist nommée (isAuthorBlocked) plus bas.
 function shouldRelay(message, dto) {
   if (!message) return false;
   if (!dto) return false;
+  if (dto.is_exit_update) return false;
   return dto.entry_price != null && Number.isFinite(dto.entry_price);
 }
 
@@ -220,7 +226,7 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
           const preview = (message.content || '').replace(/\s+/g, ' ').slice(0, 80);
           console.log(
             `[saas/relay] reject: shouldRelay=false — ticker=${dto.ticker || '-'} ` +
-            `entry=${dto.entry_price} target=${dto.target_price} ` +
+            `entry=${dto.entry_price} target=${dto.target_price} exit_update=${dto.is_exit_update} ` +
             `author="${message.author?.username || '?'}" content="${preview}"`
           );
         }

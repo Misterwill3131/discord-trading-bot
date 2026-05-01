@@ -223,6 +223,7 @@ test('buildSignalDTO: ne contient AUCUN champ identifiant la source', () => {
     // dérivés du texte sanitisé (ticker, prix, condition d'entrée, note du trader).
     'scenarios', 'is_conditional',
     'targets', 'buy_condition', 'add_entry_price', 'signal_note', 'is_structured',
+    'is_exit_update',
   ]);
   for (const key of Object.keys(dto)) {
     assert.ok(allowed.has(key), `DTO contient le champ interdit: ${key}`);
@@ -425,4 +426,111 @@ test('fmtPrice: sub-dollar → 4 décimales', () => {
 test('fmtPrice: gros nombre → 2 décimales', () => {
   assert.strictEqual(fmtPrice(150), '150.00');
   assert.strictEqual(fmtPrice(1234.5678), '1234.57');
+});
+
+// ── parseExitStatus : rejette les status updates / exits ──────────────
+
+const { parseExitStatus } = require('./anonymize');
+
+test('parseExitStatus: "first PT hit 6.30-7.50" → true', () => {
+  assert.strictEqual(parseExitStatus('UONE first PT hit 6.30-7.50'), true);
+});
+
+test('parseExitStatus: "PT hit" → true', () => {
+  assert.strictEqual(parseExitStatus('UONE PT hit'), true);
+});
+
+test('parseExitStatus: "TP hit @1.78" → true', () => {
+  assert.strictEqual(parseExitStatus('AMC TP hit @1.78'), true);
+});
+
+test('parseExitStatus: "target reached" → true', () => {
+  assert.strictEqual(parseExitStatus('NVDA target reached at 180'), true);
+});
+
+test('parseExitStatus: "target tagged" → true', () => {
+  assert.strictEqual(parseExitStatus('NVDA target tagged'), true);
+});
+
+test('parseExitStatus: "stopped out" → true', () => {
+  assert.strictEqual(parseExitStatus('AAPL stopped out'), true);
+});
+
+test('parseExitStatus: "stop hit" → true', () => {
+  assert.strictEqual(parseExitStatus('TSLA stop hit'), true);
+});
+
+test('parseExitStatus: "stop loss hit" → true', () => {
+  assert.strictEqual(parseExitStatus('TSLA stop loss hit at 145'), true);
+});
+
+test('parseExitStatus: "scaled out @1.78" → true', () => {
+  assert.strictEqual(parseExitStatus('AMC scaled out @1.78'), true);
+});
+
+test('parseExitStatus: "scaling out" → true', () => {
+  assert.strictEqual(parseExitStatus('AMC scaling out half'), true);
+});
+
+test('parseExitStatus: "trimmed half" → true', () => {
+  assert.strictEqual(parseExitStatus('SPY trimmed half'), true);
+});
+
+test('parseExitStatus: "sold UONE" → true', () => {
+  assert.strictEqual(parseExitStatus('sold UONE @5.20'), true);
+});
+
+test('parseExitStatus: "exited" → true', () => {
+  assert.strictEqual(parseExitStatus('AAPL exited at breakeven'), true);
+});
+
+test('parseExitStatus: "took profits" → true', () => {
+  assert.strictEqual(parseExitStatus('NVDA took profits'), true);
+});
+
+test('parseExitStatus: "locked in 25%" → true', () => {
+  assert.strictEqual(parseExitStatus('locked in 25% on AAPL'), true);
+});
+
+test('parseExitStatus: "closed position" → true', () => {
+  assert.strictEqual(parseExitStatus('AMD closed position at 180'), true);
+});
+
+// ── parseExitStatus : faux positifs à éviter ──────────────────────────
+
+test('parseExitStatus: signal d\'entrée standard "$AAPL 150-155" → false', () => {
+  assert.strictEqual(parseExitStatus('$AAPL 150-155 buy zone'), false);
+});
+
+test('parseExitStatus: "buy only above $3.81 Targets $4.18/4.64" → false', () => {
+  assert.strictEqual(parseExitStatus('$FATN buy only above $3.81 Targets $4.18/4.64/5.24 SL $3.04'), false);
+});
+
+test('parseExitStatus: "in at 1.50, target 1.75" → false', () => {
+  assert.strictEqual(parseExitStatus('AAPL in at 1.50, target 1.75, sl 1.40'), false);
+});
+
+test('parseExitStatus: "HCAI 10.45" → false (signal nu)', () => {
+  assert.strictEqual(parseExitStatus('HCAI 10.45'), false);
+});
+
+test('parseExitStatus: bare "trim" sans modifier (intent futur) → false', () => {
+  // "will trim @180" est ambigu — on ne reject pas ; "trimmed" en past tense le serait
+  assert.strictEqual(parseExitStatus('NVDA buy 150 will trim @180'), false);
+});
+
+test('parseExitStatus: "PT 180" sans verbe d\'action → false', () => {
+  assert.strictEqual(parseExitStatus('AAPL 150 PT 180'), false);
+});
+
+// ── DTO : is_exit_update propagé correctement ─────────────────────────
+
+test('DTO: "UONE first PT hit 6.30-7.50" → is_exit_update=true', () => {
+  const dto = buildSignalDTO({ id: '1', content: 'UONE first PT hit 6.30-7.50', createdAt: new Date() });
+  assert.strictEqual(dto.is_exit_update, true);
+});
+
+test('DTO: "$FATN buy only above $3.81" → is_exit_update=false', () => {
+  const dto = buildSignalDTO({ id: '1', content: '$FATN buy only above $3.81', createdAt: new Date() });
+  assert.strictEqual(dto.is_exit_update, false);
 });

@@ -184,6 +184,44 @@ function parseSignalNote(text) {
   return note.slice(0, 200);
 }
 
+// Détecte un message de STATUS / EXIT (target hit, stop hit, take profit,
+// scaled out, etc.) plutôt qu'un nouveau signal d'entrée. Ces messages
+// contiennent typiquement un range de prix qui ressemble à un setup mais
+// rapportent en fait un trade déjà en cours.
+//
+// Ex: "UONE first PT hit 6.30-7.50" → l'extracteur de prix voit
+// entry=6.30, target=7.50 alors que c'est juste l'annonce d'un PT atteint.
+//
+// Liste conservatrice (past tense / phrases sans ambiguïté). Ne matche
+// PAS les verbes nus ("trim", "scale") qui pourraient apparaître dans un
+// signal d'entrée comme directive future.
+const EXIT_STATUS_PATTERNS = [
+  // "PT hit" / "first PT hit" / "TP hit" / "target reached" / "target tagged"
+  /\b(?:pt|tp|target)s?\s+(?:hit|reached|tagged?|done|complete[d]?|achieved)\b/i,
+  // "stopped out" / "stop hit" / "stop tagged" / "stop triggered" / "stop loss hit"
+  /\bstopped\s+out\b/i,
+  /\bstop(?:\s+loss)?\s+(?:hit|tagged?|triggered)\b/i,
+  // Past-tense exits partiels — clairement un statut, pas une intention
+  /\btrimmed\b/i,
+  /\bscaled\s+(?:out|some|half|partial|down)\b/i,
+  /\bscaling\s+(?:out|some|down|half)\b/i,
+  // "sold" / "sold off" / "exited" / "closed (position|out|@|at)"
+  /\bsold\b/i,
+  /\bexited\b/i,
+  /\bclosed\s+(?:position|out|@|at|\$)/i,
+  // "took profits" / "taking profits" / "locked in"
+  /\b(?:took|taking)\s+profits?\b/i,
+  /\blocked\s+in\b/i,
+];
+
+function parseExitStatus(text) {
+  if (!text) return false;
+  for (const re of EXIT_STATUS_PATTERNS) {
+    if (re.test(text)) return true;
+  }
+  return false;
+}
+
 function buildSignalDTO(message) {
   const rawContent = message?.content || '';
   const cleanContent = sanitizeText(rawContent);
@@ -196,6 +234,7 @@ function buildSignalDTO(message) {
   const add_entry_price = parseAddEntry(cleanContent);
   const targets_ladder = parseTargetLadder(cleanContent);
   const signal_note = parseSignalNote(cleanContent);
+  const is_exit_update = parseExitStatus(cleanContent);
   const createdAt = message?.createdAt instanceof Date
     ? message.createdAt
     : new Date(message?.createdAt || message?.createdTimestamp || Date.now());
@@ -247,6 +286,7 @@ function buildSignalDTO(message) {
     add_entry_price,                               // entrée DCA si présente
     signal_note,                                   // texte note du trader
     is_structured,                                 // signal multi-section
+    is_exit_update,                                // status/exit (PT hit, stopped out, etc.)
     note:             cleanContent ? cleanContent.slice(0, 300) : null,
     ts_minute:        roundToMinute(createdAt),
     source_message_id: String(message?.id || ''),
@@ -434,4 +474,6 @@ module.exports = {
   parseAddEntry,
   parseTargetLadder,
   parseSignalNote,
+  parseExitStatus,
+  EXIT_STATUS_PATTERNS,
 };

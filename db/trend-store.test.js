@@ -9,6 +9,7 @@ function makeDb() {
   db.exec(`
     CREATE TABLE trend_watchlist (
       guild_id TEXT NOT NULL, ticker TEXT NOT NULL, added_at INTEGER NOT NULL,
+      quote_type TEXT,
       PRIMARY KEY (guild_id, ticker)
     );
     CREATE TABLE trend_channel (
@@ -20,7 +21,14 @@ function makeDb() {
       last_breakout_at INTEGER,
       last_bullish_reversal_at INTEGER,
       last_bearish_reversal_at INTEGER,
-      last_scan_at INTEGER
+      last_scan_at INTEGER,
+      daily_state_date TEXT,
+      pdh_alerts_today INTEGER DEFAULT 0,
+      pdh_below_since INTEGER,
+      pdl_alerts_today INTEGER DEFAULT 0,
+      pdl_above_since INTEGER,
+      gap_alerted_today INTEGER DEFAULT 0,
+      volume_above_alerted_today INTEGER DEFAULT 0
     );
   `);
   return db;
@@ -108,4 +116,77 @@ test('updateEvent sets the right column per event type', () => {
 test('updateEvent rejects unknown event types', () => {
   const store = createTrendStore(makeDb());
   assert.throws(() => store.updateEvent('AAPL', 'foo', 1000), /unknown event type/i);
+});
+
+test('addToWatchlist accepts optional quoteType (4th arg)', () => {
+  const store = createTrendStore(makeDb());
+  store.addToWatchlist('g1', 'AAPL', 1000, 'EQUITY');
+  assert.strictEqual(store.getQuoteType('AAPL'), 'EQUITY');
+});
+
+test('addToWatchlist without quoteType leaves it null', () => {
+  const store = createTrendStore(makeDb());
+  store.addToWatchlist('g1', 'AAPL', 1000);
+  assert.strictEqual(store.getQuoteType('AAPL'), null);
+});
+
+test('setQuoteType updates the value across all guild rows for the ticker', () => {
+  const store = createTrendStore(makeDb());
+  store.addToWatchlist('g1', 'AAPL', 1000);
+  store.addToWatchlist('g2', 'AAPL', 1000);
+  store.setQuoteType('AAPL', 'EQUITY');
+  assert.strictEqual(store.getQuoteType('AAPL'), 'EQUITY');
+});
+
+test('getQuoteType returns null if no row for ticker', () => {
+  const store = createTrendStore(makeDb());
+  assert.strictEqual(store.getQuoteType('NOPE'), null);
+});
+
+test('resetDailyState clears daily columns and sets date', () => {
+  const store = createTrendStore(makeDb());
+  store.applyStateUpdates('AAPL', {
+    pdh_alerts_today: 2, pdh_below_since: 12345,
+    pdl_alerts_today: 1, pdl_above_since: 67890,
+    gap_alerted_today: 1, volume_above_alerted_today: 1,
+  });
+  store.resetDailyState('AAPL', '2026-05-02');
+  const s = store.getState('AAPL');
+  assert.strictEqual(s.daily_state_date, '2026-05-02');
+  assert.strictEqual(s.pdh_alerts_today, 0);
+  assert.strictEqual(s.pdh_below_since, null);
+  assert.strictEqual(s.pdl_alerts_today, 0);
+  assert.strictEqual(s.pdl_above_since, null);
+  assert.strictEqual(s.gap_alerted_today, 0);
+  assert.strictEqual(s.volume_above_alerted_today, 0);
+});
+
+test('applyStateUpdates upserts only whitelisted columns', () => {
+  const store = createTrendStore(makeDb());
+  store.applyStateUpdates('AAPL', { pdh_alerts_today: 1, pdh_below_since: null });
+  let s = store.getState('AAPL');
+  assert.strictEqual(s.pdh_alerts_today, 1);
+  assert.strictEqual(s.pdh_below_since, null);
+  // Update only one column — others preserved.
+  store.applyStateUpdates('AAPL', { pdl_alerts_today: 1 });
+  s = store.getState('AAPL');
+  assert.strictEqual(s.pdh_alerts_today, 1);
+  assert.strictEqual(s.pdl_alerts_today, 1);
+});
+
+test('applyStateUpdates ignores unknown columns silently', () => {
+  const store = createTrendStore(makeDb());
+  // 'malicious_col' should be filtered out — no SQL error, no insertion.
+  assert.doesNotThrow(() =>
+    store.applyStateUpdates('AAPL', { pdh_alerts_today: 1, malicious_col: 'X' })
+  );
+  const s = store.getState('AAPL');
+  assert.strictEqual(s.pdh_alerts_today, 1);
+});
+
+test('applyStateUpdates with empty/all-unknown updates is a no-op', () => {
+  const store = createTrendStore(makeDb());
+  assert.doesNotThrow(() => store.applyStateUpdates('AAPL', {}));
+  assert.doesNotThrow(() => store.applyStateUpdates('AAPL', { unknown: 1 }));
+  assert.strictEqual(store.getState('AAPL'), null); // pas créé
 });

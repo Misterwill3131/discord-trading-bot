@@ -11,6 +11,38 @@ const { calcEMA, calcEMASeries, calcRSI } = require('./indicators');
 const SLOPE_LOOKBACK = 6;       // EMA20 slope mesurée sur 6 bougies
 const MIN_DIRECTION_BARS = 26;  // 20 (EMA20 seed) + 6 (slope window)
 
+// Filtre les bougies pour ne garder que celles dans la session régulière
+// (9:30-16:00 ET). Yahoo retourne les bougies premarket (4:00 ET) et
+// after-hours (jusqu'à 20:00 ET) à cause de includePrePost: true côté
+// client. Ces bougies hors-RTH faussent le calcul du gap (qui doit
+// utiliser l'open RTH, pas l'open premarket) et du volume cumulé du
+// jour (qui doit refléter le volume de la session, pas l'extended).
+//
+// Implementation : utilise Intl.DateTimeFormat timezone NY pour gérer
+// DST automatiquement. Si une bougie n'a pas de `t` numérique (cas de
+// fixtures de test avec t=0,1,2...), elle n'est pas filtrée — la
+// fonction garde son comportement original via fallback côté détecteur.
+function filterToRTH(bars) {
+  if (!Array.isArray(bars)) return [];
+  return bars.filter(bar => {
+    if (!bar || !Number.isFinite(bar.t)) return false;
+    const date = new Date(bar.t);
+    if (isNaN(date.getTime())) return false;
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    }).formatToParts(date);
+    let hour = 0, minute = 0;
+    for (const p of parts) {
+      if (p.type === 'hour') hour = parseInt(p.value, 10);
+      else if (p.type === 'minute') minute = parseInt(p.value, 10);
+    }
+    if (hour === 24) hour = 0;
+    const mins = hour * 60 + minute;
+    return mins >= 9 * 60 + 30 && mins < 16 * 60;
+  });
+}
+
 // Direction du marché basée sur prix vs EMA20, EMA9 vs EMA20, et pente d'EMA20.
 function detectDirection(candles) {
   if (!Array.isArray(candles) || candles.length < MIN_DIRECTION_BARS) return null;
@@ -267,6 +299,12 @@ function detectPDLBreak(intraday, pdl, state, reentryMs, now = Date.now()) {
 // Gap up/down at market open. Threshold en pourcentage (différent selon
 // quote_type côté scanner). Une seule fois par jour : gap_alerted_today
 // guard. Idempotent en cas de re-call dans la journée.
+//
+// Filtre RTH : Yahoo retourne des bougies premarket (4:00 ET) à cause de
+// includePrePost=true. On veut comparer l'open de la session régulière
+// (9:30 ET) à la prev close, pas l'open premarket. Si filterToRTH ne
+// trouve aucune bougie RTH (ex. fixtures de test sans timestamps réels),
+// fallback sur intraday[0].o pour préserver le comportement attendu.
 function detectGap(intraday, prevClose, gapThresholdPct, state) {
   if (!Array.isArray(intraday) || intraday.length === 0) {
     return { event: null, stateUpdate: null };
@@ -277,7 +315,9 @@ function detectGap(intraday, prevClose, gapThresholdPct, state) {
   if (state && state.gap_alerted_today) {
     return { event: null, stateUpdate: null };
   }
-  const todayOpen = intraday[0].o;
+  const rthBars = filterToRTH(intraday);
+  const sourceBars = rthBars.length > 0 ? rthBars : intraday;
+  const todayOpen = sourceBars[0].o;
   if (!Number.isFinite(todayOpen)) {
     return { event: null, stateUpdate: null };
   }
@@ -299,6 +339,11 @@ function detectGap(intraday, prevClose, gapThresholdPct, state) {
 
 // Cumul du volume aujourd'hui > volume total d'hier × multiplier (default 1.05).
 // Fire 1× / jour. NaN volumes ignorés (Yahoo peut renvoyer NaN sur des bars vides).
+//
+// Filtre RTH : on somme uniquement les bougies de la session régulière
+// (9:30-16:00 ET). yesterday.volume venant de Yahoo est aussi le volume
+// daily RTH, donc la comparaison est apple-to-apple. Fallback sur
+// intraday brut si aucune bougie RTH (fixtures de test).
 function detectVolumeAbovePrevDay(intraday, prevDayVolume, multiplier, state) {
   if (!Array.isArray(intraday) || intraday.length === 0) {
     return { event: null, stateUpdate: null };
@@ -309,8 +354,10 @@ function detectVolumeAbovePrevDay(intraday, prevDayVolume, multiplier, state) {
   if (state && state.volume_above_alerted_today) {
     return { event: null, stateUpdate: null };
   }
+  const rthBars = filterToRTH(intraday);
+  const sourceBars = rthBars.length > 0 ? rthBars : intraday;
   let cumVolume = 0;
-  for (const bar of intraday) {
+  for (const bar of sourceBars) {
     if (Number.isFinite(bar.v)) cumVolume += bar.v;
   }
   if (cumVolume > prevDayVolume * multiplier) {
@@ -327,4 +374,4 @@ function detectVolumeAbovePrevDay(intraday, prevDayVolume, multiplier, state) {
   return { event: null, stateUpdate: null };
 }
 
-module.exports = { detectDirection, detectBreakout, detectReversal, detectAll, detectPDHBreak, detectPDLBreak, detectGap, detectVolumeAbovePrevDay };
+module.exports = { detectDirection, detectBreakout, detectReversal, detectAll, detectPDHBreak, detectPDLBreak, detectGap, detectVolumeAbovePrevDay, filterToRTH };

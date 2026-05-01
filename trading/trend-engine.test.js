@@ -398,3 +398,74 @@ test('detectAll: missing dailyContext skips new detectors silently', () => {
   }
   assert.deepStrictEqual(result.stateUpdates, {});
 });
+
+// Helper for tests below: build a UTC ms timestamp for a wall-clock NY time.
+// 2026-05-01 is in EDT (UTC-4).
+function nyMs(year, month, day, hour, minute) {
+  return Date.UTC(year, month - 1, day, hour + 4, minute);
+}
+
+test('filterToRTH: keeps only bars with timestamps between 9:30 and 16:00 ET', () => {
+  const { filterToRTH } = require('./trend-engine');
+  const bars = [
+    { t: nyMs(2026, 5, 1, 4, 0),  o: 100, h: 100, l: 100, c: 100, v: 100 },  // 4:00 ET premarket
+    { t: nyMs(2026, 5, 1, 9, 25), o: 100, h: 100, l: 100, c: 100, v: 100 },  // 9:25 premarket
+    { t: nyMs(2026, 5, 1, 9, 30), o: 100, h: 100, l: 100, c: 100, v: 100 },  // 9:30 RTH (boundary)
+    { t: nyMs(2026, 5, 1, 12, 0), o: 100, h: 100, l: 100, c: 100, v: 100 },  // noon RTH
+    { t: nyMs(2026, 5, 1, 15, 55), o: 100, h: 100, l: 100, c: 100, v: 100 }, // 15:55 RTH
+    { t: nyMs(2026, 5, 1, 16, 0), o: 100, h: 100, l: 100, c: 100, v: 100 },  // 16:00 after-hours
+    { t: nyMs(2026, 5, 1, 18, 0), o: 100, h: 100, l: 100, c: 100, v: 100 },  // 18:00 after-hours
+  ];
+  const rth = filterToRTH(bars);
+  assert.strictEqual(rth.length, 3);
+  assert.deepStrictEqual(rth.map(b => b.t), [
+    nyMs(2026, 5, 1, 9, 30),
+    nyMs(2026, 5, 1, 12, 0),
+    nyMs(2026, 5, 1, 15, 55),
+  ]);
+});
+
+test('filterToRTH: rejects bars with missing or non-numeric t', () => {
+  const { filterToRTH } = require('./trend-engine');
+  const bars = [
+    { o: 100, h: 100, l: 100, c: 100, v: 100 },          // missing t
+    { t: 'foo', o: 100, h: 100, l: 100, c: 100, v: 100 }, // non-numeric t
+    { t: nyMs(2026, 5, 1, 12, 0), o: 100, h: 100, l: 100, c: 100, v: 100 },
+  ];
+  assert.strictEqual(filterToRTH(bars).length, 1);
+});
+
+test('detectGap: uses RTH open when intraday includes premarket bars', () => {
+  const { detectGap } = require('./trend-engine');
+  // Premarket open at $99.50 (gap down -0.5%) but RTH open at $102 (gap up +2%).
+  // With RTH filter and threshold 1.5%, should fire gap_up.
+  const intraday = [
+    { t: nyMs(2026, 5, 1, 4, 0),  o: 99.5, h: 100, l: 99,  c: 99.8, v: 50 },  // premarket
+    { t: nyMs(2026, 5, 1, 8, 0),  o: 99.8, h: 100, l: 99.5, c: 100, v: 100 }, // premarket
+    { t: nyMs(2026, 5, 1, 9, 30), o: 102,  h: 102.5, l: 101.5, c: 102, v: 5000 }, // RTH open
+    { t: nyMs(2026, 5, 1, 9, 35), o: 102,  h: 102.3, l: 101.8, c: 102.1, v: 4000 },
+  ];
+  const result = detectGap(intraday, 100, 1.5, { gap_alerted_today: 0 });
+  assert.ok(result.event, 'expected gap_up');
+  assert.strictEqual(result.event.type, 'gap_up');
+  assert.strictEqual(result.event.openPrice, 102);
+  assert.ok(Math.abs(result.event.gapPct - 2.0) < 0.001);
+});
+
+test('detectVolumeAbovePrevDay: sums only RTH bars, ignoring premarket volume', () => {
+  const { detectVolumeAbovePrevDay } = require('./trend-engine');
+  // Premarket volume = 1000, RTH volume = 11000. Yesterday = 10000.
+  // Without filter: 12000 > 10500 → fire (incorrectly counting premarket).
+  // With filter: 11000 > 10500 → fire (correctly RTH-only).
+  // To test filtering specifically, set premarket vol so big that without
+  // the filter we'd over-count to a different total than RTH alone.
+  const intraday = [
+    { t: nyMs(2026, 5, 1, 4, 0),  o: 100, h: 100, l: 100, c: 100, v: 5000 }, // premarket — should be excluded
+    { t: nyMs(2026, 5, 1, 9, 30), o: 100, h: 100, l: 100, c: 100, v: 6000 }, // RTH
+    { t: nyMs(2026, 5, 1, 9, 35), o: 100, h: 100, l: 100, c: 100, v: 5000 }, // RTH
+  ];
+  const result = detectVolumeAbovePrevDay(intraday, 10000, 1.05, { volume_above_alerted_today: 0 });
+  assert.ok(result.event);
+  // Should be 11000 (RTH only), not 16000 (with premarket)
+  assert.strictEqual(result.event.todayVolume, 11000);
+});

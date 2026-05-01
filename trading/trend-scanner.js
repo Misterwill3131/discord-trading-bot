@@ -353,12 +353,16 @@ function readScannerConfig() {
     return Number.isFinite(v) && v > 0 ? v : d;
   };
   return {
-    intervalMin:    num('TREND_SCAN_INTERVAL_MIN', 5),
-    dedupMinutes:   num('TREND_DEDUP_MINUTES', 60),
-    rsiOverbought:  num('TREND_RSI_OVERBOUGHT', 70),
-    rsiOversold:    num('TREND_RSI_OVERSOLD', 30),
-    breakoutLookback: num('TREND_BREAKOUT_LOOKBACK_BARS', 20),
-    breakoutVolMult:  num('TREND_BREAKOUT_VOLUME_MULT', 1.5),
+    intervalMin:           num('TREND_SCAN_INTERVAL_MIN', 5),
+    dedupMinutes:          num('TREND_DEDUP_MINUTES', 60),
+    rsiOverbought:         num('TREND_RSI_OVERBOUGHT', 70),
+    rsiOversold:           num('TREND_RSI_OVERSOLD', 30),
+    breakoutLookback:      num('TREND_BREAKOUT_LOOKBACK_BARS', 20),
+    breakoutVolMult:       num('TREND_BREAKOUT_VOLUME_MULT', 1.5),
+    pdhPdlReentryMin:      num('TREND_PDH_PDL_REENTRY_MIN', 15),
+    gapThresholdIndexPct:  num('TREND_GAP_THRESHOLD_INDEX_PCT', 0.5),
+    gapThresholdStockPct:  num('TREND_GAP_THRESHOLD_STOCK_PCT', 1.5),
+    volumeVsPrevPct:       num('TREND_VOLUME_VS_PREV_PCT', 5),
   };
 }
 
@@ -368,10 +372,14 @@ function readScannerConfig() {
 function startTrendScanner({ client, store, yahoo, now = () => Date.now() }) {
   const cfg = readScannerConfig();
   const detectorOpts = {
-    breakoutLookback: cfg.breakoutLookback,
-    breakoutVolMult:  cfg.breakoutVolMult,
-    rsiOverbought:    cfg.rsiOverbought,
-    rsiOversold:      cfg.rsiOversold,
+    breakoutLookback:     cfg.breakoutLookback,
+    breakoutVolMult:      cfg.breakoutVolMult,
+    rsiOverbought:        cfg.rsiOverbought,
+    rsiOversold:          cfg.rsiOversold,
+    reentryMs:            cfg.pdhPdlReentryMin * 60_000,
+    gapThresholdIndexPct: cfg.gapThresholdIndexPct,
+    gapThresholdStockPct: cfg.gapThresholdStockPct,
+    volumeMultiplier:     1 + (cfg.volumeVsPrevPct / 100),
   };
 
   let running = false;

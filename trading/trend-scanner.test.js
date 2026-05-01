@@ -241,3 +241,46 @@ test('formatDateET defaults to current time when no arg', () => {
   const result = formatDateET();
   assert.match(result, /^\d{4}-\d{2}-\d{2}$/);
 });
+
+const { getDailyContext } = require('./trend-scanner');
+
+function makeFakeYahoo(quotesByRange) {
+  return {
+    getChart: async (ticker, range) => ({
+      quotes: (quotesByRange[range] || []).map(b => ({
+        date: new Date(b.t),
+        open: b.o, high: b.h, low: b.l, close: b.c, volume: b.v,
+      })),
+    }),
+  };
+}
+
+test('getDailyContext: extracts yesterday OHLCV and today open from 1M chart', async () => {
+  const yahoo = makeFakeYahoo({
+    '1M': [
+      { t: 1, o: 100, h: 105, l: 99,  c: 104, v: 8000 },
+      { t: 2, o: 104, h: 110, l: 102, c: 108, v: 9500 },  // yesterday (avant-dernière)
+      { t: 3, o: 109, h: 112, l: 107, c: 111, v: 5000 },  // today (in progress)
+    ],
+  });
+  const ctx = await getDailyContext(yahoo, 'AAPL');
+  assert.ok(ctx);
+  assert.strictEqual(ctx.yesterday.high, 110);
+  assert.strictEqual(ctx.yesterday.low, 102);
+  assert.strictEqual(ctx.yesterday.close, 108);
+  assert.strictEqual(ctx.yesterday.volume, 9500);
+  assert.strictEqual(ctx.todayOpen, 109);
+  assert.strictEqual(ctx.todayCumVolume, 5000);
+});
+
+test('getDailyContext: returns null with fewer than 2 quotes', async () => {
+  const yahoo = makeFakeYahoo({ '1M': [{ t: 1, o: 100, h: 100, l: 100, c: 100, v: 1000 }] });
+  const ctx = await getDailyContext(yahoo, 'AAPL');
+  assert.strictEqual(ctx, null);
+});
+
+test('getDailyContext: returns null on yahoo error', async () => {
+  const yahoo = { getChart: async () => { throw new Error('not found'); } };
+  const ctx = await getDailyContext(yahoo, 'AAPL');
+  assert.strictEqual(ctx, null);
+});

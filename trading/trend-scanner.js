@@ -71,6 +71,35 @@ function adaptYahooBars(quotes) {
     }));
 }
 
+// Fetch daily chart (~22 days) and extract yesterday's OHLCV + today's
+// open + cumulative volume. Yahoo arrange les quotes par ordre
+// chronologique ; "today" est le dernier (en cours), "yesterday" l'avant-dernier.
+//
+// Retourne null si erreur ou < 2 quotes (ticker très jeune / illiquide).
+async function getDailyContext(yahoo, ticker) {
+  let chart;
+  try {
+    chart = await yahoo.getChart(ticker, '1M');
+  } catch (err) {
+    console.warn(`[trend] getDailyContext failed for ${ticker}: ${err && err.message}`);
+    return null;
+  }
+  const quotes = (chart && chart.quotes) || [];
+  if (quotes.length < 2) return null;
+  const today = quotes[quotes.length - 1];
+  const yesterday = quotes[quotes.length - 2];
+  return {
+    yesterday: {
+      high: yesterday.high,
+      low: yesterday.low,
+      close: yesterday.close,
+      volume: yesterday.volume,
+    },
+    todayOpen: today.open,
+    todayCumVolume: today.volume,
+  };
+}
+
 function fmtPrice(v)  { return Number.isFinite(v) ? '$' + v.toFixed(2) : '—'; }
 function fmtVolume(v) {
   if (!Number.isFinite(v)) return '—';
@@ -278,4 +307,4 @@ function startTrendScanner({ client, store, yahoo, now = () => Date.now() }) {
   };
 }
 
-module.exports = { isUSMarketOpen, formatDateET, runScanCycle, startTrendScanner };
+module.exports = { isUSMarketOpen, formatDateET, getDailyContext, runScanCycle, startTrendScanner };

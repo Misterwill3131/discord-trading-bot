@@ -82,10 +82,12 @@ async function handleAnalyze(message, ticker, { yahoo, store }) {
   // Today's daily-reference events (only if we have state from this trading day)
   const dailyLines = [];
   if (state.pdh_alerts_today > 0 && dailyContext) {
-    dailyLines.push(`• 🟢 PDH break (yesterday's high ${formatPrice(dailyContext.yesterday.high)})`);
+    const priorHigh = dailyContext.priorHigh != null ? dailyContext.priorHigh : dailyContext.yesterday.high;
+    dailyLines.push(`• 🟢 PDH break (2-day high ${formatPrice(priorHigh)})`);
   }
   if (state.pdl_alerts_today > 0 && dailyContext) {
-    dailyLines.push(`• 🔴 PDL break (yesterday's low ${formatPrice(dailyContext.yesterday.low)})`);
+    const priorLow = dailyContext.priorLow != null ? dailyContext.priorLow : dailyContext.yesterday.low;
+    dailyLines.push(`• 🔴 PDL break (2-day low ${formatPrice(priorLow)})`);
   }
   if (state.gap_alerted_today && dailyContext) {
     const gapPct = ((dailyContext.todayOpen - dailyContext.yesterday.close) / dailyContext.yesterday.close) * 100;

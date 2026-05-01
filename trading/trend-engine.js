@@ -138,9 +138,14 @@ function detectAll(candles, dailyContext = null, state = null, opts = {}) {
     const volumeMultiplier = Number.isFinite(opts.volumeMultiplier) ? opts.volumeMultiplier : 1.05;
     const now = Number.isFinite(opts.now) ? opts.now : Date.now();
 
+    // priorHigh / priorLow = max/min sur les 2 dernières daily bars (yesterday +
+    // dayBefore). Fallback sur yesterday.high/low si dailyContext n'a pas le
+    // champ (ex. ancien getDailyContext, ticker très jeune avec 2 quotes).
+    const priorHigh = Number.isFinite(dailyContext.priorHigh) ? dailyContext.priorHigh : y.high;
+    const priorLow  = Number.isFinite(dailyContext.priorLow)  ? dailyContext.priorLow  : y.low;
     const detectors = [
-      () => detectPDHBreak(candles, y.high, state, reentryMs, now),
-      () => detectPDLBreak(candles, y.low,  state, reentryMs, now),
+      () => detectPDHBreak(candles, priorHigh, state, reentryMs, now),
+      () => detectPDLBreak(candles, priorLow,  state, reentryMs, now),
       () => detectGap(candles, y.close, gapThresholdPct, state),
       () => detectVolumeAbovePrevDay(candles, y.volume, volumeMultiplier, state),
     ];

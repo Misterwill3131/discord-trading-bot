@@ -93,7 +93,45 @@ async function handleAnalyze(message, ticker, { yahoo, store }) {
   return message.reply(lines.join('\n')).catch(e => console.error('[trend] reply', e.message));
 }
 
-function registerTrendCommands(client, { store, yahoo }) {
+// !trend watchlist → affiche les tickers sur la watchlist
+async function handleWatchlist(message, { store, yahoo }) {
+  const guildId = message.guildId;
+  if (!guildId) return message.reply('Use this command in a server.').catch(() => {});
+  const tickers = store.getWatchlist(guildId);
+  if (tickers.length === 0) {
+    return message.reply('Watchlist is empty. Add tickers with `!trend watch <TICKER>`.').catch(() => {});
+  }
+
+  const lines = [`Watchlist (${tickers.length} ticker${tickers.length === 1 ? '' : 's'}):`];
+  for (const ticker of tickers) {
+    const state = store.getState(ticker);
+    const dir = state && state.direction;
+    const emoji = DIRECTION_EMOJI[dir] || '·';
+    const dirLabel = dir || 'unknown';
+    lines.push(`${emoji} $${ticker} — ${dirLabel}`);
+  }
+  return message.reply(lines.join('\n')).catch(() => {});
+}
+
+// !trend status → affiche le statut du bot
+async function handleStatus(message, { store, scannerConfig }) {
+  const guildId = message.guildId;
+  if (!guildId) return message.reply('Use this command in a server.').catch(() => {});
+  const channelId = store.getChannel(guildId);
+  const watchCount = store.getWatchlist(guildId).length;
+  const channelLine = channelId ? `<#${channelId}> ✅` : '⚠️ not set (use `!trend channel #channel`)';
+  const marketOpen = require('../trading/trend-scanner').isUSMarketOpen(new Date());
+  const lines = [
+    'Trend bot status (this server):',
+    `• Alert channel: ${channelLine}`,
+    `• Watchlist: ${watchCount} ticker${watchCount === 1 ? '' : 's'}`,
+    `• Scanner: running (every ${scannerConfig?.intervalMin || 5} min)`,
+    `• Market: ${marketOpen ? 'open' : 'closed'}`,
+  ];
+  return message.reply(lines.join('\n')).catch(() => {});
+}
+
+function registerTrendCommands(client, { store, yahoo, scannerConfig }) {
   client.on('messageCreate', async (message) => {
     if (!message || !message.content || message.author?.bot) return;
     const text = message.content.trim();
@@ -101,17 +139,18 @@ function registerTrendCommands(client, { store, yahoo }) {
 
     const args = text.slice('!trend'.length).trim().split(/\s+/).filter(Boolean);
     if (args.length === 0) {
-      return message.reply('Usage: `!trend <TICKER>` · `!trend watch <TICKER>` · `!trend watchlist` · `!trend status` · `!trend channel #channel`').catch(() => {});
+      return message.reply('Usage: `!trend <TICKER>` · `!trend watch <TICKER>` · `!trend unwatch <TICKER>` · `!trend watchlist` · `!trend status` · `!trend channel #channel`').catch(() => {});
     }
 
     const sub = args[0].toLowerCase();
-    // First branch: analyze. Will be expanded in later tasks.
-    if (!['watch', 'unwatch', 'watchlist', 'channel', 'status'].includes(sub)) {
+    if (sub === 'watchlist') return handleWatchlist(message, { store, yahoo });
+    if (sub === 'status')    return handleStatus(message, { store, scannerConfig });
+
+    if (!['watch', 'unwatch', 'channel'].includes(sub)) {
       const ticker = args[0].replace(/\$/g, '').toUpperCase();
       return handleAnalyze(message, ticker, { yahoo, store });
     }
 
-    // Other subcommands wired in subsequent tasks.
     return message.reply('Subcommand not implemented yet').catch(() => {});
   });
 }

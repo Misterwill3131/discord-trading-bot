@@ -139,3 +139,79 @@ test('detectAll returns { direction, events, snapshot }', () => {
 test('detectAll returns null when not enough candles', () => {
   assert.strictEqual(detectAll(bars(Array(10).fill(100))), null);
 });
+
+test('detectPDHBreak returns no event when not enough candles', () => {
+  const { detectPDHBreak } = require('./trend-engine');
+  assert.deepStrictEqual(
+    detectPDHBreak([], 100, {}, 15 * 60_000, 0),
+    { event: null, stateUpdate: null }
+  );
+});
+
+test('detectPDHBreak: first break of the day fires alert and updates state', () => {
+  const { detectPDHBreak } = require('./trend-engine');
+  const candles = [{ t: 0, o: 99, h: 101, l: 98, c: 100.5, v: 1000 }];
+  const state = { pdh_alerts_today: 0, pdh_below_since: null };
+  const result = detectPDHBreak(candles, 100, state, 15 * 60_000, 1_000_000);
+  assert.ok(result.event);
+  assert.strictEqual(result.event.type, 'pdh_break');
+  assert.strictEqual(result.event.pdh, 100);
+  assert.strictEqual(result.event.price, 100.5);
+  assert.deepStrictEqual(result.stateUpdate, { pdh_alerts_today: 1, pdh_below_since: null });
+});
+
+test('detectPDHBreak: still above after first alert returns null/null', () => {
+  const { detectPDHBreak } = require('./trend-engine');
+  const candles = [{ t: 0, o: 99, h: 101, l: 98, c: 100.5, v: 1000 }];
+  const state = { pdh_alerts_today: 1, pdh_below_since: null };
+  const result = detectPDHBreak(candles, 100, state, 15 * 60_000, 1_000_000);
+  assert.deepStrictEqual(result, { event: null, stateUpdate: null });
+});
+
+test('detectPDHBreak: drops below PDH sets pdh_below_since', () => {
+  const { detectPDHBreak } = require('./trend-engine');
+  const candles = [{ t: 0, o: 99, h: 101, l: 98, c: 99.5, v: 1000 }];
+  const state = { pdh_alerts_today: 1, pdh_below_since: null };
+  const result = detectPDHBreak(candles, 100, state, 15 * 60_000, 1_000_000);
+  assert.strictEqual(result.event, null);
+  assert.deepStrictEqual(result.stateUpdate, { pdh_below_since: 1_000_000 });
+});
+
+test('detectPDHBreak: still below (already in below phase) returns null/null', () => {
+  const { detectPDHBreak } = require('./trend-engine');
+  const candles = [{ t: 0, o: 99, h: 101, l: 98, c: 99.5, v: 1000 }];
+  const state = { pdh_alerts_today: 1, pdh_below_since: 500_000 };
+  const result = detectPDHBreak(candles, 100, state, 15 * 60_000, 1_000_000);
+  assert.deepStrictEqual(result, { event: null, stateUpdate: null });
+});
+
+test('detectPDHBreak: clean re-entry after >= reentryMs fires alert', () => {
+  const { detectPDHBreak } = require('./trend-engine');
+  const candles = [{ t: 0, o: 99, h: 101, l: 98, c: 100.5, v: 1000 }];
+  const reentryMs = 15 * 60_000;
+  const state = { pdh_alerts_today: 1, pdh_below_since: 1_000_000 };
+  const now = 1_000_000 + reentryMs; // exactly at threshold
+  const result = detectPDHBreak(candles, 100, state, reentryMs, now);
+  assert.ok(result.event);
+  assert.strictEqual(result.event.type, 'pdh_break');
+  assert.deepStrictEqual(result.stateUpdate, { pdh_alerts_today: 2, pdh_below_since: null });
+});
+
+test('detectPDHBreak: quick recovery (< reentryMs) clears below_since but no alert', () => {
+  const { detectPDHBreak } = require('./trend-engine');
+  const candles = [{ t: 0, o: 99, h: 101, l: 98, c: 100.5, v: 1000 }];
+  const reentryMs = 15 * 60_000;
+  const state = { pdh_alerts_today: 1, pdh_below_since: 1_000_000 };
+  const now = 1_000_000 + 5 * 60_000; // 5 min < 15
+  const result = detectPDHBreak(candles, 100, state, reentryMs, now);
+  assert.strictEqual(result.event, null);
+  assert.deepStrictEqual(result.stateUpdate, { pdh_below_since: null });
+});
+
+test('detectPDHBreak: never broken yet (alerts=0 and close <= pdh) returns null/null', () => {
+  const { detectPDHBreak } = require('./trend-engine');
+  const candles = [{ t: 0, o: 99, h: 101, l: 98, c: 99.5, v: 1000 }];
+  const state = { pdh_alerts_today: 0, pdh_below_since: null };
+  const result = detectPDHBreak(candles, 100, state, 15 * 60_000, 1_000_000);
+  assert.deepStrictEqual(result, { event: null, stateUpdate: null });
+});

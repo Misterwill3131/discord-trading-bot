@@ -132,4 +132,57 @@ function detectAll(candles, opts = {}) {
   return { direction, events, snapshot };
 }
 
-module.exports = { detectDirection, detectBreakout, detectReversal, detectAll };
+// PDH break : intraday close > yesterday's high. Pure function — retourne
+// { event, stateUpdate } sans muter `state`. Le scanner applique le delta.
+//
+// Logique de ré-entrée (cohérence avec le state machine PDH) :
+//   - premier break du jour       → alert + alerts_today=1, below_since=null
+//   - toujours au-dessus (déjà alerted, below_since=null) → no-op
+//   - retombé sous PDH après alert → set below_since=now
+//   - re-cassure après >= reentryMs sous PDH → alert + alerts_today++, below_since=null
+//   - re-cassure rapide (< reentryMs)         → clear below_since (no alert)
+function detectPDHBreak(intraday, pdh, state, reentryMs, now = Date.now()) {
+  if (!Array.isArray(intraday) || intraday.length === 0) {
+    return { event: null, stateUpdate: null };
+  }
+  if (!Number.isFinite(pdh)) {
+    return { event: null, stateUpdate: null };
+  }
+  const last = intraday[intraday.length - 1];
+  const close = last.c;
+  if (!Number.isFinite(close)) {
+    return { event: null, stateUpdate: null };
+  }
+
+  const alertsToday = (state && state.pdh_alerts_today) || 0;
+  const belowSince  = state && state.pdh_below_since;
+
+  if (close > pdh) {
+    if (alertsToday === 0) {
+      return {
+        event: { type: 'pdh_break', pdh, price: close, volume: last.v },
+        stateUpdate: { pdh_alerts_today: 1, pdh_below_since: null },
+      };
+    }
+    if (belowSince == null) {
+      // Already above and already alerted today.
+      return { event: null, stateUpdate: null };
+    }
+    if ((now - belowSince) >= reentryMs) {
+      return {
+        event: { type: 'pdh_break', pdh, price: close, volume: last.v },
+        stateUpdate: { pdh_alerts_today: alertsToday + 1, pdh_below_since: null },
+      };
+    }
+    // Quick recovery — clear without alerting.
+    return { event: null, stateUpdate: { pdh_below_since: null } };
+  }
+
+  // close <= pdh
+  if (alertsToday > 0 && belowSince == null) {
+    return { event: null, stateUpdate: { pdh_below_since: now } };
+  }
+  return { event: null, stateUpdate: null };
+}
+
+module.exports = { detectDirection, detectBreakout, detectReversal, detectAll, detectPDHBreak };

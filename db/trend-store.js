@@ -6,12 +6,6 @@
 // toucher au singleton de db/sqlite.js.
 // ─────────────────────────────────────────────────────────────────────
 
-const EVENT_COLUMNS = {
-  breakout:           'last_breakout_at',
-  bullish_reversal:   'last_bullish_reversal_at',
-  bearish_reversal:   'last_bearish_reversal_at',
-};
-
 function createTrendStore(db) {
   // ── Watchlist ────────────────────────────────────────────────────
   const insertWatch = db.prepare(
@@ -52,6 +46,24 @@ function createTrendStore(db) {
      ON CONFLICT(ticker) DO UPDATE SET direction = excluded.direction,
                                        direction_changed_at = excluded.direction_changed_at`
   );
+  const updateBreakoutAt = db.prepare(
+    `INSERT INTO trend_state (ticker, last_breakout_at) VALUES (?, ?)
+     ON CONFLICT(ticker) DO UPDATE SET last_breakout_at = excluded.last_breakout_at`
+  );
+  const updateBullishReversalAt = db.prepare(
+    `INSERT INTO trend_state (ticker, last_bullish_reversal_at) VALUES (?, ?)
+     ON CONFLICT(ticker) DO UPDATE SET last_bullish_reversal_at = excluded.last_bullish_reversal_at`
+  );
+  const updateBearishReversalAt = db.prepare(
+    `INSERT INTO trend_state (ticker, last_bearish_reversal_at) VALUES (?, ?)
+     ON CONFLICT(ticker) DO UPDATE SET last_bearish_reversal_at = excluded.last_bearish_reversal_at`
+  );
+
+  const EVENT_STATEMENTS = {
+    breakout:         updateBreakoutAt,
+    bullish_reversal: updateBullishReversalAt,
+    bearish_reversal: updateBearishReversalAt,
+  };
 
   return {
     addToWatchlist(guildId, ticker, nowMs) {
@@ -90,14 +102,8 @@ function createTrendStore(db) {
       upsertDirection.run(ticker, direction, nowMs);
     },
     updateEvent(ticker, eventType, nowMs) {
-      const col = EVENT_COLUMNS[eventType];
-      if (!col) throw new Error('unknown event type: ' + eventType);
-      // Build statement dynamically per column. Columns are validated above
-      // against EVENT_COLUMNS — no SQL injection risk.
-      const stmt = db.prepare(
-        `INSERT INTO trend_state (ticker, ${col}) VALUES (?, ?)
-         ON CONFLICT(ticker) DO UPDATE SET ${col} = excluded.${col}`
-      );
+      const stmt = EVENT_STATEMENTS[eventType];
+      if (!stmt) throw new Error('unknown event type: ' + eventType);
       stmt.run(ticker, nowMs);
     },
   };

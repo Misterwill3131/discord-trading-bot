@@ -201,4 +201,66 @@ async function runScanCycle({
   return { tickers: tickers.length, alerts, errors, elapsed };
 }
 
-module.exports = { isUSMarketOpen, runScanCycle };
+const TICK_MS = 60_000;
+
+// Read env vars at start time. Defaults match the spec.
+function readScannerConfig() {
+  const num = (k, d) => {
+    const v = parseFloat(process.env[k]);
+    return Number.isFinite(v) && v > 0 ? v : d;
+  };
+  return {
+    intervalMin:    num('TREND_SCAN_INTERVAL_MIN', 5),
+    dedupMinutes:   num('TREND_DEDUP_MINUTES', 60),
+    rsiOverbought:  num('TREND_RSI_OVERBOUGHT', 70),
+    rsiOversold:    num('TREND_RSI_OVERSOLD', 30),
+    breakoutLookback: num('TREND_BREAKOUT_LOOKBACK_BARS', 20),
+    breakoutVolMult:  num('TREND_BREAKOUT_VOLUME_MULT', 1.5),
+  };
+}
+
+// Démarre le scanner. Appelé une fois après l'event Discord 'ready'.
+// Retourne une fonction `stop()` pour arrêt propre (utile si un jour
+// on veut redémarrer le module sans relancer le process).
+function startTrendScanner({ client, store, yahoo, now = () => Date.now() }) {
+  const cfg = readScannerConfig();
+  const detectorOpts = {
+    breakoutLookback: cfg.breakoutLookback,
+    breakoutVolMult:  cfg.breakoutVolMult,
+    rsiOverbought:    cfg.rsiOverbought,
+    rsiOversold:      cfg.rsiOversold,
+  };
+
+  let running = false;
+
+  async function tick() {
+    if (running) return;            // skip si un cycle précédent est en cours
+    const date = new Date(now());
+    if (!isUSMarketOpen(date))      return;
+    if (date.getMinutes() % cfg.intervalMin !== 0) return;
+
+    running = true;
+    try {
+      await runScanCycle({
+        store, yahoo,
+        discord: client,
+        now,
+        dedupMinutes: cfg.dedupMinutes,
+        detectorOpts,
+      });
+    } catch (err) {
+      console.error('[trend] runScanCycle threw:', err && err.stack || err);
+    } finally {
+      running = false;
+    }
+  }
+
+  const handle = setInterval(tick, TICK_MS);
+  if (handle.unref) handle.unref(); // ne pas bloquer le shutdown du process
+
+  console.log(`[trend] scanner started (interval ${cfg.intervalMin}min, dedup ${cfg.dedupMinutes}min)`);
+
+  return function stop() { clearInterval(handle); };
+}
+
+module.exports = { isUSMarketOpen, runScanCycle, startTrendScanner };

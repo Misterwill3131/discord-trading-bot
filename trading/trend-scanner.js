@@ -73,9 +73,16 @@ function adaptYahooBars(quotes) {
 
 // Fetch daily chart (~22 days) and extract yesterday's OHLCV + today's
 // open + cumulative volume. Yahoo arrange les quotes par ordre
-// chronologique ; "today" est le dernier (en cours), "yesterday" l'avant-dernier.
+// chronologique ; "today" est le dernier (en cours), "yesterday" l'avant-dernier,
+// "dayBefore" l'antépénultième (pour calculer priorHigh/priorLow sur 2 jours).
+//
+// `priorHigh` / `priorLow` = max/min sur les 2 dernières daily bars complètes
+// (yesterday + dayBefore). Sert de référence pour PDH/PDL break — capture la
+// résistance/support 2-jour plutôt que juste la veille.
 //
 // Retourne null si erreur ou < 2 quotes (ticker très jeune / illiquide).
+// Si seulement 2 quotes (today + yesterday, pas de dayBefore), priorHigh/Low
+// retombent sur yesterday's high/low.
 async function getDailyContext(yahoo, ticker) {
   let chart;
   try {
@@ -88,6 +95,15 @@ async function getDailyContext(yahoo, ticker) {
   if (quotes.length < 2) return null;
   const today = quotes[quotes.length - 1];
   const yesterday = quotes[quotes.length - 2];
+  const dayBefore = quotes.length >= 3 ? quotes[quotes.length - 3] : null;
+
+  const priorHigh = dayBefore && Number.isFinite(dayBefore.high)
+    ? Math.max(yesterday.high, dayBefore.high)
+    : yesterday.high;
+  const priorLow = dayBefore && Number.isFinite(dayBefore.low)
+    ? Math.min(yesterday.low, dayBefore.low)
+    : yesterday.low;
+
   return {
     yesterday: {
       high: yesterday.high,
@@ -95,6 +111,8 @@ async function getDailyContext(yahoo, ticker) {
       close: yesterday.close,
       volume: yesterday.volume,
     },
+    priorHigh,
+    priorLow,
     todayOpen: today.open,
     todayCumVolume: today.volume,
   };
@@ -163,7 +181,7 @@ function fmtTodayVolume(dailyContext) {
 function formatPDHBreakAlert(ticker, ev, snap, dailyContext) {
   return [
     `🟢 **$${ticker}** — PDH break`,
-    `Closed above yesterday's high ${fmtPrice(ev.pdh)}`,
+    `Closed above 2-day high ${fmtPrice(ev.pdh)}`,
     `Price: ${fmtPrice(ev.price)} · Today vol: ${fmtTodayVolume(dailyContext)}`,
   ].join('\n');
 }
@@ -171,7 +189,7 @@ function formatPDHBreakAlert(ticker, ev, snap, dailyContext) {
 function formatPDLBreakAlert(ticker, ev, snap, dailyContext) {
   return [
     `🔴 **$${ticker}** — PDL break`,
-    `Closed below yesterday's low ${fmtPrice(ev.pdl)}`,
+    `Closed below 2-day low ${fmtPrice(ev.pdl)}`,
     `Price: ${fmtPrice(ev.price)} · Today vol: ${fmtTodayVolume(dailyContext)}`,
   ].join('\n');
 }

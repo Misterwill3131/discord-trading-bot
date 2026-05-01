@@ -269,8 +269,8 @@ function makeFakeYahoo(quotesByRange) {
 test('getDailyContext: extracts yesterday OHLCV and today open from 1M chart', async () => {
   const yahoo = makeFakeYahoo({
     '1M': [
-      { t: 1, o: 100, h: 105, l: 99,  c: 104, v: 8000 },
-      { t: 2, o: 104, h: 110, l: 102, c: 108, v: 9500 },  // yesterday (avant-dernière)
+      { t: 1, o: 100, h: 105, l: 99,  c: 104, v: 8000 },  // dayBefore : high=105, low=99
+      { t: 2, o: 104, h: 110, l: 102, c: 108, v: 9500 },  // yesterday : high=110, low=102
       { t: 3, o: 109, h: 112, l: 107, c: 111, v: 5000 },  // today (in progress)
     ],
   });
@@ -280,8 +280,25 @@ test('getDailyContext: extracts yesterday OHLCV and today open from 1M chart', a
   assert.strictEqual(ctx.yesterday.low, 102);
   assert.strictEqual(ctx.yesterday.close, 108);
   assert.strictEqual(ctx.yesterday.volume, 9500);
+  // priorHigh = max(yesterday.high=110, dayBefore.high=105) = 110
+  assert.strictEqual(ctx.priorHigh, 110);
+  // priorLow  = min(yesterday.low=102, dayBefore.low=99) = 99
+  assert.strictEqual(ctx.priorLow, 99);
   assert.strictEqual(ctx.todayOpen, 109);
   assert.strictEqual(ctx.todayCumVolume, 5000);
+});
+
+test('getDailyContext: priorHigh/priorLow fallback to yesterday when only 2 quotes', async () => {
+  const yahoo = makeFakeYahoo({
+    '1M': [
+      { t: 1, o: 104, h: 110, l: 102, c: 108, v: 9500 },  // yesterday
+      { t: 2, o: 109, h: 112, l: 107, c: 111, v: 5000 },  // today
+    ],
+  });
+  const ctx = await getDailyContext(yahoo, 'AAPL');
+  assert.ok(ctx);
+  assert.strictEqual(ctx.priorHigh, 110);  // = yesterday.high (no dayBefore)
+  assert.strictEqual(ctx.priorLow, 102);   // = yesterday.low
 });
 
 test('getDailyContext: returns null with fewer than 2 quotes', async () => {

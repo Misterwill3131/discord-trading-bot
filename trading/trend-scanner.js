@@ -185,8 +185,9 @@ async function runScanCycle({
         const channelId = store.getChannel(guildId);
         if (!channelId) continue;
         for (const msg of messages) {
-          await postToChannel({ discord, store, guildId, channelId, content: msg.content });
-          alerts += 1;
+          const result = await postToChannel({ discord, store, guildId, channelId, content: msg.content });
+          if (result.ok) alerts += 1;
+          if (result.reason === 'unknown_channel') break; // channel was just cleaned up — no point continuing for this guild
         }
       }
     } catch (err) {
@@ -255,12 +256,16 @@ function startTrendScanner({ client, store, yahoo, now = () => Date.now() }) {
     }
   }
 
-  const handle = setInterval(tick, TICK_MS);
-  if (handle.unref) handle.unref(); // ne pas bloquer le shutdown du process
+  let handle = null;
+  client.once('ready', () => {
+    handle = setInterval(tick, TICK_MS);
+    if (handle.unref) handle.unref(); // ne pas bloquer le shutdown du process
+    console.log(`[trend] scanner started (interval ${cfg.intervalMin}min, dedup ${cfg.dedupMinutes}min)`);
+  });
 
-  console.log(`[trend] scanner started (interval ${cfg.intervalMin}min, dedup ${cfg.dedupMinutes}min)`);
-
-  return function stop() { clearInterval(handle); };
+  return function stop() {
+    if (handle) clearInterval(handle);
+  };
 }
 
 module.exports = { isUSMarketOpen, runScanCycle, startTrendScanner };

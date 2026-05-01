@@ -360,6 +360,24 @@ db.exec(`
   );
 `);
 
+// ── Trend module: daily-reference signals — column migrations ─────────
+// SQLite ne supporte pas ALTER TABLE IF NOT EXISTS, donc on inspecte
+// table_info pour rester idempotent et safe au re-démarrage.
+function addColumnIfMissing(table, col, decl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (cols.some(c => c.name === col)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${decl}`);
+}
+
+addColumnIfMissing('trend_watchlist', 'quote_type', 'TEXT');
+addColumnIfMissing('trend_state', 'daily_state_date',           'TEXT');
+addColumnIfMissing('trend_state', 'pdh_alerts_today',           'INTEGER DEFAULT 0');
+addColumnIfMissing('trend_state', 'pdh_below_since',            'INTEGER');
+addColumnIfMissing('trend_state', 'pdl_alerts_today',           'INTEGER DEFAULT 0');
+addColumnIfMissing('trend_state', 'pdl_above_since',            'INTEGER');
+addColumnIfMissing('trend_state', 'gap_alerted_today',          'INTEGER DEFAULT 0');
+addColumnIfMissing('trend_state', 'volume_above_alerted_today', 'INTEGER DEFAULT 0');
+
 // ── Prepared statements (réutilisables, plus rapides) ────────────────
 
 // INSERT OR IGNORE : si un id existe déjà, on saute sans erreur. Utile

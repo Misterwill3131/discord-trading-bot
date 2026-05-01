@@ -28,6 +28,11 @@ const { setDiscordClient: setCanvasDiscordClient } = require('./canvas/proof');
 const { registerTradingHandler } = require('./discord/handler');
 const { registerDiscordCommands } = require('./discord/commands');
 const { registerMarketCommands } = require('./discord/market-commands');
+const { createYahooClient } = require('./discord/market-commands');
+const { db } = require('./db/sqlite');
+const { createTrendStore } = require('./db/trend-store');
+const { registerTrendCommands } = require('./discord/trend-commands');
+const { startTrendScanner } = require('./trading/trend-scanner');
 const { registerProfitListener } = require('./discord/profit-listener');
 const { startScheduler } = require('./discord/jobs');
 const newsPoller = require('./news/poller');
@@ -302,7 +307,17 @@ discordClientRef = client;  // active sendTradingAlert()
 // Listeners + scheduler. Les helpers internes font eux-mêmes leur
 // `client.once('ready')` si nécessaire — pas de ordre requis ici.
 registerDiscordCommands(client, { profitsChannelId: PROFITS_CHANNEL_ID });
-registerMarketCommands(client);
+// Shared yahooClient — same in-memory cache for !price/!chart/!indicator
+// (market-commands), !trend (trend-commands), and the auto-scanner.
+const sharedYahoo = createYahooClient();
+registerMarketCommands(client, { yahooClient: sharedYahoo });
+const trendStore = createTrendStore(db);
+registerTrendCommands(client, {
+  store: trendStore,
+  yahoo: sharedYahoo,
+  scannerConfig: { intervalMin: parseInt(process.env.TREND_SCAN_INTERVAL_MIN, 10) || 5 },
+});
+startTrendScanner({ client, store: trendStore, yahoo: sharedYahoo });
 registerProfitListener(client, { profitsChannelId: PROFITS_CHANNEL_ID });
 registerTradingHandler(client, {
   tradingChannel: TRADING_CHANNEL,

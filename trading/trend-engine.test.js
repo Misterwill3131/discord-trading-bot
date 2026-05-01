@@ -358,3 +358,43 @@ test('detectVolumeAbovePrevDay: handles NaN volumes (skips them)', () => {
   assert.ok(result.event);
   assert.strictEqual(result.event.todayVolume, 11000);
 });
+
+test('detectAll: returns stateUpdates accumulated from new detectors', () => {
+  const { detectAll } = require('./trend-engine');
+  // Build a 40-bar uptrend so direction returns non-null. Last close = 119.5.
+  const closes = [];
+  for (let i = 0; i < 40; i++) closes.push(100 + i * 0.5);
+  const intraday = closes.map((c, i) => ({ t: i, o: c, h: c, l: c, c, v: 1000 }));
+  // Daily context: yesterday high=119, low=100, close=118, volume=10000
+  const dailyContext = { yesterday: { high: 119, low: 100, close: 118, volume: 10000 } };
+  const state = {
+    pdh_alerts_today: 0, pdh_below_since: null,
+    pdl_alerts_today: 0, pdl_above_since: null,
+    gap_alerted_today: 0, volume_above_alerted_today: 0,
+  };
+  const opts = { reentryMs: 15 * 60_000, gapThresholdPct: 1.5, volumeMultiplier: 1.05 };
+  const result = detectAll(intraday, dailyContext, state, opts);
+  assert.ok(result, 'should return non-null verdict');
+  assert.strictEqual(result.direction, 'uptrend');
+  assert.ok(Array.isArray(result.events));
+  // PDH=119, last close=119.5 → pdh_break should fire
+  assert.ok(result.events.some(e => e.type === 'pdh_break'));
+  // stateUpdates contains pdh_alerts_today: 1 from PDH detector
+  assert.ok(result.stateUpdates);
+  assert.strictEqual(result.stateUpdates.pdh_alerts_today, 1);
+});
+
+test('detectAll: missing dailyContext skips new detectors silently', () => {
+  const { detectAll } = require('./trend-engine');
+  const closes = [];
+  for (let i = 0; i < 40; i++) closes.push(100 + i * 0.5);
+  const intraday = closes.map((c, i) => ({ t: i, o: c, h: c, l: c, c, v: 1000 }));
+  const result = detectAll(intraday, null, {}, {});
+  assert.ok(result);
+  assert.strictEqual(result.direction, 'uptrend');
+  // No PDH/PDL/gap/volume events
+  for (const ev of result.events) {
+    assert.ok(!['pdh_break', 'pdl_break', 'gap_up', 'gap_down', 'volume_above_prev_day'].includes(ev.type));
+  }
+  assert.deepStrictEqual(result.stateUpdates, {});
+});

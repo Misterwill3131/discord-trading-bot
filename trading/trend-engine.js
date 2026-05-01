@@ -108,18 +108,48 @@ function detectReversal(candles, rsiOverbought = DEFAULT_RSI_OVERBOUGHT, rsiOver
   return null;
 }
 
-// Combines all detectors. Retourne `null` si pas assez de candles.
-// Les paramètres (lookback, volume mult, RSI seuils) acceptent des
-// overrides — utiles pour les tests et pour l'env tuning au runtime.
-function detectAll(candles, opts = {}) {
+// Combines all detectors. Retourne `null` si pas assez de candles pour
+// detectDirection (gating). Sinon retourne :
+//   { direction, events: [...], snapshot: {...}, stateUpdates: {...} }
+//
+// dailyContext (optionnel) : { yesterday: { high, low, close, volume }, ... }
+//   Si null → les 4 détecteurs PDH/PDL/gap/volume sont skippés (mais
+//   direction/breakout/reversal continuent).
+//
+// state (optionnel) : la ligne trend_state actuelle, lue par les détecteurs
+//   PDH/PDL/gap/volume pour décider de fire-or-not.
+function detectAll(candles, dailyContext = null, state = null, opts = {}) {
   const direction = detectDirection(candles);
-  if (direction === null) return null;  // pas assez de bars
+  if (direction === null) return null;
 
   const events = [];
+  const stateUpdates = {};
+
   const breakout = detectBreakout(candles, opts.breakoutLookback, opts.breakoutVolMult);
   if (breakout) events.push(breakout);
+
   const reversal = detectReversal(candles, opts.rsiOverbought, opts.rsiOversold);
   if (reversal) events.push(reversal);
+
+  if (dailyContext && dailyContext.yesterday) {
+    const y = dailyContext.yesterday;
+    const reentryMs = Number.isFinite(opts.reentryMs) ? opts.reentryMs : 15 * 60_000;
+    const gapThresholdPct = Number.isFinite(opts.gapThresholdPct) ? opts.gapThresholdPct : 1.0;
+    const volumeMultiplier = Number.isFinite(opts.volumeMultiplier) ? opts.volumeMultiplier : 1.05;
+    const now = Number.isFinite(opts.now) ? opts.now : Date.now();
+
+    const detectors = [
+      () => detectPDHBreak(candles, y.high, state, reentryMs, now),
+      () => detectPDLBreak(candles, y.low,  state, reentryMs, now),
+      () => detectGap(candles, y.close, gapThresholdPct, state),
+      () => detectVolumeAbovePrevDay(candles, y.volume, volumeMultiplier, state),
+    ];
+    for (const run of detectors) {
+      const { event, stateUpdate } = run();
+      if (event) events.push(event);
+      if (stateUpdate) Object.assign(stateUpdates, stateUpdate);
+    }
+  }
 
   const closes = candles.map(c => c.c);
   const snapshot = {
@@ -129,7 +159,7 @@ function detectAll(candles, opts = {}) {
     rsi:   calcRSI(closes, 14),
   };
 
-  return { direction, events, snapshot };
+  return { direction, events, snapshot, stateUpdates };
 }
 
 // PDH break : intraday close > yesterday's high. Pure function — retourne

@@ -39,6 +39,16 @@ function isUSMarketOpen(date = new Date()) {
   return mins >= 9 * 60 + 30 && mins < 16 * 60;
 }
 
+// Returns the calendar date in America/New_York as 'YYYY-MM-DD'. Used as
+// sentinel for the daily reset of trend_state. Locale 'en-CA' is chosen
+// because it natively formats as 'YYYY-MM-DD' (sortable, ISO-like).
+function formatDateET(date = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(date);
+}
+
 const { detectAll } = require('./trend-engine');
 
 // Discord error codes for channel-write failures we want to handle specifically.
@@ -59,6 +69,35 @@ function adaptYahooBars(quotes) {
       t: q.date instanceof Date ? q.date.getTime() : q.date,
       o: q.open, h: q.high, l: q.low, c: q.close, v: q.volume,
     }));
+}
+
+// Fetch daily chart (~22 days) and extract yesterday's OHLCV + today's
+// open + cumulative volume. Yahoo arrange les quotes par ordre
+// chronologique ; "today" est le dernier (en cours), "yesterday" l'avant-dernier.
+//
+// Retourne null si erreur ou < 2 quotes (ticker très jeune / illiquide).
+async function getDailyContext(yahoo, ticker) {
+  let chart;
+  try {
+    chart = await yahoo.getChart(ticker, '1M');
+  } catch (err) {
+    console.warn(`[trend] getDailyContext failed for ${ticker}: ${err && err.message}`);
+    return null;
+  }
+  const quotes = (chart && chart.quotes) || [];
+  if (quotes.length < 2) return null;
+  const today = quotes[quotes.length - 1];
+  const yesterday = quotes[quotes.length - 2];
+  return {
+    yesterday: {
+      high: yesterday.high,
+      low: yesterday.low,
+      close: yesterday.close,
+      volume: yesterday.volume,
+    },
+    todayOpen: today.open,
+    todayCumVolume: today.volume,
+  };
 }
 
 function fmtPrice(v)  { return Number.isFinite(v) ? '$' + v.toFixed(2) : '—'; }
@@ -102,6 +141,50 @@ function formatReversalAlert(ticker, ev, snap) {
   ].join('\n');
 }
 
+function fmtPct(v) {
+  if (!Number.isFinite(v)) return '—';
+  const sign = v >= 0 ? '+' : '';
+  return sign + v.toFixed(1) + '%';
+}
+
+function formatPDHBreakAlert(ticker, ev, snap) {
+  return [
+    `🟢 **$${ticker}** — PDH break`,
+    `Closed above yesterday's high ${fmtPrice(ev.pdh)}`,
+    `Price: ${fmtPrice(ev.price)} · Volume: ${fmtVolume(ev.volume)}`,
+  ].join('\n');
+}
+
+function formatPDLBreakAlert(ticker, ev, snap) {
+  return [
+    `🔴 **$${ticker}** — PDL break`,
+    `Closed below yesterday's low ${fmtPrice(ev.pdl)}`,
+    `Price: ${fmtPrice(ev.price)} · Volume: ${fmtVolume(ev.volume)}`,
+  ].join('\n');
+}
+
+function formatGapAlert(ticker, ev, snap) {
+  const arrow = ev.type === 'gap_up' ? '⬆️' : '⬇️';
+  const label = ev.type === 'gap_up' ? 'gap up' : 'gap down';
+  return [
+    `${arrow} **$${ticker}** — ${label} ${fmtPct(ev.gapPct)}`,
+    `Opened ${fmtPrice(ev.openPrice)} vs prev close ${fmtPrice(ev.prevClose)}`,
+  ].join('\n');
+}
+
+function formatVolumeAboveAlert(ticker, ev, snap, nowMs) {
+  const overPct = ((ev.ratio - 1) * 100);
+  const time = new Date(nowMs).toLocaleTimeString('en-US', {
+    timeZone: 'America/New_York',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  return [
+    `📊 **$${ticker}** — volume above prev day`,
+    `Today: ${fmtVolume(ev.todayVolume)} (${fmtPct(overPct)}) · Yesterday: ${fmtVolume(ev.prevDayVolume)}`,
+    `Time: ${time} ET`,
+  ].join('\n');
+}
+
 async function postToChannel({ discord, store, guildId, channelId, content }) {
   try {
     const channel = await discord.channels.fetch(channelId);
@@ -142,18 +225,64 @@ async function runScanCycle({
 
   for (const ticker of tickers) {
     try {
+      // 1. Daily reset if ET date has changed since last scan for this ticker
+      const todayET = formatDateET(new Date(now()));
+      const stateBefore = store.getState(ticker);
+      if (!stateBefore || stateBefore.daily_state_date !== todayET) {
+        store.resetDailyState(ticker, todayET);
+      }
+
+      // 2. Backfill quote_type if missing
+      let quoteType = store.getQuoteType(ticker);
+      if (quoteType == null && typeof yahoo.getQuote === 'function') {
+        try {
+          const q = await yahoo.getQuote(ticker);
+          if (q && q.quoteType) {
+            quoteType = q.quoteType;
+            store.setQuoteType(ticker, quoteType);
+          }
+        } catch (err) {
+          console.warn(`[trend] quote backfill failed for ${ticker}: ${err && err.message}`);
+        }
+      }
+
+      // 3. Compute gap threshold from quote_type
+      const isIndexLike = quoteType === 'ETF' || quoteType === 'INDEX' || quoteType === 'MUTUALFUND';
+      const gapThresholdPct = isIndexLike
+        ? (detectorOpts.gapThresholdIndexPct || 0.5)
+        : (detectorOpts.gapThresholdStockPct || 1.5);
+
+      // 4. Fetch intraday + daily context
       const chart = await yahoo.getChart(ticker, '1D');
       const candles = adaptYahooBars(chart && chart.quotes);
-      const verdict = detectAll(candles, detectorOpts);
-      if (!verdict) continue; // not enough bars
+      const dailyContext = await getDailyContext(yahoo, ticker);
 
-      const state = store.getState(ticker);
+      // 5. Re-read state (after potential reset)
+      const state = store.getState(ticker) || {};
+
+      // 6. detectAll with the daily context + state
+      const verdict = detectAll(candles, dailyContext, state, {
+        breakoutLookback: detectorOpts.breakoutLookback,
+        breakoutVolMult:  detectorOpts.breakoutVolMult,
+        rsiOverbought:    detectorOpts.rsiOverbought,
+        rsiOversold:      detectorOpts.rsiOversold,
+        reentryMs:        detectorOpts.reentryMs,
+        gapThresholdPct,
+        volumeMultiplier: detectorOpts.volumeMultiplier,
+        now:              now(),
+      });
+      if (!verdict) continue;
+
+      // 7. Apply state updates from engine (new daily-event flags)
+      if (verdict.stateUpdates && Object.keys(verdict.stateUpdates).length > 0) {
+        store.applyStateUpdates(ticker, verdict.stateUpdates);
+      }
+
+      // 8. Direction transition (existing logic, unchanged)
       const tNow = now();
       const dedupMs = dedupMinutes * 60 * 1000;
       const messages = [];
-
-      // Direction transition.
-      const prevDir = state ? state.direction : null;
+      const prevDir = state.direction || null;
       if (verdict.direction !== prevDir) {
         messages.push({
           type: 'direction',
@@ -162,20 +291,33 @@ async function runScanCycle({
         store.updateDirection(ticker, verdict.direction, tNow);
       }
 
-      // Events with dedup.
+      // 9. Events: dispatch with appropriate dedup logic per type
       for (const ev of verdict.events) {
-        const lastTsCol = ev.type === 'breakout' ? 'last_breakout_at'
-                       : ev.type === 'bullish_reversal' ? 'last_bullish_reversal_at'
-                       : ev.type === 'bearish_reversal' ? 'last_bearish_reversal_at'
-                       : null;
-        if (!lastTsCol) continue;
-        const lastTs = state ? state[lastTsCol] : null;
-        if (lastTs && (tNow - lastTs) < dedupMs) continue; // suppressed
-        const content = ev.type === 'breakout'
-          ? formatBreakoutAlert(ticker, ev, verdict.snapshot)
-          : formatReversalAlert(ticker, ev, verdict.snapshot);
-        messages.push({ type: ev.type, content });
-        store.updateEvent(ticker, ev.type, tNow);
+        let content = null;
+        const lastTsCol =
+          ev.type === 'breakout' ? 'last_breakout_at' :
+          ev.type === 'bullish_reversal' ? 'last_bullish_reversal_at' :
+          ev.type === 'bearish_reversal' ? 'last_bearish_reversal_at' : null;
+
+        if (lastTsCol) {
+          // Time-based dedup (existing logic)
+          const lastTs = state[lastTsCol] || null;
+          if (lastTs && (tNow - lastTs) < dedupMs) continue;
+          content = ev.type === 'breakout'
+            ? formatBreakoutAlert(ticker, ev, verdict.snapshot)
+            : formatReversalAlert(ticker, ev, verdict.snapshot);
+          store.updateEvent(ticker, ev.type, tNow);
+        } else if (ev.type === 'pdh_break') {
+          content = formatPDHBreakAlert(ticker, ev, verdict.snapshot);
+        } else if (ev.type === 'pdl_break') {
+          content = formatPDLBreakAlert(ticker, ev, verdict.snapshot);
+        } else if (ev.type === 'gap_up' || ev.type === 'gap_down') {
+          content = formatGapAlert(ticker, ev, verdict.snapshot);
+        } else if (ev.type === 'volume_above_prev_day') {
+          content = formatVolumeAboveAlert(ticker, ev, verdict.snapshot, now());
+        }
+
+        if (content) messages.push({ type: ev.type, content });
       }
 
       if (messages.length === 0) continue;
@@ -187,7 +329,7 @@ async function runScanCycle({
         for (const msg of messages) {
           const result = await postToChannel({ discord, store, guildId, channelId, content: msg.content });
           if (result.ok) alerts += 1;
-          if (result.reason === 'unknown_channel') break; // channel was just cleaned up — no point continuing for this guild
+          if (result.reason === 'unknown_channel') break;
         }
       }
     } catch (err) {
@@ -211,12 +353,16 @@ function readScannerConfig() {
     return Number.isFinite(v) && v > 0 ? v : d;
   };
   return {
-    intervalMin:    num('TREND_SCAN_INTERVAL_MIN', 5),
-    dedupMinutes:   num('TREND_DEDUP_MINUTES', 60),
-    rsiOverbought:  num('TREND_RSI_OVERBOUGHT', 70),
-    rsiOversold:    num('TREND_RSI_OVERSOLD', 30),
-    breakoutLookback: num('TREND_BREAKOUT_LOOKBACK_BARS', 20),
-    breakoutVolMult:  num('TREND_BREAKOUT_VOLUME_MULT', 1.5),
+    intervalMin:           num('TREND_SCAN_INTERVAL_MIN', 5),
+    dedupMinutes:          num('TREND_DEDUP_MINUTES', 60),
+    rsiOverbought:         num('TREND_RSI_OVERBOUGHT', 70),
+    rsiOversold:           num('TREND_RSI_OVERSOLD', 30),
+    breakoutLookback:      num('TREND_BREAKOUT_LOOKBACK_BARS', 20),
+    breakoutVolMult:       num('TREND_BREAKOUT_VOLUME_MULT', 1.5),
+    pdhPdlReentryMin:      num('TREND_PDH_PDL_REENTRY_MIN', 15),
+    gapThresholdIndexPct:  num('TREND_GAP_THRESHOLD_INDEX_PCT', 0.5),
+    gapThresholdStockPct:  num('TREND_GAP_THRESHOLD_STOCK_PCT', 1.5),
+    volumeVsPrevPct:       num('TREND_VOLUME_VS_PREV_PCT', 5),
   };
 }
 
@@ -226,10 +372,14 @@ function readScannerConfig() {
 function startTrendScanner({ client, store, yahoo, now = () => Date.now() }) {
   const cfg = readScannerConfig();
   const detectorOpts = {
-    breakoutLookback: cfg.breakoutLookback,
-    breakoutVolMult:  cfg.breakoutVolMult,
-    rsiOverbought:    cfg.rsiOverbought,
-    rsiOversold:      cfg.rsiOversold,
+    breakoutLookback:     cfg.breakoutLookback,
+    breakoutVolMult:      cfg.breakoutVolMult,
+    rsiOverbought:        cfg.rsiOverbought,
+    rsiOversold:          cfg.rsiOversold,
+    reentryMs:            cfg.pdhPdlReentryMin * 60_000,
+    gapThresholdIndexPct: cfg.gapThresholdIndexPct,
+    gapThresholdStockPct: cfg.gapThresholdStockPct,
+    volumeMultiplier:     1 + (cfg.volumeVsPrevPct / 100),
   };
 
   let running = false;
@@ -268,4 +418,4 @@ function startTrendScanner({ client, store, yahoo, now = () => Date.now() }) {
   };
 }
 
-module.exports = { isUSMarketOpen, runScanCycle, startTrendScanner };
+module.exports = { isUSMarketOpen, formatDateET, getDailyContext, runScanCycle, startTrendScanner };

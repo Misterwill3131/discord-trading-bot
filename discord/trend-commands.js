@@ -44,7 +44,7 @@ function isUnknownTicker(err) {
 
 // !trend TICKER → analyse complète
 async function handleAnalyze(message, ticker, { yahoo, store }) {
-  let chart;
+  let chart, dailyContext;
   try {
     chart = await yahoo.getChart(ticker, '1D');
   } catch (err) {
@@ -54,13 +54,21 @@ async function handleAnalyze(message, ticker, { yahoo, store }) {
     console.error('[trend] yahoo error', err && err.message);
     return message.reply('❌ Yahoo Finance unavailable, try again in a few minutes').catch(() => {});
   }
+  // Daily context: best-effort, omit sections if not available.
+  try {
+    const { getDailyContext } = require('../trading/trend-scanner');
+    dailyContext = await getDailyContext(yahoo, ticker);
+  } catch (e) {
+    dailyContext = null;
+  }
+
   const candles = adaptYahooBars(chart && chart.quotes);
-  const verdict = detectAll(candles);
+  const state = store.getState(ticker) || {};
+  const verdict = detectAll(candles, dailyContext, state, {});
   if (!verdict) {
     return message.reply(`❌ Not enough data for $${ticker}`).catch(() => {});
   }
 
-  const state = store.getState(ticker);
   const sinceLine = state && state.direction_changed_at
     ? ` (since ${formatTime(state.direction_changed_at)})`
     : '';
@@ -69,25 +77,62 @@ async function handleAnalyze(message, ticker, { yahoo, store }) {
     `📊 **$${ticker}**`,
     `Direction: ${DIRECTION_EMOJI[verdict.direction] || ''} ${verdict.direction}${sinceLine}`,
     `Price: ${formatPrice(verdict.snapshot.price)} · EMA9 ${formatPrice(verdict.snapshot.ema9)} · EMA20 ${formatPrice(verdict.snapshot.ema20)} · RSI ${formatRsi(verdict.snapshot.rsi)}`,
-    '',
-    'Recent events (last seen):',
   ];
 
-  if (state) {
-    if (state.last_breakout_at) {
-      lines.push(`• 🚀 Breakout at ${formatTime(state.last_breakout_at)}`);
-    }
-    if (state.last_bullish_reversal_at) {
-      lines.push(`• 🔄 Bullish reversal at ${formatTime(state.last_bullish_reversal_at)}`);
-    }
-    if (state.last_bearish_reversal_at) {
-      lines.push(`• 🔄 Bearish reversal at ${formatTime(state.last_bearish_reversal_at)}`);
-    }
-    if (!state.last_breakout_at && !state.last_bullish_reversal_at && !state.last_bearish_reversal_at) {
-      lines.push('• (no recent events tracked)');
-    }
+  // Today's daily-reference events (only if we have state from this trading day)
+  const dailyLines = [];
+  if (state.pdh_alerts_today > 0 && dailyContext) {
+    dailyLines.push(`• 🟢 PDH break (yesterday's high ${formatPrice(dailyContext.yesterday.high)})`);
+  }
+  if (state.pdl_alerts_today > 0 && dailyContext) {
+    dailyLines.push(`• 🔴 PDL break (yesterday's low ${formatPrice(dailyContext.yesterday.low)})`);
+  }
+  if (state.gap_alerted_today && dailyContext) {
+    const gapPct = ((dailyContext.todayOpen - dailyContext.yesterday.close) / dailyContext.yesterday.close) * 100;
+    const arrow = gapPct >= 0 ? '⬆️' : '⬇️';
+    const sign = gapPct >= 0 ? '+' : '';
+    dailyLines.push(`• ${arrow} Gap ${sign}${gapPct.toFixed(1)}% at open`);
+  }
+  if (state.volume_above_alerted_today && dailyContext) {
+    const ratio = dailyContext.todayCumVolume / dailyContext.yesterday.volume;
+    const overPct = (ratio - 1) * 100;
+    dailyLines.push(`• 📊 Volume above prev day (+${overPct.toFixed(1)}%)`);
+  }
+  if (dailyLines.length > 0) {
+    lines.push('');
+    lines.push("Today's daily-reference events:");
+    lines.push(...dailyLines);
+  }
+
+  // Recent intraday events
+  const intradayLines = [];
+  if (state.last_breakout_at) {
+    intradayLines.push(`• 🚀 Breakout at ${formatTime(state.last_breakout_at)}`);
+  }
+  if (state.last_bullish_reversal_at) {
+    intradayLines.push(`• 🔄 Bullish reversal at ${formatTime(state.last_bullish_reversal_at)}`);
+  }
+  if (state.last_bearish_reversal_at) {
+    intradayLines.push(`• 🔄 Bearish reversal at ${formatTime(state.last_bearish_reversal_at)}`);
+  }
+  lines.push('');
+  lines.push('Recent intraday events:');
+  if (intradayLines.length > 0) {
+    lines.push(...intradayLines);
   } else {
     lines.push('• (no recent events tracked — add to watchlist for monitoring)');
+  }
+
+  // Today's volume vs yesterday (if we have daily context)
+  if (dailyContext && dailyContext.yesterday.volume > 0) {
+    const ratio = dailyContext.todayCumVolume / dailyContext.yesterday.volume;
+    const overPct = (ratio - 1) * 100;
+    const sign = overPct >= 0 ? '+' : '';
+    const todayVolFmt = dailyContext.todayCumVolume >= 1e6
+      ? (dailyContext.todayCumVolume / 1e6).toFixed(1) + 'M'
+      : Math.round(dailyContext.todayCumVolume).toString();
+    lines.push('');
+    lines.push(`Today's volume: ${todayVolFmt} (${sign}${overPct.toFixed(1)}% vs yesterday)`);
   }
 
   return message.reply(lines.join('\n')).catch(e => console.error('[trend] reply', e.message));
@@ -154,10 +199,20 @@ async function handleWatch(message, args, { store, yahoo }) {
   }
 
   // Validate ticker against Yahoo before adding (a fetch test).
+  let quoteType = null;
   try {
     const chart = await yahoo.getChart(ticker, '1D');
     if (!chart || !Array.isArray(chart.quotes) || chart.quotes.length === 0) {
       return message.reply(`❌ Unknown ticker $${ticker}`).catch(() => {});
+    }
+    if (typeof yahoo.getQuote === 'function') {
+      try {
+        const quote = await yahoo.getQuote(ticker);
+        if (quote && quote.quoteType) quoteType = quote.quoteType;
+      } catch (qErr) {
+        // Quote fetch is best-effort; chart already validated the ticker exists.
+        console.warn(`[trend] quote fetch failed for ${ticker}: ${qErr && qErr.message}`);
+      }
     }
   } catch (err) {
     if (isUnknownTicker(err)) {
@@ -166,7 +221,7 @@ async function handleWatch(message, args, { store, yahoo }) {
     return message.reply('❌ Yahoo Finance unavailable, try again in a few minutes').catch(() => {});
   }
 
-  const added = store.addToWatchlist(message.guildId, ticker, Date.now());
+  const added = store.addToWatchlist(message.guildId, ticker, Date.now(), quoteType);
   if (!added) {
     return message.reply(`ℹ️ $${ticker} already in watchlist`).catch(() => {});
   }

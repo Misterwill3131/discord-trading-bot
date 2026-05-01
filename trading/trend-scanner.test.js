@@ -68,6 +68,7 @@ function makeStoreDb() {
   db.exec(`
     CREATE TABLE trend_watchlist (
       guild_id TEXT NOT NULL, ticker TEXT NOT NULL, added_at INTEGER NOT NULL,
+      quote_type TEXT,
       PRIMARY KEY (guild_id, ticker)
     );
     CREATE TABLE trend_channel (
@@ -79,7 +80,14 @@ function makeStoreDb() {
       last_breakout_at INTEGER,
       last_bullish_reversal_at INTEGER,
       last_bearish_reversal_at INTEGER,
-      last_scan_at INTEGER
+      last_scan_at INTEGER,
+      daily_state_date TEXT,
+      pdh_alerts_today INTEGER DEFAULT 0,
+      pdh_below_since INTEGER,
+      pdl_alerts_today INTEGER DEFAULT 0,
+      pdl_above_since INTEGER,
+      gap_alerted_today INTEGER DEFAULT 0,
+      volume_above_alerted_today INTEGER DEFAULT 0
     );
   `);
   return { db, store: createTrendStore(db) };
@@ -99,14 +107,25 @@ function uptrendCandles() {
   return out;
 }
 
-function fakeYahoo(map) {
+function fakeYahoo(arg) {
+  // Backwards-compat: fakeYahoo({ AAPL: [...] }) — old shape, used by existing tests.
+  // New shape: fakeYahoo({ intraday: { AAPL: [...] }, daily: { AAPL: [...] }, quote: { AAPL: { quoteType: 'EQUITY' } } })
+  const isNewShape = arg && (arg.intraday || arg.daily || arg.quote);
+  const intradayMap = isNewShape ? (arg.intraday || {}) : (arg || {});
+  const dailyMap    = isNewShape ? (arg.daily || {}) : {};
+  const quoteMap    = isNewShape ? (arg.quote || {}) : {};
+
   return {
-    getChart: async (ticker) => ({
-      quotes: (map[ticker] || []).map(b => ({
-        date: new Date(b.t),
-        open: b.o, high: b.h, low: b.l, close: b.c, volume: b.v,
-      })),
-    }),
+    getChart: async (ticker, range) => {
+      const map = range === '1M' ? dailyMap : intradayMap;
+      return {
+        quotes: (map[ticker] || []).map(b => ({
+          date: new Date(b.t),
+          open: b.o, high: b.h, low: b.l, close: b.c, volume: b.v,
+        })),
+      };
+    },
+    getQuote: async (ticker) => quoteMap[ticker] || {},
   };
 }
 
@@ -180,9 +199,9 @@ test('runScanCycle: yahoo error on a ticker is skipped, others continue', async 
   store.addToWatchlist('g1', 'BAD', 1);
   store.setChannel('g1', 'c1', 1);
   const yahoo = {
-    getChart: async (t) => {
+    getChart: async (t, range) => {
       if (t === 'BAD') throw new Error('not found');
-      return fakeYahoo({ AAPL: uptrendCandles() }).getChart(t);
+      return fakeYahoo({ AAPL: uptrendCandles() }).getChart(t, range);
     },
   };
   const discord = fakeDiscordClient();
@@ -206,4 +225,139 @@ test('runScanCycle: deleted channel → cleaned from DB', async () => {
   };
   await runScanCycle({ store, yahoo, discord, now: () => 1_000_000 });
   assert.strictEqual(store.getChannel('g1'), null, 'channel should be cleaned');
+});
+
+const { formatDateET } = require('./trend-scanner');
+
+test('formatDateET returns YYYY-MM-DD in NY timezone — EDT case', () => {
+  // 2026-05-01 14:00 ET = 2026-05-01 18:00 UTC (EDT = UTC-4)
+  const d = new Date(Date.UTC(2026, 4, 1, 18, 0, 0));
+  assert.strictEqual(formatDateET(d), '2026-05-01');
+});
+
+test('formatDateET returns YYYY-MM-DD in NY timezone — EST case', () => {
+  // 2026-12-15 10:00 ET = 2026-12-15 15:00 UTC (EST = UTC-5)
+  const d = new Date(Date.UTC(2026, 11, 15, 15, 0, 0));
+  assert.strictEqual(formatDateET(d), '2026-12-15');
+});
+
+test('formatDateET handles UTC-day-rollover correctly', () => {
+  // 2026-05-01 23:30 ET = 2026-05-02 03:30 UTC
+  // ET date is still 2026-05-01.
+  const d = new Date(Date.UTC(2026, 4, 2, 3, 30, 0));
+  assert.strictEqual(formatDateET(d), '2026-05-01');
+});
+
+test('formatDateET defaults to current time when no arg', () => {
+  const result = formatDateET();
+  assert.match(result, /^\d{4}-\d{2}-\d{2}$/);
+});
+
+const { getDailyContext } = require('./trend-scanner');
+
+function makeFakeYahoo(quotesByRange) {
+  return {
+    getChart: async (ticker, range) => ({
+      quotes: (quotesByRange[range] || []).map(b => ({
+        date: new Date(b.t),
+        open: b.o, high: b.h, low: b.l, close: b.c, volume: b.v,
+      })),
+    }),
+  };
+}
+
+test('getDailyContext: extracts yesterday OHLCV and today open from 1M chart', async () => {
+  const yahoo = makeFakeYahoo({
+    '1M': [
+      { t: 1, o: 100, h: 105, l: 99,  c: 104, v: 8000 },
+      { t: 2, o: 104, h: 110, l: 102, c: 108, v: 9500 },  // yesterday (avant-dernière)
+      { t: 3, o: 109, h: 112, l: 107, c: 111, v: 5000 },  // today (in progress)
+    ],
+  });
+  const ctx = await getDailyContext(yahoo, 'AAPL');
+  assert.ok(ctx);
+  assert.strictEqual(ctx.yesterday.high, 110);
+  assert.strictEqual(ctx.yesterday.low, 102);
+  assert.strictEqual(ctx.yesterday.close, 108);
+  assert.strictEqual(ctx.yesterday.volume, 9500);
+  assert.strictEqual(ctx.todayOpen, 109);
+  assert.strictEqual(ctx.todayCumVolume, 5000);
+});
+
+test('getDailyContext: returns null with fewer than 2 quotes', async () => {
+  const yahoo = makeFakeYahoo({ '1M': [{ t: 1, o: 100, h: 100, l: 100, c: 100, v: 1000 }] });
+  const ctx = await getDailyContext(yahoo, 'AAPL');
+  assert.strictEqual(ctx, null);
+});
+
+test('getDailyContext: returns null on yahoo error', async () => {
+  const yahoo = { getChart: async () => { throw new Error('not found'); } };
+  const ctx = await getDailyContext(yahoo, 'AAPL');
+  assert.strictEqual(ctx, null);
+});
+
+test('runScanCycle: daily reset clears daily state when ET date changes', async () => {
+  const { store } = makeStoreDb();
+  // Simulate previous day state (PDH already alerted, gap already alerted, etc.)
+  store.applyStateUpdates('AAPL', {
+    daily_state_date: '2026-04-30',
+    pdh_alerts_today: 1, pdh_below_since: 100,
+    gap_alerted_today: 1, volume_above_alerted_today: 1,
+  });
+  store.addToWatchlist('g1', 'AAPL', 1, 'EQUITY');
+  store.setChannel('g1', 'c1', 1);
+
+  const yahoo = fakeYahoo({
+    intraday: { AAPL: uptrendCandles() },
+    daily: { AAPL: [
+      { t: Date.UTC(2026, 4, 1, 13, 30), o: 110, h: 115, l: 105, c: 113, v: 8000 },  // 2 days ago
+      { t: Date.UTC(2026, 4, 1, 13, 30), o: 113, h: 119, l: 108, c: 118, v: 9500 },  // yesterday
+      { t: Date.UTC(2026, 4, 1, 13, 30), o: 118, h: 121, l: 117, c: 120, v: 5000 },  // today
+    ]},
+    quote: { AAPL: { quoteType: 'EQUITY' } },
+  });
+  const discord = fakeDiscordClient();
+  // now = 2026-05-01 14:00 UTC = 10:00 ET on 2026-05-01 → date = '2026-05-01' (different)
+  const now = () => Date.UTC(2026, 4, 1, 14, 0);
+  await runScanCycle({ store, yahoo, discord, now });
+  const s = store.getState('AAPL');
+  // After scan: reset (date now = today), and possibly new flags from this scan
+  assert.strictEqual(s.daily_state_date, '2026-05-01');
+});
+
+test('runScanCycle: backfills quote_type via yahoo.getQuote on first scan', async () => {
+  const { store } = makeStoreDb();
+  store.addToWatchlist('g1', 'AAPL', 1);  // no quoteType yet
+  store.setChannel('g1', 'c1', 1);
+  const yahoo = fakeYahoo({
+    intraday: { AAPL: uptrendCandles() },
+    daily: { AAPL: [
+      { t: 1, o: 100, h: 102, l: 99, c: 101, v: 8000 },
+      { t: 2, o: 101, h: 105, l: 100, c: 104, v: 9000 },
+      { t: 3, o: 104, h: 110, l: 103, c: 109, v: 5000 },
+    ]},
+    quote: { AAPL: { quoteType: 'EQUITY' } },
+  });
+  const discord = fakeDiscordClient();
+  await runScanCycle({ store, yahoo, discord, now: () => 1_700_000_000_000 });
+  assert.strictEqual(store.getQuoteType('AAPL'), 'EQUITY');
+});
+
+test('runScanCycle: dispatches PDH break alert when last intraday close > yesterday high', async () => {
+  const { store } = makeStoreDb();
+  store.addToWatchlist('g1', 'AAPL', 1, 'EQUITY');
+  store.setChannel('g1', 'c1', 1);
+  // Build intraday with close above yesterday high. uptrendCandles() ends ~120.
+  const yahoo = fakeYahoo({
+    intraday: { AAPL: uptrendCandles() },
+    daily: { AAPL: [
+      { t: 1, o: 100, h: 105, l: 95,  c: 102, v: 8000 },
+      { t: 2, o: 102, h: 119, l: 100, c: 117, v: 9000 },  // yesterday — high=119
+      { t: 3, o: 117, h: 121, l: 116, c: 120, v: 5000 },  // today
+    ]},
+  });
+  const discord = fakeDiscordClient();
+  await runScanCycle({ store, yahoo, discord, now: () => 1_700_000_000_000 });
+  const sentPDH = discord.sent.find(s => /PDH break/.test(s.content));
+  assert.ok(sentPDH, 'expected PDH break alert');
 });

@@ -108,18 +108,48 @@ function detectReversal(candles, rsiOverbought = DEFAULT_RSI_OVERBOUGHT, rsiOver
   return null;
 }
 
-// Combines all detectors. Retourne `null` si pas assez de candles.
-// Les paramètres (lookback, volume mult, RSI seuils) acceptent des
-// overrides — utiles pour les tests et pour l'env tuning au runtime.
-function detectAll(candles, opts = {}) {
+// Combines all detectors. Retourne `null` si pas assez de candles pour
+// detectDirection (gating). Sinon retourne :
+//   { direction, events: [...], snapshot: {...}, stateUpdates: {...} }
+//
+// dailyContext (optionnel) : { yesterday: { high, low, close, volume }, ... }
+//   Si null → les 4 détecteurs PDH/PDL/gap/volume sont skippés (mais
+//   direction/breakout/reversal continuent).
+//
+// state (optionnel) : la ligne trend_state actuelle, lue par les détecteurs
+//   PDH/PDL/gap/volume pour décider de fire-or-not.
+function detectAll(candles, dailyContext = null, state = null, opts = {}) {
   const direction = detectDirection(candles);
-  if (direction === null) return null;  // pas assez de bars
+  if (direction === null) return null;
 
   const events = [];
+  const stateUpdates = {};
+
   const breakout = detectBreakout(candles, opts.breakoutLookback, opts.breakoutVolMult);
   if (breakout) events.push(breakout);
+
   const reversal = detectReversal(candles, opts.rsiOverbought, opts.rsiOversold);
   if (reversal) events.push(reversal);
+
+  if (dailyContext && dailyContext.yesterday) {
+    const y = dailyContext.yesterday;
+    const reentryMs = Number.isFinite(opts.reentryMs) ? opts.reentryMs : 15 * 60_000;
+    const gapThresholdPct = Number.isFinite(opts.gapThresholdPct) ? opts.gapThresholdPct : 1.0;
+    const volumeMultiplier = Number.isFinite(opts.volumeMultiplier) ? opts.volumeMultiplier : 1.05;
+    const now = Number.isFinite(opts.now) ? opts.now : Date.now();
+
+    const detectors = [
+      () => detectPDHBreak(candles, y.high, state, reentryMs, now),
+      () => detectPDLBreak(candles, y.low,  state, reentryMs, now),
+      () => detectGap(candles, y.close, gapThresholdPct, state),
+      () => detectVolumeAbovePrevDay(candles, y.volume, volumeMultiplier, state),
+    ];
+    for (const run of detectors) {
+      const { event, stateUpdate } = run();
+      if (event) events.push(event);
+      if (stateUpdate) Object.assign(stateUpdates, stateUpdate);
+    }
+  }
 
   const closes = candles.map(c => c.c);
   const snapshot = {
@@ -129,7 +159,167 @@ function detectAll(candles, opts = {}) {
     rsi:   calcRSI(closes, 14),
   };
 
-  return { direction, events, snapshot };
+  return { direction, events, snapshot, stateUpdates };
 }
 
-module.exports = { detectDirection, detectBreakout, detectReversal, detectAll };
+// PDH break : intraday close > yesterday's high. Pure function — retourne
+// { event, stateUpdate } sans muter `state`. Le scanner applique le delta.
+//
+// Logique de ré-entrée (cohérence avec le state machine PDH) :
+//   - premier break du jour       → alert + alerts_today=1, below_since=null
+//   - toujours au-dessus (déjà alerted, below_since=null) → no-op
+//   - retombé sous PDH après alert → set below_since=now
+//   - re-cassure après >= reentryMs sous PDH → alert + alerts_today++, below_since=null
+//   - re-cassure rapide (< reentryMs)         → clear below_since (no alert)
+function detectPDHBreak(intraday, pdh, state, reentryMs, now = Date.now()) {
+  if (!Array.isArray(intraday) || intraday.length === 0) {
+    return { event: null, stateUpdate: null };
+  }
+  if (!Number.isFinite(pdh)) {
+    return { event: null, stateUpdate: null };
+  }
+  const last = intraday[intraday.length - 1];
+  const close = last.c;
+  if (!Number.isFinite(close)) {
+    return { event: null, stateUpdate: null };
+  }
+
+  const alertsToday = (state && state.pdh_alerts_today) || 0;
+  const belowSince  = state && state.pdh_below_since;
+
+  if (close > pdh) {
+    if (alertsToday === 0) {
+      return {
+        event: { type: 'pdh_break', pdh, price: close, volume: last.v },
+        stateUpdate: { pdh_alerts_today: 1, pdh_below_since: null },
+      };
+    }
+    if (belowSince == null) {
+      // Already above and already alerted today.
+      return { event: null, stateUpdate: null };
+    }
+    if ((now - belowSince) >= reentryMs) {
+      return {
+        event: { type: 'pdh_break', pdh, price: close, volume: last.v },
+        stateUpdate: { pdh_alerts_today: alertsToday + 1, pdh_below_since: null },
+      };
+    }
+    // Quick recovery — clear without alerting.
+    return { event: null, stateUpdate: { pdh_below_since: null } };
+  }
+
+  // close <= pdh
+  if (alertsToday > 0 && belowSince == null) {
+    return { event: null, stateUpdate: { pdh_below_since: now } };
+  }
+  return { event: null, stateUpdate: null };
+}
+
+// PDL break : intraday close < yesterday's low. Symétrique de detectPDHBreak,
+// avec inversion < / > et utilisation des colonnes pdl_*.
+function detectPDLBreak(intraday, pdl, state, reentryMs, now = Date.now()) {
+  if (!Array.isArray(intraday) || intraday.length === 0) {
+    return { event: null, stateUpdate: null };
+  }
+  if (!Number.isFinite(pdl)) {
+    return { event: null, stateUpdate: null };
+  }
+  const last = intraday[intraday.length - 1];
+  const close = last.c;
+  if (!Number.isFinite(close)) {
+    return { event: null, stateUpdate: null };
+  }
+
+  const alertsToday = (state && state.pdl_alerts_today) || 0;
+  const aboveSince  = state && state.pdl_above_since;
+
+  if (close < pdl) {
+    if (alertsToday === 0) {
+      return {
+        event: { type: 'pdl_break', pdl, price: close, volume: last.v },
+        stateUpdate: { pdl_alerts_today: 1, pdl_above_since: null },
+      };
+    }
+    if (aboveSince == null) {
+      return { event: null, stateUpdate: null };
+    }
+    if ((now - aboveSince) >= reentryMs) {
+      return {
+        event: { type: 'pdl_break', pdl, price: close, volume: last.v },
+        stateUpdate: { pdl_alerts_today: alertsToday + 1, pdl_above_since: null },
+      };
+    }
+    return { event: null, stateUpdate: { pdl_above_since: null } };
+  }
+
+  // close >= pdl
+  if (alertsToday > 0 && aboveSince == null) {
+    return { event: null, stateUpdate: { pdl_above_since: now } };
+  }
+  return { event: null, stateUpdate: null };
+}
+
+// Gap up/down at market open. Threshold en pourcentage (différent selon
+// quote_type côté scanner). Une seule fois par jour : gap_alerted_today
+// guard. Idempotent en cas de re-call dans la journée.
+function detectGap(intraday, prevClose, gapThresholdPct, state) {
+  if (!Array.isArray(intraday) || intraday.length === 0) {
+    return { event: null, stateUpdate: null };
+  }
+  if (!Number.isFinite(prevClose) || prevClose <= 0) {
+    return { event: null, stateUpdate: null };
+  }
+  if (state && state.gap_alerted_today) {
+    return { event: null, stateUpdate: null };
+  }
+  const todayOpen = intraday[0].o;
+  if (!Number.isFinite(todayOpen)) {
+    return { event: null, stateUpdate: null };
+  }
+  const gapPct = ((todayOpen - prevClose) / prevClose) * 100;
+  if (gapPct >= gapThresholdPct) {
+    return {
+      event: { type: 'gap_up', openPrice: todayOpen, prevClose, gapPct },
+      stateUpdate: { gap_alerted_today: 1 },
+    };
+  }
+  if (gapPct <= -gapThresholdPct) {
+    return {
+      event: { type: 'gap_down', openPrice: todayOpen, prevClose, gapPct },
+      stateUpdate: { gap_alerted_today: 1 },
+    };
+  }
+  return { event: null, stateUpdate: null };
+}
+
+// Cumul du volume aujourd'hui > volume total d'hier × multiplier (default 1.05).
+// Fire 1× / jour. NaN volumes ignorés (Yahoo peut renvoyer NaN sur des bars vides).
+function detectVolumeAbovePrevDay(intraday, prevDayVolume, multiplier, state) {
+  if (!Array.isArray(intraday) || intraday.length === 0) {
+    return { event: null, stateUpdate: null };
+  }
+  if (!Number.isFinite(prevDayVolume) || prevDayVolume <= 0) {
+    return { event: null, stateUpdate: null };
+  }
+  if (state && state.volume_above_alerted_today) {
+    return { event: null, stateUpdate: null };
+  }
+  let cumVolume = 0;
+  for (const bar of intraday) {
+    if (Number.isFinite(bar.v)) cumVolume += bar.v;
+  }
+  if (cumVolume > prevDayVolume * multiplier) {
+    return {
+      event: {
+        type: 'volume_above_prev_day',
+        todayVolume: cumVolume,
+        prevDayVolume,
+        ratio: cumVolume / prevDayVolume,
+      },
+      stateUpdate: { volume_above_alerted_today: 1 },
+    };
+  }
+  return { event: null, stateUpdate: null };
+}
+
+module.exports = { detectDirection, detectBreakout, detectReversal, detectAll, detectPDHBreak, detectPDLBreak, detectGap, detectVolumeAbovePrevDay };

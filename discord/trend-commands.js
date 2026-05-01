@@ -131,6 +131,62 @@ async function handleStatus(message, { store, scannerConfig }) {
   return message.reply(lines.join('\n')).catch(() => {});
 }
 
+function requireManageGuild(message) {
+  if (!message.guildId) {
+    message.reply('Use this command in a server.').catch(() => {});
+    return false;
+  }
+  if (!message.member?.permissions?.has(PermissionsBitField.Flags.ManageGuild)) {
+    message.reply('❌ You need Manage Server permission to use this command.').catch(() => {});
+    return false;
+  }
+  return true;
+}
+
+async function handleWatch(message, args, { store, yahoo }) {
+  if (!requireManageGuild(message)) return;
+  if (args.length < 2) {
+    return message.reply('Usage: `!trend watch <TICKER>`').catch(() => {});
+  }
+  const ticker = args[1].replace(/\$/g, '').toUpperCase();
+  if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(ticker)) {
+    return message.reply('❌ Invalid ticker format').catch(() => {});
+  }
+
+  // Validate ticker against Yahoo before adding (a fetch test).
+  try {
+    const chart = await yahoo.getChart(ticker, '1D');
+    if (!chart || !Array.isArray(chart.quotes) || chart.quotes.length === 0) {
+      return message.reply(`❌ Unknown ticker $${ticker}`).catch(() => {});
+    }
+  } catch (err) {
+    if (isUnknownTicker(err)) {
+      return message.reply(`❌ Unknown ticker $${ticker}`).catch(() => {});
+    }
+    return message.reply('❌ Yahoo Finance unavailable, try again in a few minutes').catch(() => {});
+  }
+
+  const added = store.addToWatchlist(message.guildId, ticker, Date.now());
+  if (!added) {
+    return message.reply(`ℹ️ $${ticker} already in watchlist`).catch(() => {});
+  }
+  const total = store.getWatchlist(message.guildId).length;
+  return message.reply(`✅ Added $${ticker} to watchlist (${total} ticker${total === 1 ? '' : 's'} total)`).catch(() => {});
+}
+
+async function handleUnwatch(message, args, { store }) {
+  if (!requireManageGuild(message)) return;
+  if (args.length < 2) {
+    return message.reply('Usage: `!trend unwatch <TICKER>`').catch(() => {});
+  }
+  const ticker = args[1].replace(/\$/g, '').toUpperCase();
+  const removed = store.removeFromWatchlist(message.guildId, ticker);
+  if (!removed) {
+    return message.reply(`ℹ️ $${ticker} not in watchlist`).catch(() => {});
+  }
+  return message.reply(`✅ Removed $${ticker}`).catch(() => {});
+}
+
 function registerTrendCommands(client, { store, yahoo, scannerConfig }) {
   client.on('messageCreate', async (message) => {
     if (!message || !message.content || message.author?.bot) return;
@@ -143,10 +199,12 @@ function registerTrendCommands(client, { store, yahoo, scannerConfig }) {
     }
 
     const sub = args[0].toLowerCase();
+    if (sub === 'watch')     return handleWatch(message, args, { store, yahoo });
+    if (sub === 'unwatch')   return handleUnwatch(message, args, { store });
     if (sub === 'watchlist') return handleWatchlist(message, { store, yahoo });
     if (sub === 'status')    return handleStatus(message, { store, scannerConfig });
 
-    if (!['watch', 'unwatch', 'channel'].includes(sub)) {
+    if (!['channel'].includes(sub)) {
       const ticker = args[0].replace(/\$/g, '').toUpperCase();
       return handleAnalyze(message, ticker, { yahoo, store });
     }

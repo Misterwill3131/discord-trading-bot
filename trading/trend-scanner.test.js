@@ -68,6 +68,7 @@ function makeStoreDb() {
   db.exec(`
     CREATE TABLE trend_watchlist (
       guild_id TEXT NOT NULL, ticker TEXT NOT NULL, added_at INTEGER NOT NULL,
+      quote_type TEXT,
       PRIMARY KEY (guild_id, ticker)
     );
     CREATE TABLE trend_channel (
@@ -79,7 +80,14 @@ function makeStoreDb() {
       last_breakout_at INTEGER,
       last_bullish_reversal_at INTEGER,
       last_bearish_reversal_at INTEGER,
-      last_scan_at INTEGER
+      last_scan_at INTEGER,
+      daily_state_date TEXT,
+      pdh_alerts_today INTEGER DEFAULT 0,
+      pdh_below_since INTEGER,
+      pdl_alerts_today INTEGER DEFAULT 0,
+      pdl_above_since INTEGER,
+      gap_alerted_today INTEGER DEFAULT 0,
+      volume_above_alerted_today INTEGER DEFAULT 0
     );
   `);
   return { db, store: createTrendStore(db) };

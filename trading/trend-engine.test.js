@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { detectDirection, detectBreakout, detectReversal } = require('./trend-engine');
+const { detectDirection, detectBreakout, detectReversal, detectAll } = require('./trend-engine');
 
 // Helper: build N candles from a closes array. OHLC = close everywhere
 // (the engine only cares about close for direction).
@@ -118,4 +118,24 @@ test('detectReversal returns null when EMAs cross but RSI not extreme', () => {
   for (let i = 0; i < 30; i++) closes.push(100 + (i % 2 ? 0.3 : -0.3));
   closes.push(100.5, 99.7, 100.2, 99.9);
   assert.strictEqual(detectReversal(bars(closes)), null);
+});
+
+test('detectAll returns { direction, events, snapshot }', () => {
+  // Steady uptrend → direction "uptrend", possibly a breakout if last
+  // close is the new high (which it is in a monotonic series), no reversal.
+  const closes = [];
+  for (let i = 0; i < 40; i++) closes.push(100 + i * 0.5);
+  const out = detectAll(bars(closes, 1500));
+  assert.ok(out, 'expected non-null');
+  assert.strictEqual(out.direction, 'uptrend');
+  assert.ok(Array.isArray(out.events));
+  assert.ok(out.snapshot);
+  assert.ok(typeof out.snapshot.price === 'number');
+  assert.ok(typeof out.snapshot.ema9 === 'number');
+  assert.ok(typeof out.snapshot.ema20 === 'number');
+  assert.ok(typeof out.snapshot.rsi === 'number');
+});
+
+test('detectAll returns null when not enough candles', () => {
+  assert.strictEqual(detectAll(bars(Array(10).fill(100))), null);
 });

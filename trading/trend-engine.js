@@ -6,7 +6,7 @@
 // et par trend-scanner (auto).
 // ─────────────────────────────────────────────────────────────────────
 
-const { calcEMASeries, calcRSI } = require('./indicators');
+const { calcEMA, calcEMASeries, calcRSI } = require('./indicators');
 
 const SLOPE_LOOKBACK = 6;       // EMA20 slope mesurée sur 6 bougies
 const MIN_DIRECTION_BARS = 26;  // 20 (EMA20 seed) + 6 (slope window)
@@ -108,4 +108,28 @@ function detectReversal(candles, rsiOverbought = DEFAULT_RSI_OVERBOUGHT, rsiOver
   return null;
 }
 
-module.exports = { detectDirection, detectBreakout, detectReversal };
+// Combines all detectors. Retourne `null` si pas assez de candles.
+// Les paramètres (lookback, volume mult, RSI seuils) acceptent des
+// overrides — utiles pour les tests et pour l'env tuning au runtime.
+function detectAll(candles, opts = {}) {
+  const direction = detectDirection(candles);
+  if (direction === null) return null;  // pas assez de bars
+
+  const events = [];
+  const breakout = detectBreakout(candles, opts.breakoutLookback, opts.breakoutVolMult);
+  if (breakout) events.push(breakout);
+  const reversal = detectReversal(candles, opts.rsiOverbought, opts.rsiOversold);
+  if (reversal) events.push(reversal);
+
+  const closes = candles.map(c => c.c);
+  const snapshot = {
+    price: closes[closes.length - 1],
+    ema9:  calcEMA(closes, 9),
+    ema20: calcEMA(closes, 20),
+    rsi:   calcRSI(closes, 14),
+  };
+
+  return { direction, events, snapshot };
+}
+
+module.exports = { detectDirection, detectBreakout, detectReversal, detectAll };

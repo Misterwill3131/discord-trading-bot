@@ -187,6 +187,51 @@ async function handleUnwatch(message, args, { store }) {
   return message.reply(`✅ Removed $${ticker}`).catch(() => {});
 }
 
+async function handleChannel(message, args, { store }) {
+  if (!message.guildId) {
+    return message.reply('Use this command in a server.').catch(() => {});
+  }
+
+  // No argument: show current configuration. Read access OK for any user.
+  if (args.length < 2) {
+    const channelId = store.getChannel(message.guildId);
+    if (!channelId) {
+      return message.reply('⚠️ No alert channel set. Use `!trend channel #channel` (Manage Server permission required).').catch(() => {});
+    }
+    return message.reply(`Trend alert channel: <#${channelId}>`).catch(() => {});
+  }
+
+  // Set: requires permissions.
+  if (!requireManageGuild(message)) return;
+
+  // Discord auto-expands #channel into <#ID>. Parse either form.
+  const arg = args[1];
+  let channelId = null;
+  const tagMatch = arg.match(/^<#(\d+)>$/);
+  if (tagMatch) channelId = tagMatch[1];
+  else if (/^\d+$/.test(arg)) channelId = arg;
+  if (!channelId) {
+    return message.reply('Usage: `!trend channel #channel`').catch(() => {});
+  }
+
+  // Sanity-check: the channel must exist in this guild and be a text channel.
+  let channel;
+  try {
+    channel = await message.client.channels.fetch(channelId);
+  } catch {
+    return message.reply('❌ That channel does not exist or I cannot access it.').catch(() => {});
+  }
+  if (!channel || channel.guildId !== message.guildId) {
+    return message.reply('❌ That channel is not in this server.').catch(() => {});
+  }
+  if (typeof channel.send !== 'function') {
+    return message.reply('❌ That channel cannot receive messages.').catch(() => {});
+  }
+
+  store.setChannel(message.guildId, channelId, Date.now());
+  return message.reply(`✅ Trend alerts will be posted to <#${channelId}>`).catch(() => {});
+}
+
 function registerTrendCommands(client, { store, yahoo, scannerConfig }) {
   client.on('messageCreate', async (message) => {
     if (!message || !message.content || message.author?.bot) return;
@@ -201,15 +246,13 @@ function registerTrendCommands(client, { store, yahoo, scannerConfig }) {
     const sub = args[0].toLowerCase();
     if (sub === 'watch')     return handleWatch(message, args, { store, yahoo });
     if (sub === 'unwatch')   return handleUnwatch(message, args, { store });
+    if (sub === 'channel')   return handleChannel(message, args, { store });
     if (sub === 'watchlist') return handleWatchlist(message, { store, yahoo });
     if (sub === 'status')    return handleStatus(message, { store, scannerConfig });
 
-    if (!['channel'].includes(sub)) {
-      const ticker = args[0].replace(/\$/g, '').toUpperCase();
-      return handleAnalyze(message, ticker, { yahoo, store });
-    }
-
-    return message.reply('Subcommand not implemented yet').catch(() => {});
+    // Default: treat first arg as a ticker symbol.
+    const ticker = args[0].replace(/\$/g, '').toUpperCase();
+    return handleAnalyze(message, ticker, { yahoo, store });
   });
 }
 

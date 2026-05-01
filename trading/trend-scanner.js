@@ -141,6 +141,50 @@ function formatReversalAlert(ticker, ev, snap) {
   ].join('\n');
 }
 
+function fmtPct(v) {
+  if (!Number.isFinite(v)) return '—';
+  const sign = v >= 0 ? '+' : '';
+  return sign + v.toFixed(1) + '%';
+}
+
+function formatPDHBreakAlert(ticker, ev, snap) {
+  return [
+    `🟢 **$${ticker}** — PDH break`,
+    `Closed above yesterday's high ${fmtPrice(ev.pdh)}`,
+    `Price: ${fmtPrice(ev.price)} · Volume: ${fmtVolume(ev.volume)}`,
+  ].join('\n');
+}
+
+function formatPDLBreakAlert(ticker, ev, snap) {
+  return [
+    `🔴 **$${ticker}** — PDL break`,
+    `Closed below yesterday's low ${fmtPrice(ev.pdl)}`,
+    `Price: ${fmtPrice(ev.price)} · Volume: ${fmtVolume(ev.volume)}`,
+  ].join('\n');
+}
+
+function formatGapAlert(ticker, ev, snap) {
+  const arrow = ev.type === 'gap_up' ? '⬆️' : '⬇️';
+  const label = ev.type === 'gap_up' ? 'gap up' : 'gap down';
+  return [
+    `${arrow} **$${ticker}** — ${label} ${fmtPct(ev.gapPct)}`,
+    `Opened ${fmtPrice(ev.openPrice)} vs prev close ${fmtPrice(ev.prevClose)}`,
+  ].join('\n');
+}
+
+function formatVolumeAboveAlert(ticker, ev, snap, nowMs) {
+  const overPct = ((ev.ratio - 1) * 100);
+  const time = new Date(nowMs).toLocaleTimeString('en-US', {
+    timeZone: 'America/New_York',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+  return [
+    `📊 **$${ticker}** — volume above prev day`,
+    `Today: ${fmtVolume(ev.todayVolume)} (${fmtPct(overPct)}) · Yesterday: ${fmtVolume(ev.prevDayVolume)}`,
+    `Time: ${time} ET`,
+  ].join('\n');
+}
+
 async function postToChannel({ discord, store, guildId, channelId, content }) {
   try {
     const channel = await discord.channels.fetch(channelId);

@@ -257,3 +257,57 @@ test('detectPDLBreak: quick recovery clears above_since without alert', () => {
   assert.strictEqual(result.event, null);
   assert.deepStrictEqual(result.stateUpdate, { pdl_above_since: null });
 });
+
+test('detectGap: gap up above threshold fires gap_up', () => {
+  const { detectGap } = require('./trend-engine');
+  // todayOpen 102, prevClose 100 → +2.0%
+  const candles = [{ t: 0, o: 102, h: 103, l: 101.5, c: 102.5, v: 1000 }];
+  const state = { gap_alerted_today: 0 };
+  const result = detectGap(candles, 100, 1.5, state);
+  assert.ok(result.event);
+  assert.strictEqual(result.event.type, 'gap_up');
+  assert.strictEqual(result.event.openPrice, 102);
+  assert.strictEqual(result.event.prevClose, 100);
+  assert.ok(Math.abs(result.event.gapPct - 2.0) < 0.001);
+  assert.deepStrictEqual(result.stateUpdate, { gap_alerted_today: 1 });
+});
+
+test('detectGap: gap down below negative threshold fires gap_down', () => {
+  const { detectGap } = require('./trend-engine');
+  // todayOpen 98, prevClose 100 → -2.0%
+  const candles = [{ t: 0, o: 98, h: 98.5, l: 97, c: 97.5, v: 1000 }];
+  const result = detectGap(candles, 100, 1.5, { gap_alerted_today: 0 });
+  assert.ok(result.event);
+  assert.strictEqual(result.event.type, 'gap_down');
+  assert.ok(result.event.gapPct < 0);
+});
+
+test('detectGap: under threshold returns null', () => {
+  const { detectGap } = require('./trend-engine');
+  const candles = [{ t: 0, o: 100.8, h: 101, l: 100, c: 100.5, v: 1000 }];
+  const result = detectGap(candles, 100, 1.5, { gap_alerted_today: 0 });
+  assert.deepStrictEqual(result, { event: null, stateUpdate: null });
+});
+
+test('detectGap: index threshold (0.5) detects smaller gaps', () => {
+  const { detectGap } = require('./trend-engine');
+  const candles = [{ t: 0, o: 100.8, h: 101, l: 100, c: 100.5, v: 1000 }];
+  // 0.8% gap with 0.5 threshold → fires
+  const result = detectGap(candles, 100, 0.5, { gap_alerted_today: 0 });
+  assert.ok(result.event);
+  assert.strictEqual(result.event.type, 'gap_up');
+});
+
+test('detectGap: already alerted today returns null', () => {
+  const { detectGap } = require('./trend-engine');
+  const candles = [{ t: 0, o: 102, h: 103, l: 101.5, c: 102.5, v: 1000 }];
+  const result = detectGap(candles, 100, 1.5, { gap_alerted_today: 1 });
+  assert.deepStrictEqual(result, { event: null, stateUpdate: null });
+});
+
+test('detectGap: missing prevClose returns null', () => {
+  const { detectGap } = require('./trend-engine');
+  const candles = [{ t: 0, o: 102, h: 103, l: 101.5, c: 102.5, v: 1000 }];
+  const result = detectGap(candles, 0, 1.5, { gap_alerted_today: 0 });
+  assert.deepStrictEqual(result, { event: null, stateUpdate: null });
+});

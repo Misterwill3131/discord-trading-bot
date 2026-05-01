@@ -229,4 +229,37 @@ function detectPDLBreak(intraday, pdl, state, reentryMs, now = Date.now()) {
   return { event: null, stateUpdate: null };
 }
 
-module.exports = { detectDirection, detectBreakout, detectReversal, detectAll, detectPDHBreak, detectPDLBreak };
+// Gap up/down at market open. Threshold en pourcentage (différent selon
+// quote_type côté scanner). Une seule fois par jour : gap_alerted_today
+// guard. Idempotent en cas de re-call dans la journée.
+function detectGap(intraday, prevClose, gapThresholdPct, state) {
+  if (!Array.isArray(intraday) || intraday.length === 0) {
+    return { event: null, stateUpdate: null };
+  }
+  if (!Number.isFinite(prevClose) || prevClose <= 0) {
+    return { event: null, stateUpdate: null };
+  }
+  if (state && state.gap_alerted_today) {
+    return { event: null, stateUpdate: null };
+  }
+  const todayOpen = intraday[0].o;
+  if (!Number.isFinite(todayOpen)) {
+    return { event: null, stateUpdate: null };
+  }
+  const gapPct = ((todayOpen - prevClose) / prevClose) * 100;
+  if (gapPct >= gapThresholdPct) {
+    return {
+      event: { type: 'gap_up', openPrice: todayOpen, prevClose, gapPct },
+      stateUpdate: { gap_alerted_today: 1 },
+    };
+  }
+  if (gapPct <= -gapThresholdPct) {
+    return {
+      event: { type: 'gap_down', openPrice: todayOpen, prevClose, gapPct },
+      stateUpdate: { gap_alerted_today: 1 },
+    };
+  }
+  return { event: null, stateUpdate: null };
+}
+
+module.exports = { detectDirection, detectBreakout, detectReversal, detectAll, detectPDHBreak, detectPDLBreak, detectGap };

@@ -6,7 +6,7 @@
 // et par trend-scanner (auto).
 // ─────────────────────────────────────────────────────────────────────
 
-const { calcEMASeries } = require('./indicators');
+const { calcEMASeries, calcRSI } = require('./indicators');
 
 const SLOPE_LOOKBACK = 6;       // EMA20 slope mesurée sur 6 bougies
 const MIN_DIRECTION_BARS = 26;  // 20 (EMA20 seed) + 6 (slope window)
@@ -56,4 +56,56 @@ function detectBreakout(candles, lookback = DEFAULT_BREAKOUT_LOOKBACK, volMult =
   return null;
 }
 
-module.exports = { detectDirection, detectBreakout };
+const DEFAULT_RSI_OVERBOUGHT = 70;
+const DEFAULT_RSI_OVERSOLD   = 30;
+const REVERSAL_RSI_WINDOW    = 3;   // RSI doit avoir touché l'extrême sur les 3 dernières bougies
+const MIN_REVERSAL_BARS      = 21;  // 14 (RSI seed) + 6 (room) + 1
+
+// Reversal : EMA9 vient de croiser EMA20 ET RSI a touché un extrême récent.
+//   bearish : croisement EMA9 sous EMA20 + max(RSI) > overbought sur les
+//             3 dernières bougies (peak RSI récent, retournement à la
+//             baisse).
+//   bullish : croisement EMA9 au-dessus EMA20 + min(RSI) < oversold sur
+//             les 3 dernières bougies.
+function detectReversal(candles, rsiOverbought = DEFAULT_RSI_OVERBOUGHT, rsiOversold = DEFAULT_RSI_OVERSOLD) {
+  if (!Array.isArray(candles) || candles.length < MIN_REVERSAL_BARS) return null;
+  const closes = candles.map(c => c.c);
+  const ema9Series = calcEMASeries(closes, 9);
+  const ema20Series = calcEMASeries(closes, 20);
+  const last = candles.length - 1;
+  const ema9Now = ema9Series[last];
+  const ema9Prev = ema9Series[last - 1];
+  const ema20Now = ema20Series[last];
+  const ema20Prev = ema20Series[last - 1];
+  if (ema9Now == null || ema9Prev == null || ema20Now == null || ema20Prev == null) return null;
+
+  const crossedDown = ema9Prev >= ema20Prev && ema9Now < ema20Now;
+  const crossedUp   = ema9Prev <= ema20Prev && ema9Now > ema20Now;
+  if (!crossedDown && !crossedUp) return null;
+
+  // RSI sur les 3 dernières bougies : on calcule à 3 points distincts en
+  // tronquant la série à chaque longueur.
+  const rsiWindow = [];
+  for (let i = REVERSAL_RSI_WINDOW; i >= 1; i--) {
+    const rsi = calcRSI(closes.slice(0, last - i + 2), 14);
+    if (rsi != null) rsiWindow.push(rsi);
+  }
+  if (rsiWindow.length === 0) return null;
+  const lastRsi = rsiWindow[rsiWindow.length - 1];
+
+  if (crossedDown) {
+    const peakRsi = Math.max(...rsiWindow);
+    if (peakRsi > rsiOverbought) {
+      return { type: 'bearish_reversal', rsi: lastRsi, ema9: ema9Now, ema20: ema20Now, peakRsi };
+    }
+  }
+  if (crossedUp) {
+    const troughRsi = Math.min(...rsiWindow);
+    if (troughRsi < rsiOversold) {
+      return { type: 'bullish_reversal', rsi: lastRsi, ema9: ema9Now, ema20: ema20Now, troughRsi };
+    }
+  }
+  return null;
+}
+
+module.exports = { detectDirection, detectBreakout, detectReversal };

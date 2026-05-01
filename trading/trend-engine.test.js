@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { detectDirection, detectBreakout } = require('./trend-engine');
+const { detectDirection, detectBreakout, detectReversal } = require('./trend-engine');
 
 // Helper: build N candles from a closes array. OHLC = close everywhere
 // (the engine only cares about close for direction).
@@ -76,4 +76,46 @@ test('detectBreakout custom thresholds', () => {
   assert.ok(r);
   // multiplier=1.5 → does not fire
   assert.strictEqual(detectBreakout([...window, last], 10, 1.5), null);
+});
+
+test('detectReversal returns null when not enough bars', () => {
+  assert.strictEqual(detectReversal(bars(Array(20).fill(100))), null);
+});
+
+test('detectReversal fires bearish on RSI > 70 + EMA9 crosses below EMA20', () => {
+  // Uptrend to position EMA9 above EMA20, then crash to force crossing.
+  const closes = [];
+  // Build a strong uptrend: consistent +1 gains to push RSI > 70
+  for (let i = 0; i < 25; i++) closes.push(100 + i);  // 100..124
+  // Continue uptrend to ensure EMA9 > EMA20 at this point
+  for (let i = 0; i < 8; i++) closes.push(124 + i);   // 124..131
+  // Now crash hard to force EMA9 below EMA20
+  closes.push(90, 60);
+  const r = detectReversal(bars(closes));
+  assert.ok(r, 'expected bearish reversal');
+  assert.strictEqual(r.type, 'bearish_reversal');
+  assert.ok(r.peakRsi > 70);
+});
+
+test('detectReversal fires bullish on RSI < 30 + EMA9 crosses above EMA20', () => {
+  // Downtrend to position EMA9 below EMA20, then recover to force crossing.
+  const closes = [];
+  // Build a strong downtrend: consistent -1 losses to push RSI < 30
+  for (let i = 0; i < 25; i++) closes.push(300 - i);  // 300..276
+  // Continue downtrend to ensure EMA9 < EMA20 at this point
+  for (let i = 0; i < 8; i++) closes.push(276 - i);   // 276..268
+  // Now surge hard to force EMA9 above EMA20
+  closes.push(310, 340);
+  const r = detectReversal(bars(closes));
+  assert.ok(r, 'expected bullish reversal');
+  assert.strictEqual(r.type, 'bullish_reversal');
+  assert.ok(r.troughRsi < 30);
+});
+
+test('detectReversal returns null when EMAs cross but RSI not extreme', () => {
+  // Mild oscillation : EMAs may cross but RSI hovers around 50.
+  const closes = [];
+  for (let i = 0; i < 30; i++) closes.push(100 + (i % 2 ? 0.3 : -0.3));
+  closes.push(100.5, 99.7, 100.2, 99.9);
+  assert.strictEqual(detectReversal(bars(closes)), null);
 });

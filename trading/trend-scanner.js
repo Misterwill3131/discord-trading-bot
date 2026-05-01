@@ -147,19 +147,32 @@ function fmtPct(v) {
   return sign + v.toFixed(1) + '%';
 }
 
-function formatPDHBreakAlert(ticker, ev, snap) {
+// Formats today's cumulative volume + ratio vs yesterday. Used by PDH/PDL
+// break alerts (where the per-bar volume from Yahoo is unreliable for the
+// in-progress current bar). Returns "—" if dailyContext lacks data.
+function fmtTodayVolume(dailyContext) {
+  if (!dailyContext) return '—';
+  const today = dailyContext.todayCumVolume;
+  const yest  = dailyContext.yesterday && dailyContext.yesterday.volume;
+  if (!Number.isFinite(today) || today <= 0) return '—';
+  if (!Number.isFinite(yest) || yest <= 0) return fmtVolume(today);
+  const overPct = ((today / yest) - 1) * 100;
+  return `${fmtVolume(today)} (${fmtPct(overPct)} vs yesterday)`;
+}
+
+function formatPDHBreakAlert(ticker, ev, snap, dailyContext) {
   return [
     `🟢 **$${ticker}** — PDH break`,
     `Closed above yesterday's high ${fmtPrice(ev.pdh)}`,
-    `Price: ${fmtPrice(ev.price)} · Volume: ${fmtVolume(ev.volume)}`,
+    `Price: ${fmtPrice(ev.price)} · Today vol: ${fmtTodayVolume(dailyContext)}`,
   ].join('\n');
 }
 
-function formatPDLBreakAlert(ticker, ev, snap) {
+function formatPDLBreakAlert(ticker, ev, snap, dailyContext) {
   return [
     `🔴 **$${ticker}** — PDL break`,
     `Closed below yesterday's low ${fmtPrice(ev.pdl)}`,
-    `Price: ${fmtPrice(ev.price)} · Volume: ${fmtVolume(ev.volume)}`,
+    `Price: ${fmtPrice(ev.price)} · Today vol: ${fmtTodayVolume(dailyContext)}`,
   ].join('\n');
 }
 
@@ -308,9 +321,9 @@ async function runScanCycle({
             : formatReversalAlert(ticker, ev, verdict.snapshot);
           store.updateEvent(ticker, ev.type, tNow);
         } else if (ev.type === 'pdh_break') {
-          content = formatPDHBreakAlert(ticker, ev, verdict.snapshot);
+          content = formatPDHBreakAlert(ticker, ev, verdict.snapshot, dailyContext);
         } else if (ev.type === 'pdl_break') {
-          content = formatPDLBreakAlert(ticker, ev, verdict.snapshot);
+          content = formatPDLBreakAlert(ticker, ev, verdict.snapshot, dailyContext);
         } else if (ev.type === 'gap_up' || ev.type === 'gap_down') {
           content = formatGapAlert(ticker, ev, verdict.snapshot);
         } else if (ev.type === 'volume_above_prev_day') {

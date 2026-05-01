@@ -154,10 +154,20 @@ async function handleWatch(message, args, { store, yahoo }) {
   }
 
   // Validate ticker against Yahoo before adding (a fetch test).
+  let quoteType = null;
   try {
     const chart = await yahoo.getChart(ticker, '1D');
     if (!chart || !Array.isArray(chart.quotes) || chart.quotes.length === 0) {
       return message.reply(`❌ Unknown ticker $${ticker}`).catch(() => {});
+    }
+    if (typeof yahoo.getQuote === 'function') {
+      try {
+        const quote = await yahoo.getQuote(ticker);
+        if (quote && quote.quoteType) quoteType = quote.quoteType;
+      } catch (qErr) {
+        // Quote fetch is best-effort; chart already validated the ticker exists.
+        console.warn(`[trend] quote fetch failed for ${ticker}: ${qErr && qErr.message}`);
+      }
     }
   } catch (err) {
     if (isUnknownTicker(err)) {
@@ -166,7 +176,7 @@ async function handleWatch(message, args, { store, yahoo }) {
     return message.reply('❌ Yahoo Finance unavailable, try again in a few minutes').catch(() => {});
   }
 
-  const added = store.addToWatchlist(message.guildId, ticker, Date.now());
+  const added = store.addToWatchlist(message.guildId, ticker, Date.now(), quoteType);
   if (!added) {
     return message.reply(`ℹ️ $${ticker} already in watchlist`).catch(() => {});
   }

@@ -207,3 +207,29 @@ test('runScanCycle: deleted channel → cleaned from DB', async () => {
   await runScanCycle({ store, yahoo, discord, now: () => 1_000_000 });
   assert.strictEqual(store.getChannel('g1'), null, 'channel should be cleaned');
 });
+
+const { formatDateET } = require('./trend-scanner');
+
+test('formatDateET returns YYYY-MM-DD in NY timezone — EDT case', () => {
+  // 2026-05-01 14:00 ET = 2026-05-01 18:00 UTC (EDT = UTC-4)
+  const d = new Date(Date.UTC(2026, 4, 1, 18, 0, 0));
+  assert.strictEqual(formatDateET(d), '2026-05-01');
+});
+
+test('formatDateET returns YYYY-MM-DD in NY timezone — EST case', () => {
+  // 2026-12-15 10:00 ET = 2026-12-15 15:00 UTC (EST = UTC-5)
+  const d = new Date(Date.UTC(2026, 11, 15, 15, 0, 0));
+  assert.strictEqual(formatDateET(d), '2026-12-15');
+});
+
+test('formatDateET handles UTC-day-rollover correctly', () => {
+  // 2026-05-01 23:30 ET = 2026-05-02 03:30 UTC
+  // ET date is still 2026-05-01.
+  const d = new Date(Date.UTC(2026, 4, 2, 3, 30, 0));
+  assert.strictEqual(formatDateET(d), '2026-05-01');
+});
+
+test('formatDateET defaults to current time when no arg', () => {
+  const result = formatDateET();
+  assert.match(result, /^\d{4}-\d{2}-\d{2}$/);
+});

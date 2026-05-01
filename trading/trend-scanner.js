@@ -39,6 +39,16 @@ function isUSMarketOpen(date = new Date()) {
   return mins >= 9 * 60 + 30 && mins < 16 * 60;
 }
 
+// Returns the calendar date in America/New_York as 'YYYY-MM-DD'. Used as
+// sentinel for the daily reset of trend_state. Locale 'en-CA' is chosen
+// because it natively formats as 'YYYY-MM-DD' (sortable, ISO-like).
+function formatDateET(date = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(date);
+}
+
 const { detectAll } = require('./trend-engine');
 
 // Discord error codes for channel-write failures we want to handle specifically.
@@ -268,4 +278,4 @@ function startTrendScanner({ client, store, yahoo, now = () => Date.now() }) {
   };
 }
 
-module.exports = { isUSMarketOpen, runScanCycle, startTrendScanner };
+module.exports = { isUSMarketOpen, formatDateET, runScanCycle, startTrendScanner };

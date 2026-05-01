@@ -181,18 +181,64 @@ async function runScanCycle({
 
   for (const ticker of tickers) {
     try {
+      // 1. Daily reset if ET date has changed since last scan for this ticker
+      const todayET = formatDateET(new Date(now()));
+      const stateBefore = store.getState(ticker);
+      if (!stateBefore || stateBefore.daily_state_date !== todayET) {
+        store.resetDailyState(ticker, todayET);
+      }
+
+      // 2. Backfill quote_type if missing
+      let quoteType = store.getQuoteType(ticker);
+      if (quoteType == null && typeof yahoo.getQuote === 'function') {
+        try {
+          const q = await yahoo.getQuote(ticker);
+          if (q && q.quoteType) {
+            quoteType = q.quoteType;
+            store.setQuoteType(ticker, quoteType);
+          }
+        } catch (err) {
+          console.warn(`[trend] quote backfill failed for ${ticker}: ${err && err.message}`);
+        }
+      }
+
+      // 3. Compute gap threshold from quote_type
+      const isIndexLike = quoteType === 'ETF' || quoteType === 'INDEX' || quoteType === 'MUTUALFUND';
+      const gapThresholdPct = isIndexLike
+        ? (detectorOpts.gapThresholdIndexPct || 0.5)
+        : (detectorOpts.gapThresholdStockPct || 1.5);
+
+      // 4. Fetch intraday + daily context
       const chart = await yahoo.getChart(ticker, '1D');
       const candles = adaptYahooBars(chart && chart.quotes);
-      const verdict = detectAll(candles, detectorOpts);
-      if (!verdict) continue; // not enough bars
+      const dailyContext = await getDailyContext(yahoo, ticker);
 
-      const state = store.getState(ticker);
+      // 5. Re-read state (after potential reset)
+      const state = store.getState(ticker) || {};
+
+      // 6. detectAll with the daily context + state
+      const verdict = detectAll(candles, dailyContext, state, {
+        breakoutLookback: detectorOpts.breakoutLookback,
+        breakoutVolMult:  detectorOpts.breakoutVolMult,
+        rsiOverbought:    detectorOpts.rsiOverbought,
+        rsiOversold:      detectorOpts.rsiOversold,
+        reentryMs:        detectorOpts.reentryMs,
+        gapThresholdPct,
+        volumeMultiplier: detectorOpts.volumeMultiplier,
+        now:              now(),
+      });
+      if (!verdict) continue;
+
+      // 7. Apply state updates from engine (new daily-event flags)
+      if (verdict.stateUpdates && Object.keys(verdict.stateUpdates).length > 0) {
+        store.applyStateUpdates(ticker, verdict.stateUpdates);
+      }
+
+      // 8. Direction transition (existing logic, unchanged)
       const tNow = now();
       const dedupMs = dedupMinutes * 60 * 1000;
       const messages = [];
-
-      // Direction transition.
-      const prevDir = state ? state.direction : null;
+      const prevDir = state.direction || null;
       if (verdict.direction !== prevDir) {
         messages.push({
           type: 'direction',
@@ -201,20 +247,33 @@ async function runScanCycle({
         store.updateDirection(ticker, verdict.direction, tNow);
       }
 
-      // Events with dedup.
+      // 9. Events: dispatch with appropriate dedup logic per type
       for (const ev of verdict.events) {
-        const lastTsCol = ev.type === 'breakout' ? 'last_breakout_at'
-                       : ev.type === 'bullish_reversal' ? 'last_bullish_reversal_at'
-                       : ev.type === 'bearish_reversal' ? 'last_bearish_reversal_at'
-                       : null;
-        if (!lastTsCol) continue;
-        const lastTs = state ? state[lastTsCol] : null;
-        if (lastTs && (tNow - lastTs) < dedupMs) continue; // suppressed
-        const content = ev.type === 'breakout'
-          ? formatBreakoutAlert(ticker, ev, verdict.snapshot)
-          : formatReversalAlert(ticker, ev, verdict.snapshot);
-        messages.push({ type: ev.type, content });
-        store.updateEvent(ticker, ev.type, tNow);
+        let content = null;
+        const lastTsCol =
+          ev.type === 'breakout' ? 'last_breakout_at' :
+          ev.type === 'bullish_reversal' ? 'last_bullish_reversal_at' :
+          ev.type === 'bearish_reversal' ? 'last_bearish_reversal_at' : null;
+
+        if (lastTsCol) {
+          // Time-based dedup (existing logic)
+          const lastTs = state[lastTsCol] || null;
+          if (lastTs && (tNow - lastTs) < dedupMs) continue;
+          content = ev.type === 'breakout'
+            ? formatBreakoutAlert(ticker, ev, verdict.snapshot)
+            : formatReversalAlert(ticker, ev, verdict.snapshot);
+          store.updateEvent(ticker, ev.type, tNow);
+        } else if (ev.type === 'pdh_break') {
+          content = formatPDHBreakAlert(ticker, ev, verdict.snapshot);
+        } else if (ev.type === 'pdl_break') {
+          content = formatPDLBreakAlert(ticker, ev, verdict.snapshot);
+        } else if (ev.type === 'gap_up' || ev.type === 'gap_down') {
+          content = formatGapAlert(ticker, ev, verdict.snapshot);
+        } else if (ev.type === 'volume_above_prev_day') {
+          content = formatVolumeAboveAlert(ticker, ev, verdict.snapshot, now());
+        }
+
+        if (content) messages.push({ type: ev.type, content });
       }
 
       if (messages.length === 0) continue;
@@ -226,7 +285,7 @@ async function runScanCycle({
         for (const msg of messages) {
           const result = await postToChannel({ discord, store, guildId, channelId, content: msg.content });
           if (result.ok) alerts += 1;
-          if (result.reason === 'unknown_channel') break; // channel was just cleaned up — no point continuing for this guild
+          if (result.reason === 'unknown_channel') break;
         }
       }
     } catch (err) {

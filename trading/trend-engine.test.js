@@ -311,3 +311,50 @@ test('detectGap: missing prevClose returns null', () => {
   const result = detectGap(candles, 0, 1.5, { gap_alerted_today: 0 });
   assert.deepStrictEqual(result, { event: null, stateUpdate: null });
 });
+
+test('detectVolumeAbovePrevDay: cumulative > prev × multiplier fires alert', () => {
+  const { detectVolumeAbovePrevDay } = require('./trend-engine');
+  // 5 bars × 2200 = 11000 ; prev = 10000 ; 11000 > 10000 × 1.05 = 10500
+  const candles = Array(5).fill(0).map((_, i) => ({ t: i, o: 100, h: 100, l: 100, c: 100, v: 2200 }));
+  const result = detectVolumeAbovePrevDay(candles, 10000, 1.05, { volume_above_alerted_today: 0 });
+  assert.ok(result.event);
+  assert.strictEqual(result.event.type, 'volume_above_prev_day');
+  assert.strictEqual(result.event.todayVolume, 11000);
+  assert.strictEqual(result.event.prevDayVolume, 10000);
+  assert.deepStrictEqual(result.stateUpdate, { volume_above_alerted_today: 1 });
+});
+
+test('detectVolumeAbovePrevDay: cumulative under threshold returns null', () => {
+  const { detectVolumeAbovePrevDay } = require('./trend-engine');
+  const candles = Array(5).fill(0).map((_, i) => ({ t: i, o: 100, h: 100, l: 100, c: 100, v: 2000 }));
+  // 10000 not > 10000 * 1.05 = 10500
+  const result = detectVolumeAbovePrevDay(candles, 10000, 1.05, { volume_above_alerted_today: 0 });
+  assert.deepStrictEqual(result, { event: null, stateUpdate: null });
+});
+
+test('detectVolumeAbovePrevDay: already alerted returns null', () => {
+  const { detectVolumeAbovePrevDay } = require('./trend-engine');
+  const candles = Array(5).fill(0).map((_, i) => ({ t: i, o: 100, h: 100, l: 100, c: 100, v: 5000 }));
+  const result = detectVolumeAbovePrevDay(candles, 10000, 1.05, { volume_above_alerted_today: 1 });
+  assert.deepStrictEqual(result, { event: null, stateUpdate: null });
+});
+
+test('detectVolumeAbovePrevDay: prevDayVolume <= 0 returns null', () => {
+  const { detectVolumeAbovePrevDay } = require('./trend-engine');
+  const candles = [{ t: 0, o: 100, h: 100, l: 100, c: 100, v: 5000 }];
+  const result = detectVolumeAbovePrevDay(candles, 0, 1.05, { volume_above_alerted_today: 0 });
+  assert.deepStrictEqual(result, { event: null, stateUpdate: null });
+});
+
+test('detectVolumeAbovePrevDay: handles NaN volumes (skips them)', () => {
+  const { detectVolumeAbovePrevDay } = require('./trend-engine');
+  const candles = [
+    { t: 0, o: 100, h: 100, l: 100, c: 100, v: 5000 },
+    { t: 1, o: 100, h: 100, l: 100, c: 100, v: NaN },
+    { t: 2, o: 100, h: 100, l: 100, c: 100, v: 6000 },
+  ];
+  // sum = 11000 (NaN skipped) ; > 10000 * 1.05 = 10500 → fires
+  const result = detectVolumeAbovePrevDay(candles, 10000, 1.05, { volume_above_alerted_today: 0 });
+  assert.ok(result.event);
+  assert.strictEqual(result.event.todayVolume, 11000);
+});

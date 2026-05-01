@@ -262,4 +262,34 @@ function detectGap(intraday, prevClose, gapThresholdPct, state) {
   return { event: null, stateUpdate: null };
 }
 
-module.exports = { detectDirection, detectBreakout, detectReversal, detectAll, detectPDHBreak, detectPDLBreak, detectGap };
+// Cumul du volume aujourd'hui > volume total d'hier × multiplier (default 1.05).
+// Fire 1× / jour. NaN volumes ignorés (Yahoo peut renvoyer NaN sur des bars vides).
+function detectVolumeAbovePrevDay(intraday, prevDayVolume, multiplier, state) {
+  if (!Array.isArray(intraday) || intraday.length === 0) {
+    return { event: null, stateUpdate: null };
+  }
+  if (!Number.isFinite(prevDayVolume) || prevDayVolume <= 0) {
+    return { event: null, stateUpdate: null };
+  }
+  if (state && state.volume_above_alerted_today) {
+    return { event: null, stateUpdate: null };
+  }
+  let cumVolume = 0;
+  for (const bar of intraday) {
+    if (Number.isFinite(bar.v)) cumVolume += bar.v;
+  }
+  if (cumVolume > prevDayVolume * multiplier) {
+    return {
+      event: {
+        type: 'volume_above_prev_day',
+        todayVolume: cumVolume,
+        prevDayVolume,
+        ratio: cumVolume / prevDayVolume,
+      },
+      stateUpdate: { volume_above_alerted_today: 1 },
+    };
+  }
+  return { event: null, stateUpdate: null };
+}
+
+module.exports = { detectDirection, detectBreakout, detectReversal, detectAll, detectPDHBreak, detectPDLBreak, detectGap, detectVolumeAbovePrevDay };

@@ -163,3 +163,33 @@ test('régression: même signal depuis "trendvision" → bloqué par denylist', 
   assert.strictEqual(shouldRelay(msg, dto), true);
   assert.strictEqual(isAuthorBlocked(msg, ['trendvision', 'frogoracle']), true);
 });
+
+// ── Régression : status updates (PT hit, etc.) rejetés par shouldRelay ──
+
+test('régression: "UONE first PT hit 6.30-7.50" → shouldRelay=false (status update)', () => {
+  const { buildSignalDTO } = require('./anonymize');
+  const msg = {
+    id: '3',
+    content: 'UONE first PT hit 6.30-7.50',
+    author: { bot: false, username: 'trader' },
+    createdAt: new Date(),
+  };
+  const dto = buildSignalDTO(msg);
+  // Le parser extrait un range, MAIS is_exit_update=true le filtre
+  assert.strictEqual(dto.entry_price, 6.30);
+  assert.strictEqual(dto.is_exit_update, true);
+  assert.strictEqual(shouldRelay(msg, dto), false);
+});
+
+test('régression: "$FATN buy only above $3.81" → shouldRelay=true (signal valide)', () => {
+  const { buildSignalDTO } = require('./anonymize');
+  const msg = {
+    id: '4',
+    content: '$FATN buy only above $3.81 Targets $4.18/4.64/5.24 SL $3.04',
+    author: { bot: false, username: 'trader' },
+    createdAt: new Date(),
+  };
+  const dto = buildSignalDTO(msg);
+  assert.strictEqual(dto.is_exit_update, false);
+  assert.strictEqual(shouldRelay(msg, dto), true);
+});

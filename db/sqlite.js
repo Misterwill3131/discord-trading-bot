@@ -327,6 +327,37 @@ db.exec(`
     UNIQUE(provider, event_id)
   );
   CREATE INDEX IF NOT EXISTS idx_webhook_events_received ON webhook_events(received_at);
+
+  -- Watchlist par guild Discord pour le module trend.
+  -- (guild_id, ticker) unique. PK composite évite les doublons et
+  -- les indexes utiles sont implicites (PK + ticker).
+  CREATE TABLE IF NOT EXISTS trend_watchlist (
+    guild_id  TEXT    NOT NULL,
+    ticker    TEXT    NOT NULL,
+    added_at  INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, ticker)
+  );
+  CREATE INDEX IF NOT EXISTS idx_trend_watchlist_ticker ON trend_watchlist(ticker);
+
+  -- Channel d'alerte par guild. 1 ligne / guild.
+  CREATE TABLE IF NOT EXISTS trend_channel (
+    guild_id    TEXT PRIMARY KEY,
+    channel_id  TEXT    NOT NULL,
+    set_at      INTEGER NOT NULL
+  );
+
+  -- État global par ticker (partagé entre toutes les guilds qui watch
+  -- le même ticker). Sert à détecter les transitions de direction et
+  -- à dédupliquer les events breakout/reversal.
+  CREATE TABLE IF NOT EXISTS trend_state (
+    ticker                       TEXT PRIMARY KEY,
+    direction                    TEXT,                -- uptrend|downtrend|sideways|NULL
+    direction_changed_at         INTEGER,
+    last_breakout_at             INTEGER,
+    last_bullish_reversal_at     INTEGER,
+    last_bearish_reversal_at     INTEGER,
+    last_scan_at                 INTEGER
+  );
 `);
 
 // ── Prepared statements (réutilisables, plus rapides) ────────────────

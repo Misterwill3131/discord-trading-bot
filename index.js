@@ -64,6 +64,7 @@ const { registerSaasAdminRoutes } = require('./routes/saas-admin');
 const { registerGuildGuard } = require('./saas/guards');
 const { registerSaasCommands } = require('./saas/commands');
 const { register: registerSaasRelay } = require('./saas/relay');
+const licenseSync = require('./saas/license-sync');
 
 // Site public de vente (landing, pricing, FAQ, legal, funnel post-action).
 // Routes sans auth — montées AVANT le dashboard pour que GET / serve la
@@ -384,6 +385,10 @@ if (SAAS_BOT_TOKEN) {
   clientSaas.once('ready', () => {
     console.log('[saas] Bot connected as ' + clientSaas.user.tag);
     console.log(`[saas] Guilds: ${clientSaas.guilds.cache.size}`);
+    // Démarre le sync périodique Postgres → SQLite. No-op si DATABASE_URL
+    // absent. Propage les changements de status (cancellation Stripe → license)
+    // depuis le site vers le miroir SQLite local.
+    licenseSync.start();
   });
 
   try {

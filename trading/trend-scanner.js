@@ -104,6 +104,29 @@ async function getDailyContext(yahoo, ticker) {
     ? Math.min(yesterday.low, dayBefore.low)
     : yesterday.low;
 
+  // prevSessionClose : close de la dernière bougie d'hier en extended hours
+  // (typiquement ~20:00 ET). Sert au detectGap pour mesurer le vrai gap
+  // overnight (premarket open 4:00 vs after-hours close 20:00). Yahoo daily
+  // bar = RTH close à 16:00 → on a besoin d'un fetch intraday multi-jours.
+  // Best-effort : fallback null si erreur, le détecteur retombera sur
+  // yesterday.close (gap RTH-only).
+  let prevSessionClose = null;
+  try {
+    const intra5d = await yahoo.getChart(ticker, '5D');
+    const bars = (intra5d && intra5d.quotes) || [];
+    const todayDateET = formatDateET(new Date());
+    for (let i = bars.length - 1; i >= 0; i--) {
+      const ts = bars[i].date instanceof Date ? bars[i].date.getTime() : bars[i].date;
+      if (!Number.isFinite(ts)) continue;
+      if (formatDateET(new Date(ts)) !== todayDateET && Number.isFinite(bars[i].close)) {
+        prevSessionClose = bars[i].close;
+        break;
+      }
+    }
+  } catch (err) {
+    console.warn(`[trend] prevSessionClose fetch failed for ${ticker}: ${err && err.message}`);
+  }
+
   return {
     yesterday: {
       high: yesterday.high,
@@ -115,6 +138,7 @@ async function getDailyContext(yahoo, ticker) {
     priorLow,
     todayOpen: today.open,
     todayCumVolume: today.volume,
+    prevSessionClose,
   };
 }
 
@@ -196,10 +220,10 @@ function formatPDLBreakAlert(ticker, ev, snap, dailyContext) {
 
 function formatGapAlert(ticker, ev, snap) {
   const arrow = ev.type === 'gap_up' ? '⬆️' : '⬇️';
-  const label = ev.type === 'gap_up' ? 'gap up' : 'gap down';
+  const label = ev.type === 'gap_up' ? 'overnight gap up' : 'overnight gap down';
   return [
     `${arrow} **$${ticker}** — ${label} ${fmtPct(ev.gapPct)}`,
-    `Opened ${fmtPrice(ev.openPrice)} vs prev close ${fmtPrice(ev.prevClose)}`,
+    `Premarket open ${fmtPrice(ev.openPrice)} vs prev session close ${fmtPrice(ev.prevClose)}`,
   ].join('\n');
 }
 

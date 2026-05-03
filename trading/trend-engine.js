@@ -175,10 +175,16 @@ function detectAll(candles, dailyContext = null, state = null, opts = {}) {
     // champ (ex. ancien getDailyContext, ticker très jeune avec 2 quotes).
     const priorHigh = Number.isFinite(dailyContext.priorHigh) ? dailyContext.priorHigh : y.high;
     const priorLow  = Number.isFinite(dailyContext.priorLow)  ? dailyContext.priorLow  : y.low;
+    // gapPrevClose = close after-hours d'hier (~20:00 ET) si dispo, sinon
+    // fallback sur la close RTH d'hier (16:00). Permet de mesurer le vrai
+    // gap overnight (premarket open vs after-hours close).
+    const gapPrevClose = Number.isFinite(dailyContext.prevSessionClose)
+      ? dailyContext.prevSessionClose
+      : y.close;
     const detectors = [
       () => detectPDHBreak(candles, priorHigh, state, reentryMs, now),
       () => detectPDLBreak(candles, priorLow,  state, reentryMs, now),
-      () => detectGap(candles, y.close, gapThresholdPct, state),
+      () => detectGap(candles, gapPrevClose, gapThresholdPct, state),
       () => detectVolumeAbovePrevDay(candles, y.volume, volumeMultiplier, state),
     ];
     for (const run of detectors) {
@@ -296,15 +302,17 @@ function detectPDLBreak(intraday, pdl, state, reentryMs, now = Date.now()) {
   return { event: null, stateUpdate: null };
 }
 
-// Gap up/down at market open. Threshold en pourcentage (différent selon
-// quote_type côté scanner). Une seule fois par jour : gap_alerted_today
-// guard. Idempotent en cas de re-call dans la journée.
+// Gap up/down overnight. Mesure l'écart entre l'open premarket d'aujourd'hui
+// (~4:00 ET, 1re bougie de l'intraday qui inclut le premarket grâce à
+// includePrePost=true) et la close after-hours d'hier (~20:00 ET, fournie
+// par dailyContext.prevSessionClose côté scanner). Capture donc tout le
+// mouvement overnight 20h→4h (news, post-earnings, etc.).
 //
-// Filtre RTH : Yahoo retourne des bougies premarket (4:00 ET) à cause de
-// includePrePost=true. On veut comparer l'open de la session régulière
-// (9:30 ET) à la prev close, pas l'open premarket. Si filterToRTH ne
-// trouve aucune bougie RTH (ex. fixtures de test sans timestamps réels),
-// fallback sur intraday[0].o pour préserver le comportement attendu.
+// Si prevSessionClose n'est pas dispo, detectAll passe yesterday.close
+// (RTH 16:00) → on retombe sur un gap "RTH-only" classique.
+//
+// Threshold différent selon quote_type côté scanner (ETF/index = seuil bas,
+// stocks = seuil haut). 1× par jour via gap_alerted_today.
 function detectGap(intraday, prevClose, gapThresholdPct, state) {
   if (!Array.isArray(intraday) || intraday.length === 0) {
     return { event: null, stateUpdate: null };
@@ -315,9 +323,9 @@ function detectGap(intraday, prevClose, gapThresholdPct, state) {
   if (state && state.gap_alerted_today) {
     return { event: null, stateUpdate: null };
   }
-  const rthBars = filterToRTH(intraday);
-  const sourceBars = rthBars.length > 0 ? rthBars : intraday;
-  const todayOpen = sourceBars[0].o;
+  // 1re bougie de l'intraday = open premarket (~4:00 ET) si includePrePost,
+  // sinon open RTH (~9:30 ET). Yahoo client partagé a includePrePost=true.
+  const todayOpen = intraday[0].o;
   if (!Number.isFinite(todayOpen)) {
     return { event: null, stateUpdate: null };
   }

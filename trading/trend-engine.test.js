@@ -435,21 +435,22 @@ test('filterToRTH: rejects bars with missing or non-numeric t', () => {
   assert.strictEqual(filterToRTH(bars).length, 1);
 });
 
-test('detectGap: uses RTH open when intraday includes premarket bars', () => {
+test('detectGap: uses premarket open (1st bar) for overnight gap measurement', () => {
   const { detectGap } = require('./trend-engine');
-  // Premarket open at $99.50 (gap down -0.5%) but RTH open at $102 (gap up +2%).
-  // With RTH filter and threshold 1.5%, should fire gap_up.
+  // Overnight gap : prev session close = 100, premarket open = 99.5 → -0.5%.
+  // Avec threshold 0.4 → fire gap_down basé sur l'open premarket à 4:00 ET,
+  // pas sur l'open RTH à 9:30.
   const intraday = [
-    { t: nyMs(2026, 5, 1, 4, 0),  o: 99.5, h: 100, l: 99,  c: 99.8, v: 50 },  // premarket
-    { t: nyMs(2026, 5, 1, 8, 0),  o: 99.8, h: 100, l: 99.5, c: 100, v: 100 }, // premarket
-    { t: nyMs(2026, 5, 1, 9, 30), o: 102,  h: 102.5, l: 101.5, c: 102, v: 5000 }, // RTH open
+    { t: nyMs(2026, 5, 1, 4, 0),  o: 99.5, h: 100, l: 99,  c: 99.8, v: 50 },   // premarket open
+    { t: nyMs(2026, 5, 1, 8, 0),  o: 99.8, h: 100, l: 99.5, c: 100, v: 100 },
+    { t: nyMs(2026, 5, 1, 9, 30), o: 102,  h: 102.5, l: 101.5, c: 102, v: 5000 },
     { t: nyMs(2026, 5, 1, 9, 35), o: 102,  h: 102.3, l: 101.8, c: 102.1, v: 4000 },
   ];
-  const result = detectGap(intraday, 100, 1.5, { gap_alerted_today: 0 });
-  assert.ok(result.event, 'expected gap_up');
-  assert.strictEqual(result.event.type, 'gap_up');
-  assert.strictEqual(result.event.openPrice, 102);
-  assert.ok(Math.abs(result.event.gapPct - 2.0) < 0.001);
+  const result = detectGap(intraday, 100, 0.4, { gap_alerted_today: 0 });
+  assert.ok(result.event, 'expected gap_down based on premarket open');
+  assert.strictEqual(result.event.type, 'gap_down');
+  assert.strictEqual(result.event.openPrice, 99.5);  // premarket bar's open
+  assert.ok(Math.abs(result.event.gapPct - (-0.5)) < 0.001);
 });
 
 test('detectVolumeAbovePrevDay: sums only RTH bars, ignoring premarket volume', () => {

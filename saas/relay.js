@@ -14,7 +14,7 @@
 
 const db = require('../db/sqlite');
 const licenses = require('./licenses');
-const { buildSignalDTO, brandedEmbed } = require('./anonymize');
+const { buildSignalDTO, brandedEmbed, sanitizeText } = require('./anonymize');
 const brand = require('./brand');
 
 // Filtres heuristiques avant relais. On ne relaye QUE les messages où un
@@ -38,11 +38,9 @@ function shouldRelay(message, dto) {
 }
 
 // Denylist par défaut — bots upstream connus pour spammer / poster des
-// messages qui matchent les heuristiques mais ne sont PAS des signaux
-// actionnables (auto-trends, oracles automatisés). Override via env
-// SAAS_BLOCKED_BOT_NAMES (csv, ex: "trendvision,frogoracle,otherbot").
+// messages non actionnables. Override via env SAAS_BLOCKED_BOT_NAMES (csv).
 // Match case-insensitive substring sur author.username.
-const DEFAULT_BLOCKED_BOT_NAMES = ['trendvision', 'frogoracle'];
+const DEFAULT_BLOCKED_BOT_NAMES = ['frogoracle'];
 
 function loadBlockedBotNames() {
   const env = process.env.SAAS_BLOCKED_BOT_NAMES;
@@ -60,6 +58,32 @@ function isAuthorBlocked(message, blockedBotNames) {
   const list = blockedBotNames || DEFAULT_BLOCKED_BOT_NAMES;
   for (const blocked of list) {
     if (blocked && username.includes(blocked)) return true;
+  }
+  return false;
+}
+
+// Bots dont les messages sont relayés "tel quel" — texte sanitisé envoyé
+// en plain content (pas d'embed, pas de check shouldRelay). Override via
+// env SAAS_PASSTHROUGH_BOT_NAMES (csv). Match case-insensitive substring.
+//
+// Le sanitize reste critique : sanitizeText supprime les mentions, emojis
+// custom et URLs Discord qui pourraient leaker l'identité du serveur source.
+const DEFAULT_PASSTHROUGH_BOT_NAMES = ['trendvision'];
+
+function loadPassthroughBotNames() {
+  const env = process.env.SAAS_PASSTHROUGH_BOT_NAMES;
+  if (env == null) return DEFAULT_PASSTHROUGH_BOT_NAMES.slice();
+  const arr = String(env).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  return arr.length > 0 ? arr : DEFAULT_PASSTHROUGH_BOT_NAMES.slice();
+}
+
+function isPassthroughBot(message, passthroughNames) {
+  if (!message?.author?.bot) return false;
+  const username = String(message.author.username || '').toLowerCase();
+  if (!username) return false;
+  const list = passthroughNames || DEFAULT_PASSTHROUGH_BOT_NAMES;
+  for (const name of list) {
+    if (name && username.includes(name)) return true;
   }
   return false;
 }
@@ -98,6 +122,54 @@ async function broadcast(clientSaas, dto) {
     db.relayLogInsert({
       guild_id: lic.guild_id,
       source_message_id: dto.source_message_id,
+      relayed_message_id: res.msgId || null,
+      status: res.status,
+      error: res.error || null,
+    });
+    if (res.status === 'ok') {
+      ok++;
+      db.licenseTouchRelay(lic.guild_id);
+    } else if (res.status === 'skip') {
+      skip++;
+    } else {
+      error++;
+    }
+  }
+  return { ok, skip, error, total: targets.length };
+}
+
+// Envoie le contenu texte (déjà sanitisé) à UN guild client. Pas d'embed.
+async function sendRawToClient(clientSaas, license, content) {
+  try {
+    const guild = clientSaas.guilds.cache.get(license.guild_id);
+    if (!guild) {
+      return { status: 'skip', error: 'bot-not-in-guild' };
+    }
+    const channel = await clientSaas.channels.fetch(license.target_channel_id).catch(() => null);
+    if (!channel || !channel.isTextBased?.()) {
+      return { status: 'error', error: 'channel-unavailable' };
+    }
+    const sent = await channel.send({
+      content,
+      allowedMentions: { parse: [] },
+    });
+    return { status: 'ok', msgId: sent.id };
+  } catch (err) {
+    return { status: 'error', error: err.message ? err.message.slice(0, 200) : 'unknown' };
+  }
+}
+
+// Broadcast en mode "passthrough" : relaie le texte sanitisé tel quel à
+// toutes les licences prêtes. Utilisé pour les bots upstream dont les
+// alertes doivent être préservées sans transformation embed.
+async function broadcastRaw(clientSaas, sourceMessageId, content) {
+  const targets = licenses.listReadyForRelay();
+  let ok = 0, skip = 0, error = 0;
+  for (const lic of targets) {
+    const res = await sendRawToClient(clientSaas, lic, content);
+    db.relayLogInsert({
+      guild_id: lic.guild_id,
+      source_message_id: sourceMessageId,
       relayed_message_id: res.msgId || null,
       status: res.status,
       error: res.error || null,
@@ -177,19 +249,26 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
       const blockedBotNames = loadBlockedBotNames();
       if (channelSet.size > 0 && !channelSet.has(message.channelId)) {
         // Diagnostic : si le message AURAIT été un signal valide (entry_price
-        // extrait), on log l'ID du channel manquant. Permet à l'admin de
-        // découvrir quels channels ajouter à SOURCE_CHANNEL_IDS sans avoir à
-        // copier les IDs un par un depuis Discord.
-        // Logue silencieusement les non-signaux (sinon flood).
+        // extrait OU bot passthrough), on log l'ID du channel manquant.
+        // Permet à l'admin de découvrir quels channels ajouter à
+        // SOURCE_CHANNEL_IDS sans copier les IDs un par un depuis Discord.
         try {
           if (!isAuthorBlocked(message, blockedBotNames) && message.guildId) {
-            const dto = buildSignalDTO(message);
-            if (shouldRelay(message, dto)) {
+            if (isPassthroughBot(message, loadPassthroughBotNames())) {
               console.log(
-                `[saas/relay] MISSED signal — channel="${message.channel?.name || '?'}" ` +
-                `id=${message.channelId} ticker=${dto.ticker || '-'} entry=${dto.entry_price} ` +
+                `[saas/relay] MISSED passthrough — channel="${message.channel?.name || '?'}" ` +
+                `id=${message.channelId} author="${message.author?.username || '?'}" ` +
                 `(add to SOURCE_CHANNEL_IDS to relay)`
               );
+            } else {
+              const dto = buildSignalDTO(message);
+              if (shouldRelay(message, dto)) {
+                console.log(
+                  `[saas/relay] MISSED signal — channel="${message.channel?.name || '?'}" ` +
+                  `id=${message.channelId} ticker=${dto.ticker || '-'} entry=${dto.entry_price} ` +
+                  `(add to SOURCE_CHANNEL_IDS to relay)`
+                );
+              }
             }
           }
         } catch (_) {
@@ -213,6 +292,30 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
         console.log(
           `[saas/relay] reject: author blocked — author="${message.author?.username || '?'}" ` +
           `id=${message.author?.id} msg=${message.id}`
+        );
+        return;
+      }
+
+      // Filtre 5 : bot passthrough (relayer texte brut sans embed). Bypass
+      // shouldRelay et buildSignalDTO — ces bots sont des sources d'alertes
+      // qu'on relaie tel quel.
+      if (isPassthroughBot(message, loadPassthroughBotNames())) {
+        const sanitized = sanitizeText(message.content || '');
+        if (!sanitized) {
+          console.log(
+            `[saas/relay] passthrough skip: empty after sanitize — ` +
+            `author="${message.author?.username || '?'}" msg=${message.id}`
+          );
+          return;
+        }
+        if (!clientSaas.isReady?.()) {
+          console.warn('[saas/relay] clientSaas not ready — skipping passthrough broadcast');
+          return;
+        }
+        const result = await broadcastRaw(clientSaas, String(message.id), sanitized);
+        console.log(
+          `[saas/relay] passthrough msg=${message.id} author="${message.author?.username || '?'}" ` +
+          `→ ok=${result.ok} skip=${result.skip} err=${result.error} (of ${result.total})`
         );
         return;
       }
@@ -260,12 +363,16 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
 
 module.exports = {
   register,
-  broadcast,             // exposé pour tests
-  shouldRelay,           // exposé pour tests
-  isAuthorBlocked,       // exposé pour tests
-  loadBlockedBotNames,   // exposé pour tests
-  loadSourceChannels,    // exposé pour /saas source list
-  setSourceChannels,     // exposé pour /saas source set
+  broadcast,                  // exposé pour tests
+  broadcastRaw,               // exposé pour tests
+  shouldRelay,                // exposé pour tests
+  isAuthorBlocked,            // exposé pour tests
+  isPassthroughBot,           // exposé pour tests
+  loadBlockedBotNames,        // exposé pour tests
+  loadPassthroughBotNames,    // exposé pour tests
+  loadSourceChannels,         // exposé pour /saas source list
+  setSourceChannels,          // exposé pour /saas source set
   DEFAULT_BLOCKED_BOT_NAMES,
+  DEFAULT_PASSTHROUGH_BOT_NAMES,
   SETTINGS_KEY_SOURCE_CHANNELS,
 };

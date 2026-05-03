@@ -13,8 +13,11 @@ const assert = require('node:assert');
 const {
   shouldRelay,
   isAuthorBlocked,
+  isPassthroughBot,
   loadBlockedBotNames,
+  loadPassthroughBotNames,
   DEFAULT_BLOCKED_BOT_NAMES,
+  DEFAULT_PASSTHROUGH_BOT_NAMES,
 } = require('./relay');
 
 // ── shouldRelay ────────────────────────────────────────────────────────
@@ -88,13 +91,13 @@ test('isAuthorBlocked: false si username vide', () => {
 });
 
 test('isAuthorBlocked: utilise DEFAULT_BLOCKED_BOT_NAMES si liste non passée', () => {
-  const msg = { author: { bot: true, username: 'TrendVision' } };
+  const msg = { author: { bot: true, username: 'FrogOracle' } };
   assert.strictEqual(isAuthorBlocked(msg), true);
 });
 
-test('DEFAULT_BLOCKED_BOT_NAMES contient trendvision et frogoracle', () => {
-  assert.ok(DEFAULT_BLOCKED_BOT_NAMES.includes('trendvision'));
+test('DEFAULT_BLOCKED_BOT_NAMES contient frogoracle (trendvision est passthrough)', () => {
   assert.ok(DEFAULT_BLOCKED_BOT_NAMES.includes('frogoracle'));
+  assert.ok(!DEFAULT_BLOCKED_BOT_NAMES.includes('trendvision'));
 });
 
 // ── loadBlockedBotNames ────────────────────────────────────────────────
@@ -150,18 +153,78 @@ test('régression: signal "HCAI 10.45" d\'un bot non-listé → shouldRelay true
   assert.strictEqual(isAuthorBlocked(msg, ['trendvision', 'frogoracle']), false);
 });
 
-test('régression: même signal depuis "trendvision" → bloqué par denylist', () => {
+test('régression: même signal depuis "frogoracle" → bloqué par denylist', () => {
   const { buildSignalDTO } = require('./anonymize');
   const msg = {
     id: '2',
     content: 'HCAI 10.45 <@&1330929339134640179>',
-    author: { bot: true, username: 'TrendVision' },
+    author: { bot: true, username: 'FrogOracle' },
     createdAt: new Date(),
   };
   const dto = buildSignalDTO(msg);
   // shouldRelay reste true (signal valide), mais isAuthorBlocked le filtre
   assert.strictEqual(shouldRelay(msg, dto), true);
-  assert.strictEqual(isAuthorBlocked(msg, ['trendvision', 'frogoracle']), true);
+  assert.strictEqual(isAuthorBlocked(msg), true);
+});
+
+// ── Passthrough bots (relay raw text, no embed) ────────────────────────
+
+test('isPassthroughBot: true pour bot "trendvision"', () => {
+  const msg = { author: { bot: true, username: 'trendvision' } };
+  assert.strictEqual(isPassthroughBot(msg, ['trendvision']), true);
+});
+
+test('isPassthroughBot: case-insensitive — "TrendVision Bot" → true', () => {
+  const msg = { author: { bot: true, username: 'TrendVision Bot' } };
+  assert.strictEqual(isPassthroughBot(msg, ['trendvision']), true);
+});
+
+test('isPassthroughBot: false pour humain', () => {
+  const msg = { author: { bot: false, username: 'trendvision' } };
+  assert.strictEqual(isPassthroughBot(msg, ['trendvision']), false);
+});
+
+test('isPassthroughBot: false pour bot non-listé', () => {
+  const msg = { author: { bot: true, username: 'alertbot' } };
+  assert.strictEqual(isPassthroughBot(msg, ['trendvision']), false);
+});
+
+test('isPassthroughBot: utilise DEFAULT_PASSTHROUGH_BOT_NAMES si liste non passée', () => {
+  const msg = { author: { bot: true, username: 'TrendVision' } };
+  assert.strictEqual(isPassthroughBot(msg), true);
+});
+
+test('DEFAULT_PASSTHROUGH_BOT_NAMES contient trendvision', () => {
+  assert.ok(DEFAULT_PASSTHROUGH_BOT_NAMES.includes('trendvision'));
+});
+
+test('loadPassthroughBotNames: fallback aux defaults sans env', () => {
+  const prev = process.env.SAAS_PASSTHROUGH_BOT_NAMES;
+  delete process.env.SAAS_PASSTHROUGH_BOT_NAMES;
+  try {
+    const list = loadPassthroughBotNames();
+    assert.deepStrictEqual(list.sort(), [...DEFAULT_PASSTHROUGH_BOT_NAMES].sort());
+  } finally {
+    if (prev !== undefined) process.env.SAAS_PASSTHROUGH_BOT_NAMES = prev;
+  }
+});
+
+test('loadPassthroughBotNames: env override (csv) — lowercased + trimmed', () => {
+  const prev = process.env.SAAS_PASSTHROUGH_BOT_NAMES;
+  process.env.SAAS_PASSTHROUGH_BOT_NAMES = ' TrendVision , OtherBot ';
+  try {
+    assert.deepStrictEqual(loadPassthroughBotNames(), ['trendvision', 'otherbot']);
+  } finally {
+    if (prev === undefined) delete process.env.SAAS_PASSTHROUGH_BOT_NAMES;
+    else process.env.SAAS_PASSTHROUGH_BOT_NAMES = prev;
+  }
+});
+
+test('passthrough et blocked sont disjoints — un bot ne peut pas être les deux par défaut', () => {
+  for (const passthrough of DEFAULT_PASSTHROUGH_BOT_NAMES) {
+    assert.ok(!DEFAULT_BLOCKED_BOT_NAMES.includes(passthrough),
+      `${passthrough} ne doit pas être à la fois passthrough et blocked`);
+  }
 });
 
 // ── Régression : status updates (PT hit, etc.) rejetés par shouldRelay ──

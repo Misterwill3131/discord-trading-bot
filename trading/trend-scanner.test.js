@@ -301,6 +301,49 @@ test('getDailyContext: priorHigh/priorLow fallback to yesterday when only 2 quot
   assert.strictEqual(ctx.priorLow, 102);   // = yesterday.low
 });
 
+test('getDailyContext: extracts prevSessionClose from last yesterday bar in 5D intraday', async () => {
+  // Build a 5D chart with bars from "yesterday" (date != today) and today.
+  // The last bar of yesterday represents the after-hours close (~20:00 ET).
+  const todayMidday    = Date.now();
+  const yesterdayClose = todayMidday - 18 * 60 * 60 * 1000;  // ~18h ago
+  const yesterdayLast  = todayMidday - 14 * 60 * 60 * 1000;  // ~14h ago (still yesterday ET)
+  const todayPremarket = todayMidday - 8  * 60 * 60 * 1000;  // ~8h ago (today ET)
+
+  const yahoo = makeFakeYahoo({
+    '1M': [
+      { t: 1, o: 100, h: 105, l: 99, c: 104, v: 8000 },
+      { t: 2, o: 104, h: 110, l: 102, c: 108, v: 9500 },
+      { t: 3, o: 109, h: 112, l: 107, c: 111, v: 5000 },
+    ],
+    '5D': [
+      { t: yesterdayClose, o: 108, h: 109, l: 107, c: 108.5, v: 1000 },
+      { t: yesterdayLast,  o: 108.5, h: 109, l: 108, c: 108.7, v: 200 },  // after-hours close
+      { t: todayPremarket, o: 110, h: 110.5, l: 109.5, c: 110.2, v: 100 },
+    ],
+  });
+  const ctx = await getDailyContext(yahoo, 'AAPL');
+  assert.ok(ctx);
+  assert.strictEqual(ctx.prevSessionClose, 108.7);
+});
+
+test('getDailyContext: prevSessionClose is null when 5D fetch fails', async () => {
+  const yahoo = {
+    getChart: async (ticker, range) => {
+      if (range === '5D') throw new Error('not found');
+      return {
+        quotes: [
+          { date: new Date(1), open: 100, high: 105, low: 99, close: 104, volume: 8000 },
+          { date: new Date(2), open: 104, high: 110, low: 102, close: 108, volume: 9500 },
+          { date: new Date(3), open: 109, high: 112, low: 107, close: 111, volume: 5000 },
+        ],
+      };
+    },
+  };
+  const ctx = await getDailyContext(yahoo, 'AAPL');
+  assert.ok(ctx);
+  assert.strictEqual(ctx.prevSessionClose, null);
+});
+
 test('getDailyContext: returns null with fewer than 2 quotes', async () => {
   const yahoo = makeFakeYahoo({ '1M': [{ t: 1, o: 100, h: 100, l: 100, c: 100, v: 1000 }] });
   const ctx = await getDailyContext(yahoo, 'AAPL');

@@ -14,7 +14,9 @@
 //   /saas pending
 //
 // Client (scope: global, garde manageGuildOnly) :
-//   /setup channel:<channel>
+//   /setup channel:<channel>             — salon des signaux principaux
+//   /setup-passthrough channel:<channel> — salon des alertes TrendVision (opt-in)
+//   /setup-passthrough channel:none      — désactive la réception passthrough
 //   /status
 //   /connect code:<code>
 // ─────────────────────────────────────────────────────────────────────
@@ -110,6 +112,19 @@ function buildClientCommands() {
     .addChannelOption(o => o.setName('channel').setDescription('Target channel').setRequired(true)
       .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement));
 
+  // Salon dédié aux alertes "passthrough" (TrendVision et autres bots
+  // upstream relayés en texte brut, séparés des signaux principaux).
+  // Channel optionnel : si omis, désactive la réception passthrough.
+  const setupPassthrough = new SlashCommandBuilder()
+    .setName('setup-passthrough')
+    .setDescription(`Choose a separate channel for TrendVision-style alerts (optional)`)
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .setDMPermission(false)
+    .addChannelOption(o => o.setName('channel')
+      .setDescription('Target channel for passthrough alerts. Omit to disable.')
+      .setRequired(false)
+      .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement));
+
   const status = new SlashCommandBuilder()
     .setName('status')
     .setDescription(`Show your ${BRAND_NAME} subscription status`)
@@ -123,7 +138,7 @@ function buildClientCommands() {
     .setDMPermission(false)
     .addStringOption(o => o.setName('code').setDescription('Your claim code').setRequired(true));
 
-  return [setup.toJSON(), status.toJSON(), connect.toJSON()];
+  return [setup.toJSON(), setupPassthrough.toJSON(), status.toJSON(), connect.toJSON()];
 }
 
 // ── Handlers ────────────────────────────────────────────────────────
@@ -204,7 +219,8 @@ async function handleSaasInfo(interaction) {
       { name: 'Status', value: lic.status, inline: true },
       { name: 'Plan', value: lic.plan, inline: true },
       { name: 'Expires', value: lic.expires_at ? lic.expires_at.slice(0, 10) : 'lifetime', inline: true },
-      { name: 'Target channel', value: lic.target_channel_id ? `<#${lic.target_channel_id}>` : '(not set)', inline: true },
+      { name: 'Signals channel', value: lic.target_channel_id ? `<#${lic.target_channel_id}>` : '(not set)', inline: true },
+      { name: 'Passthrough channel', value: lic.passthrough_channel_id ? `<#${lic.passthrough_channel_id}>` : '(disabled)', inline: true },
       { name: 'Last relay', value: lic.last_relay_at || 'never', inline: true },
       { name: 'Relays 7d', value: `ok=${stats.ok} skip=${stats.skip} err=${stats.error}`, inline: true },
     );
@@ -309,6 +325,37 @@ async function handleSetup(interaction, clientSaas) {
   });
 }
 
+// /setup-passthrough channel:<channel?>
+// Configure (ou désactive) le salon de réception des alertes passthrough
+// (TrendVision et autres bots upstream relayés en texte brut).
+async function handleSetupPassthrough(interaction) {
+  if (!manageGuildOnly(interaction)) return;
+  const lic = licenses.get(interaction.guildId);
+  if (!licenses.isActive(lic)) {
+    return safeReply(interaction, {
+      content: 'No active subscription found for this server. Use /connect with your claim code first.',
+    });
+  }
+  const channel = interaction.options.getChannel('channel', false);
+  if (!channel) {
+    licenses.setPassthroughChannel(interaction.guildId, null, { admin: interaction.user.id });
+    return safeReply(interaction, {
+      content: `Passthrough alerts disabled. You will no longer receive TrendVision-style messages.`,
+    });
+  }
+  const me = interaction.guild.members.me;
+  const perms = channel.permissionsFor(me);
+  if (!perms || !perms.has(PermissionFlagsBits.SendMessages)) {
+    return safeReply(interaction, {
+      content: `I need "Send Messages" permission in ${channel}. Please adjust and retry.`,
+    });
+  }
+  licenses.setPassthroughChannel(interaction.guildId, channel.id, { admin: interaction.user.id });
+  return safeReply(interaction, {
+    content: `Passthrough alerts (TrendVision, etc.) will now be posted in ${channel}, separately from your main signals channel.`,
+  });
+}
+
 async function handleStatus(interaction) {
   if (!manageGuildOnly(interaction)) return;
   const lic = licenses.get(interaction.guildId);
@@ -322,7 +369,8 @@ async function handleStatus(interaction) {
       { name: 'Status', value: lic.status, inline: true },
       { name: 'Plan', value: lic.plan, inline: true },
       { name: 'Expires', value: lic.expires_at ? lic.expires_at.slice(0, 10) : 'lifetime', inline: true },
-      { name: 'Target channel', value: lic.target_channel_id ? `<#${lic.target_channel_id}>` : '(not set — run /setup)', inline: false },
+      { name: 'Signals channel', value: lic.target_channel_id ? `<#${lic.target_channel_id}>` : '(not set — run /setup)', inline: false },
+      { name: 'Passthrough channel (TrendVision)', value: lic.passthrough_channel_id ? `<#${lic.passthrough_channel_id}>` : '(disabled — run /setup-passthrough to enable)', inline: false },
       { name: 'Last signal received', value: lic.last_relay_at || 'never', inline: false },
     )
     .setFooter({ text: `via ${BRAND_NAME}` });
@@ -403,9 +451,10 @@ function registerSaasCommands(clientSaas, opts) {
           if (sub === 'source')      return handleSaasSource(interaction, relay, opts.sourceChannelIdsEnv);
           return safeReply(interaction, { content: `Unknown subcommand: ${sub}` });
         }
-        case 'setup':   return handleSetup(interaction, clientSaas);
-        case 'status':  return handleStatus(interaction);
-        case 'connect': return handleConnect(interaction);
+        case 'setup':              return handleSetup(interaction, clientSaas);
+        case 'setup-passthrough':  return handleSetupPassthrough(interaction);
+        case 'status':             return handleStatus(interaction);
+        case 'connect':            return handleConnect(interaction);
         default:
           // Other commands handled elsewhere (or by clientSource).
           return;

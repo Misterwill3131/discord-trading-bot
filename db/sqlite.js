@@ -378,6 +378,11 @@ addColumnIfMissing('trend_state', 'pdl_above_since',            'INTEGER');
 addColumnIfMissing('trend_state', 'gap_alerted_today',          'INTEGER DEFAULT 0');
 addColumnIfMissing('trend_state', 'volume_above_alerted_today', 'INTEGER DEFAULT 0');
 
+// ── SaaS licenses : passthrough channel séparé pour bots upstream ─────
+// Permet de router les alertes "passthrough" (ex: TrendVision) vers un
+// salon distinct du target_channel_id (signaux principaux).
+addColumnIfMissing('licenses', 'passthrough_channel_id', 'TEXT');
+
 // ── Prepared statements (réutilisables, plus rapides) ────────────────
 
 // INSERT OR IGNORE : si un id existe déjà, on saute sans erreur. Utile
@@ -950,6 +955,8 @@ const stmtLicenseListByStatus   = db.prepare('SELECT * FROM licenses WHERE statu
 const stmtLicenseSetStatus      = db.prepare('UPDATE licenses SET status = ? WHERE guild_id = ?');
 const stmtLicenseSetExpires     = db.prepare('UPDATE licenses SET expires_at = ?, status = ? WHERE guild_id = ?');
 const stmtLicenseSetTargetCh    = db.prepare('UPDATE licenses SET target_channel_id = ? WHERE guild_id = ?');
+const stmtLicenseSetPassCh      = db.prepare('UPDATE licenses SET passthrough_channel_id = ? WHERE guild_id = ?');
+const stmtLicenseListPassthrough = db.prepare("SELECT * FROM licenses WHERE status = 'active' AND passthrough_channel_id IS NOT NULL");
 const stmtLicenseTouchRelay     = db.prepare("UPDATE licenses SET last_relay_at = datetime('now') WHERE guild_id = ?");
 const stmtLicenseFindByLpSub    = db.prepare('SELECT * FROM licenses WHERE launchpass_subscription_id = ? LIMIT 1');
 const stmtLicenseDelete         = db.prepare('DELETE FROM licenses WHERE guild_id = ?');
@@ -991,6 +998,16 @@ function licenseSetExpires(guildId, expiresAtIso, status) {
 
 function licenseSetTargetChannel(guildId, channelId) {
   return stmtLicenseSetTargetCh.run(channelId ? String(channelId) : null, String(guildId)).changes > 0;
+}
+
+function licenseSetPassthroughChannel(guildId, channelId) {
+  return stmtLicenseSetPassCh.run(channelId ? String(channelId) : null, String(guildId)).changes > 0;
+}
+
+// Active licenses qui ont un passthrough_channel_id configuré. Le filtrage
+// d'expiration reste à la charge du caller (cohérent avec licenseList).
+function licenseListPassthroughReady() {
+  return stmtLicenseListPassthrough.all();
 }
 
 function licenseTouchRelay(guildId) {
@@ -1489,6 +1506,8 @@ module.exports = {
   licenseSetStatus,
   licenseSetExpires,
   licenseSetTargetChannel,
+  licenseSetPassthroughChannel,
+  licenseListPassthroughReady,
   licenseTouchRelay,
   licenseFindByLaunchpassSub,
   licenseDelete,

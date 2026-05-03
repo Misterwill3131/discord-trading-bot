@@ -138,14 +138,18 @@ async function broadcast(clientSaas, dto) {
   return { ok, skip, error, total: targets.length };
 }
 
-// Envoie le contenu texte (déjà sanitisé) à UN guild client. Pas d'embed.
+// Envoie le contenu texte (déjà sanitisé) à UN guild client dans son
+// passthrough_channel_id. Pas d'embed.
 async function sendRawToClient(clientSaas, license, content) {
   try {
     const guild = clientSaas.guilds.cache.get(license.guild_id);
     if (!guild) {
       return { status: 'skip', error: 'bot-not-in-guild' };
     }
-    const channel = await clientSaas.channels.fetch(license.target_channel_id).catch(() => null);
+    if (!license.passthrough_channel_id) {
+      return { status: 'skip', error: 'no-passthrough-channel' };
+    }
+    const channel = await clientSaas.channels.fetch(license.passthrough_channel_id).catch(() => null);
     if (!channel || !channel.isTextBased?.()) {
       return { status: 'error', error: 'channel-unavailable' };
     }
@@ -159,11 +163,12 @@ async function sendRawToClient(clientSaas, license, content) {
   }
 }
 
-// Broadcast en mode "passthrough" : relaie le texte sanitisé tel quel à
-// toutes les licences prêtes. Utilisé pour les bots upstream dont les
-// alertes doivent être préservées sans transformation embed.
+// Broadcast en mode "passthrough" : relaie le texte sanitisé tel quel
+// dans le passthrough_channel_id de chaque licence qui en a configuré un.
+// Les clients sans passthrough_channel_id ne reçoivent PAS ces alertes
+// (opt-in explicite via /setup-passthrough).
 async function broadcastRaw(clientSaas, sourceMessageId, content) {
-  const targets = licenses.listReadyForRelay();
+  const targets = licenses.listReadyForPassthrough();
   let ok = 0, skip = 0, error = 0;
   for (const lic of targets) {
     const res = await sendRawToClient(clientSaas, lic, content);

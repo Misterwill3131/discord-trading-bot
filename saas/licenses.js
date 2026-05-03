@@ -86,6 +86,16 @@ function setTargetChannel(guildId, channelId, { admin } = {}) {
   }
 }
 
+// Channel séparé pour les alertes passthrough (TrendVision et autres bots
+// upstream). Permet au client de router ces alertes vers un salon distinct
+// du target_channel_id principal. Passer null pour désactiver.
+function setPassthroughChannel(guildId, channelId, { admin } = {}) {
+  db.licenseSetPassthroughChannel(guildId, channelId);
+  if (admin) {
+    db.adminActionInsert({ admin, action: 'set-passthrough-channel', guild_id: guildId, payload: { channelId } });
+  }
+}
+
 // Renouvelle une licence (Launchpass renewed event). expiresAtIso ISO string.
 function renew(guildId, expiresAtIso) {
   db.licenseSetExpires(guildId, expiresAtIso, 'active');
@@ -104,6 +114,12 @@ function list(status) {
 // C'est la liste à parcourir pour broadcast un signal.
 function listReadyForRelay() {
   return db.licenseList('active').filter(l => l.target_channel_id && !isExpired(l));
+}
+
+// Licences ACTIVES avec passthrough_channel_id défini ET non expirées.
+// Liste à parcourir pour broadcast une alerte passthrough (TrendVision, etc.).
+function listReadyForPassthrough() {
+  return db.licenseListPassthroughReady().filter(l => !isExpired(l));
 }
 
 function findByLaunchpassSub(subId) {
@@ -247,10 +263,12 @@ module.exports = {
   expire,
   cancel,
   setTargetChannel,
+  setPassthroughChannel,
   renew,
   get,
   list,
   listReadyForRelay,
+  listReadyForPassthrough,
   findByLaunchpassSub,
   // claim flow
   generateClaimCode,

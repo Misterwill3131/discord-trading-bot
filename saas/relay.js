@@ -24,6 +24,7 @@ const {
   isIPOAnnouncement,
   parseIPOAnnouncement,
   isExitSuggestion,
+  looksLikeShortSignal,
 } = require('./anonymize');
 const brand = require('./brand');
 
@@ -439,6 +440,11 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
           }
           const embed = brandedEmbedExit(exitParsed, brand, message.createdAt);
           const result = await broadcastExit(clientSaas, String(message.id), embed);
+          db.dailyAlertLogInsert({
+            ticker: exitParsed.ticker,
+            alert_type: 'exit',
+            source_message_id: String(message.id),
+          });
           console.log(
             `[saas/relay] EXIT msg=${message.id} ticker=${exitParsed.ticker} ` +
             `zone=${exitParsed.low}-${exitParsed.high} → ok=${result.ok} skip=${result.skip} err=${result.error} (of ${result.total})`
@@ -493,7 +499,40 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
         return;
       }
 
+      // Filet de sécurité : si le ticker a déjà reçu une alerte d'entrée
+      // aujourd'hui (UTC) ET le message courant ressemble à un format
+      // court ambigu (peu d'infos, pas de mots-clés explicites), on le
+      // re-route en EXIT au lieu de broadcaster une 2e entrée. Couvre les
+      // cas où isExitSuggestion a raté la détection (caractère exotique,
+      // variante de format).
+      if (looksLikeShortSignal(message.content || '', dto)
+          && db.dailyAlertLogHas(dto.ticker, 'entry')) {
+        const exitEmbed = brandedEmbedExit(
+          { ticker: dto.ticker, low: dto.entry_price, high: dto.target_price },
+          brand,
+          message.createdAt,
+        );
+        const result = await broadcastExit(clientSaas, String(message.id), exitEmbed);
+        db.dailyAlertLogInsert({
+          ticker: dto.ticker,
+          alert_type: 'exit',
+          source_message_id: dto.source_message_id,
+        });
+        console.log(
+          `[saas/relay] EXIT (safety net) msg=${dto.source_message_id} ticker=${dto.ticker} ` +
+          `zone=${dto.entry_price}-${dto.target_price} → ok=${result.ok} skip=${result.skip} err=${result.error} (of ${result.total})`
+        );
+        return;
+      }
+
       const result = await broadcast(clientSaas, dto);
+      // Enregistre l'entrée pour permettre au filet de sécurité de
+      // détecter un éventuel doublon plus tard dans la journée.
+      db.dailyAlertLogInsert({
+        ticker: dto.ticker,
+        alert_type: 'entry',
+        source_message_id: dto.source_message_id,
+      });
       console.log(
         `[saas/relay] msg=${dto.source_message_id} ticker=${dto.ticker || '-'} ` +
         `→ ok=${result.ok} skip=${result.skip} err=${result.error} (of ${result.total})`

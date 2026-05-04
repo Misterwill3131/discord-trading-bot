@@ -759,3 +759,56 @@ test('brandedEmbedExit: aucun ID Discord dans le JSON sérialisé', () => {
 test('isExitSuggestion: format alternatif avec entiers (pas de décimales)', () => {
   assert.deepStrictEqual(isExitSuggestion('XYZ 5-10'), { ticker: 'XYZ', low: 5, high: 10 });
 });
+
+// ── looksLikeShortSignal (filet de sécurité doublon journalier) ───────
+
+const { looksLikeShortSignal: lookShort, buildSignalDTO: buildDTO } = require('./anonymize');
+
+function makeDTO(content) {
+  return buildDTO({ id: '1', content, createdAt: new Date() });
+}
+
+test('looksLikeShortSignal: format compact ELPW 2.80-3.91 → true', () => {
+  const content = 'CRE 2.80-3.91';
+  assert.strictEqual(lookShort(content, makeDTO(content)), true);
+});
+
+test('looksLikeShortSignal: avec emoji trailing → true', () => {
+  const content = '$CRE 2.80-3.91 🔥';
+  assert.strictEqual(lookShort(content, makeDTO(content)), true);
+});
+
+test('looksLikeShortSignal: signal explicite avec "entry/target/sl" → false', () => {
+  const content = '$AAPL entry 150 target 160 sl 145';
+  assert.strictEqual(lookShort(content, makeDTO(content)), false);
+});
+
+test('looksLikeShortSignal: contient "adding" (2e leg) → false', () => {
+  const content = 'CRE adding at 2.80 to 3';
+  assert.strictEqual(lookShort(content, makeDTO(content)), false);
+});
+
+test('looksLikeShortSignal: contient "watch" → false', () => {
+  const content = 'CRE 2.80-3.91 watch';
+  assert.strictEqual(lookShort(content, makeDTO(content)), false);
+});
+
+test('looksLikeShortSignal: contient "long" → false', () => {
+  const content = 'CRE long 2.80-3.91';
+  assert.strictEqual(lookShort(content, makeDTO(content)), false);
+});
+
+test('looksLikeShortSignal: DTO sans target_price → false', () => {
+  const content = 'CRE 2.80';
+  assert.strictEqual(lookShort(content, makeDTO(content)), false);
+});
+
+test('looksLikeShortSignal: texte > 50 chars → false', () => {
+  const content = 'CRE 2.80 to 3.91 going up looking great today maybe';
+  assert.strictEqual(lookShort(content, makeDTO(content)), false);
+});
+
+test('looksLikeShortSignal: texte vide / dto null → false', () => {
+  assert.strictEqual(lookShort('', null), false);
+  assert.strictEqual(lookShort(null, makeDTO('')), false);
+});

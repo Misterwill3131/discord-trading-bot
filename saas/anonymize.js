@@ -276,6 +276,33 @@ function isExitSuggestion(text) {
   return { ticker: m[1], low, high };
 }
 
+// Heuristique souple "ce signal ressemble à un format court ambigu" — plus
+// permissive que isExitSuggestion. Utilisée comme filet de sécurité quand
+// le ticker a DÉJÀ été alerté aujourd'hui : si la 2e alerte ressemble
+// vaguement à un format court (peu d'infos, pas de mots-clés explicites),
+// on la traite comme une sortie au lieu d'une 2e entrée.
+//
+// Conditions :
+//   - Texte court (≤ 50 chars trimmés)
+//   - DTO valide avec entry_price ET target_price
+//   - AUCUN mot-clé signal explicite dans le texte (entry|target|sl|tp|
+//     adding|long|short|swing|setup|watch|alert)
+//
+// Ne s'applique PAS aux signaux structurés type "$AAPL entry 150 target
+// 160 sl 145" : ces mots-clés explicites signalent un vrai 2e leg ou une
+// correction intentionnelle, pas un exit ambigu.
+const SHORT_SIGNAL_BLOCKERS = /\b(?:entry|target|sl|tp|stop|adding|add|long|short|swing|setup|watch|alert)\b/i;
+
+function looksLikeShortSignal(text, dto) {
+  if (!text || !dto) return false;
+  if (!dto.ticker) return false;
+  if (!Number.isFinite(dto.entry_price) || !Number.isFinite(dto.target_price)) return false;
+  const t = String(text).trim();
+  if (t.length === 0 || t.length > 50) return false;
+  if (SHORT_SIGNAL_BLOCKERS.test(t)) return false;
+  return true;
+}
+
 // Embed dédié aux suggestions de sortie. Couleur ambre (distincte des
 // signaux cyan et des IPOs teal) pour signaler visuellement "exit" et non
 // "nouveau trade". Footer rappelle que c'est une sortie, pas une entrée.
@@ -667,6 +694,7 @@ module.exports = {
   parseExitStatus,
   EXIT_STATUS_PATTERNS,
   isExitSuggestion,
+  looksLikeShortSignal,
   brandedEmbedExit,
   isIPOAnnouncement,
   parseIPOAnnouncement,

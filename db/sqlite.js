@@ -209,6 +209,22 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_relay_log_guild_ts          ON relay_log(guild_id, ts);
   CREATE INDEX IF NOT EXISTS idx_relay_log_source_message_id ON relay_log(source_message_id);
 
+  -- État journalier par ticker côté SOURCE : "ce ticker a-t-il été alerté
+  -- aujourd'hui (entry/exit) ?". Utilisé comme filet de sécurité pour
+  -- éviter de re-broadcaster une 2e entrée sur un ticker déjà alerté quand
+  -- le 2e message ressemble à un signal court ambigu (ex: "CRE 2.80-3.91"
+  -- raté par le détecteur exit). Reset implicite à minuit UTC : la PK
+  -- composite inclut alert_date donc un nouveau jour = nouvelle ligne.
+  CREATE TABLE IF NOT EXISTS daily_alert_log (
+    ticker             TEXT NOT NULL,
+    alert_type         TEXT NOT NULL CHECK (alert_type IN ('entry','exit')),
+    alert_date         TEXT NOT NULL,                -- 'YYYY-MM-DD' UTC
+    ts_iso             TEXT NOT NULL,                -- ISO timestamp du 1er broadcast
+    source_message_id  TEXT,
+    PRIMARY KEY (ticker, alert_type, alert_date)
+  );
+  CREATE INDEX IF NOT EXISTS idx_daily_alert_log_date ON daily_alert_log(alert_date);
+
   -- Audit admin : trace immuable des actions sur les licences (pour
   -- support, conformité, et debug si un client se plaint d'une suspension).
   CREATE TABLE IF NOT EXISTS admin_actions (
@@ -1076,6 +1092,61 @@ function relayLogStatsSince(guildId, sinceIso) {
   return out;
 }
 
+// ── daily_alert_log ─────────────────────────────────────────────────
+
+const stmtDailyAlertLogInsert = db.prepare(`
+  INSERT OR IGNORE INTO daily_alert_log (ticker, alert_type, alert_date, ts_iso, source_message_id)
+  VALUES (@ticker, @alert_type, @alert_date, @ts_iso, @source_message_id)
+`);
+const stmtDailyAlertLogHas = db.prepare(`
+  SELECT 1 FROM daily_alert_log
+  WHERE ticker = ? AND alert_type = ? AND alert_date = ?
+  LIMIT 1
+`);
+const stmtDailyAlertLogPurge = db.prepare(`
+  DELETE FROM daily_alert_log WHERE alert_date < ?
+`);
+
+// Date UTC au format YYYY-MM-DD pour la fenêtre de reset journalière.
+function todayUTCDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+// Enregistre un broadcast réussi pour un ticker. Idempotent grâce à la PK
+// composite (ticker, alert_type, alert_date) + INSERT OR IGNORE : un même
+// ticker alerté plusieurs fois le même jour n'est compté qu'une fois.
+// Renvoie true si une nouvelle ligne a été insérée, false si déjà présente.
+function dailyAlertLogInsert({ ticker, alert_type, source_message_id }) {
+  const info = stmtDailyAlertLogInsert.run({
+    ticker:            String(ticker).toUpperCase(),
+    alert_type:        alert_type,
+    alert_date:        todayUTCDate(),
+    ts_iso:            new Date().toISOString(),
+    source_message_id: source_message_id ? String(source_message_id) : null,
+  });
+  return info.changes > 0;
+}
+
+// Vérifie si un ticker a déjà été alerté aujourd'hui (UTC) en `alert_type`.
+// Utilisé comme filet de sécurité avant de broadcaster un nouveau signal
+// d'entrée pour décider s'il faut le re-router en sortie.
+function dailyAlertLogHas(ticker, alert_type) {
+  if (!ticker) return false;
+  const row = stmtDailyAlertLogHas.get(
+    String(ticker).toUpperCase(),
+    alert_type,
+    todayUTCDate(),
+  );
+  return !!row;
+}
+
+// Cleanup pour tâche périodique (optionnel) : supprime les lignes plus
+// vieilles que `keepDays` jours.
+function dailyAlertLogPurgeOld(keepDays = 30) {
+  const cutoff = new Date(Date.now() - keepDays * 86400000).toISOString().slice(0, 10);
+  return stmtDailyAlertLogPurge.run(cutoff).changes;
+}
+
 // ── admin_actions ───────────────────────────────────────────────────
 
 const stmtAdminActionInsert = db.prepare(`
@@ -1531,6 +1602,10 @@ module.exports = {
 
   // SaaS — relay log
   relayLogInsert,
+  dailyAlertLogInsert,
+  dailyAlertLogHas,
+  dailyAlertLogPurgeOld,
+  todayUTCDate,
   relayLogRecent,
   relayLogStatsSince,
 

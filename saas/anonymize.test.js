@@ -534,3 +534,128 @@ test('DTO: "$FATN buy only above $3.81" → is_exit_update=false', () => {
   const dto = buildSignalDTO({ id: '1', content: '$FATN buy only above $3.81', createdAt: new Date() });
   assert.strictEqual(dto.is_exit_update, false);
 });
+
+// ── IPO detection & parsing ────────────────────────────────────────────
+
+const { isIPOAnnouncement, parseIPOAnnouncement, brandedEmbedIPO, sanitizeTextPreserveLines } = require('./anonymize');
+
+const SAMPLE_IPO = `📅 IPOs expected next week 
+
+$HAWK – HawkEye 360
+• Defense tech / space-based radio signal intelligence
+• ~$400M raise | ~$2.7B valuation
+• Price range: $24–26 (16M shares)
+• Levered to demand for defense + satellite intel
+
+$SUJA – Suja Life
+• Consumer / functional beverages (cold-pressed juice, wellness drinks)
+• ~$200M raise | ~$870M valuation
+• Price range: $21–24 (8.9M shares)
+• ~$327M revenue (LTM)
+
+🗓 Both expected to trade: Thursday 5/7/26
+<@&1403870174917951618>`;
+
+test('isIPOAnnouncement: message IPO multi-ticker → true', () => {
+  assert.strictEqual(isIPOAnnouncement(SAMPLE_IPO), true);
+});
+
+test('isIPOAnnouncement: signal classique "$AAPL 150 target 160" → false (pas de mot IPO)', () => {
+  assert.strictEqual(isIPOAnnouncement('$AAPL 150 target 160 sl 145'), false);
+});
+
+test('isIPOAnnouncement: "IPO de demain" sans $TICKER → false', () => {
+  assert.strictEqual(isIPOAnnouncement('IPO season is hot, watch for valuation news next week'), false);
+});
+
+test('isIPOAnnouncement: "$TICKER + IPO" sans mot-clé financier → false', () => {
+  assert.strictEqual(isIPOAnnouncement('$AAPL had a great IPO years ago, very interesting'), false);
+});
+
+test('isIPOAnnouncement: "IPO + $TICKER + price range" → true', () => {
+  assert.strictEqual(isIPOAnnouncement('Upcoming IPO: $XYZ price range $10-12'), true);
+});
+
+test('parseIPOAnnouncement: extrait header, 2 IPOs, footer du message complet', () => {
+  const sanitized = sanitizeTextPreserveLines(SAMPLE_IPO);
+  const parsed = parseIPOAnnouncement(sanitized);
+  assert.strictEqual(parsed.header, '📅 IPOs expected next week');
+  assert.strictEqual(parsed.ipos.length, 2);
+  assert.strictEqual(parsed.ipos[0].ticker, 'HAWK');
+  assert.strictEqual(parsed.ipos[0].name, 'HawkEye 360');
+  assert.strictEqual(parsed.ipos[0].bullets.length, 4);
+  assert.ok(parsed.ipos[0].bullets[0].includes('Defense tech'));
+  assert.strictEqual(parsed.ipos[1].ticker, 'SUJA');
+  assert.strictEqual(parsed.ipos[1].name, 'Suja Life');
+  assert.ok(parsed.footer.includes('Thursday 5/7/26'));
+  // Le footer ne doit PAS contenir la mention de rôle (sanitisée avant parse)
+  assert.ok(!parsed.footer.includes('<@&'));
+});
+
+test('parseIPOAnnouncement: retourne null si pas un message IPO', () => {
+  assert.strictEqual(parseIPOAnnouncement('$AAPL 150 target 160'), null);
+});
+
+test('parseIPOAnnouncement: gère un IPO unique (pas de footer)', () => {
+  const text = `Upcoming IPO
+
+$XYZ – New Tech Co
+• Cloud platform
+• Price range: $20-22 (5M shares)`;
+  const parsed = parseIPOAnnouncement(text);
+  assert.ok(parsed);
+  assert.strictEqual(parsed.ipos.length, 1);
+  assert.strictEqual(parsed.ipos[0].ticker, 'XYZ');
+  assert.strictEqual(parsed.ipos[0].name, 'New Tech Co');
+  assert.strictEqual(parsed.ipos[0].bullets.length, 2);
+  assert.strictEqual(parsed.footer, null);
+});
+
+test('sanitizeTextPreserveLines: strip mentions mais préserve les newlines', () => {
+  const input = '$HAWK – HawkEye 360\n• bullet\n<@&123456>';
+  const out = sanitizeTextPreserveLines(input);
+  assert.ok(!out.includes('<@&'));
+  assert.ok(out.includes('\n'));
+  assert.ok(out.includes('• bullet'));
+});
+
+test('sanitizeTextPreserveLines: collapse 3+ newlines à 2 max', () => {
+  const out = sanitizeTextPreserveLines('a\n\n\n\nb');
+  assert.strictEqual(out, 'a\n\nb');
+});
+
+test('brandedEmbedIPO: 1 field par IPO + 1 field pour le footer', () => {
+  const sanitized = sanitizeTextPreserveLines(SAMPLE_IPO);
+  const parsed = parseIPOAnnouncement(sanitized);
+  const embed = brandedEmbedIPO(parsed, SAMPLE_BRAND, new Date());
+  const json = embed.toJSON();
+  assert.strictEqual(json.title, '📅 IPOs expected next week');
+  // 2 IPOs + 1 footer = 3 fields
+  assert.strictEqual(json.fields.length, 3);
+  assert.strictEqual(json.fields[0].name, '$HAWK — HawkEye 360');
+  assert.strictEqual(json.fields[1].name, '$SUJA — Suja Life');
+  assert.ok(json.fields[2].value.includes('Thursday 5/7/26'));
+});
+
+test('brandedEmbedIPO: aucun ID Discord ne fuit dans le JSON sérialisé', () => {
+  const sanitized = sanitizeTextPreserveLines(SAMPLE_IPO);
+  const parsed = parseIPOAnnouncement(sanitized);
+  const embed = brandedEmbedIPO(parsed, SAMPLE_BRAND, new Date());
+  const serialized = JSON.stringify(embed.toJSON());
+  for (const forbidden of FORBIDDEN_PATTERNS) {
+    assert.ok(!serialized.includes(forbidden),
+      `Embed contient le pattern interdit: ${forbidden}`);
+  }
+});
+
+test('brandedEmbedIPO: tronque les ipos à 23 max + 1 field footer', () => {
+  // Fabrique un payload avec 30 IPOs
+  const ipos = [];
+  for (let i = 0; i < 30; i++) {
+    ipos.push({ ticker: `T${i}`, name: `Co${i}`, bullets: ['• detail'] });
+  }
+  const embed = brandedEmbedIPO({ header: 'IPOs', ipos, footer: 'fin' }, SAMPLE_BRAND, new Date());
+  const json = embed.toJSON();
+  // 23 IPOs + 1 footer = 24 ≤ 25 (limite Discord)
+  assert.strictEqual(json.fields.length, 24);
+});

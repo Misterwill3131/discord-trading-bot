@@ -243,6 +243,60 @@ function parseExitStatus(text) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// Exit suggestions — instructions positives de sortie
+// ─────────────────────────────────────────────────────────────────────
+// Format compact : "TICKER X-Y[emoji]" (ex: "ELPW 6.60-9🔥"). Ces messages
+// indiquent au client de SORTIR de sa position dans la zone de prix
+// indiquée. Ne PAS confondre avec un signal d'entrée long :
+//
+//   $AAPL entry 150 target 160 sl 145   ← signal classique (entrée)
+//   ELPW 6.60-9🔥                       ← suggestion de sortie
+//
+// Heuristique stricte (anti-faux-positif) :
+//   - Message court (≤ 80 chars trimmés)
+//   - Pas de mots-clés de signal (entry/target/stop/sl/tp/in at/long/short/...)
+//   - Match exact : ^TICKER PRICE-PRICE [emoji]?$  (rien d'autre)
+//   - Supporte `-`, `–` (en dash), `—` (em dash)
+//   - Supporte $TICKER ou TICKER (dollar optionnel)
+//
+// Retourne { ticker, low, high } ou null.
+const EXIT_SUGGESTION_BLOCKERS = /\b(?:entry|target|stop|sl|tp|in\s+at|adding|add|long|short|swing|alert|setup|watch)\b/i;
+const EXIT_SUGGESTION_RE = /^\s*\$?([A-Z]{1,6})\s+(\d+(?:\.\d+)?)\s*[-–—]\s*(\d+(?:\.\d+)?)\s*(\p{Extended_Pictographic}*)\s*$/u;
+
+function isExitSuggestion(text) {
+  if (!text) return null;
+  const t = String(text).trim();
+  if (t.length === 0 || t.length > 80) return null;
+  if (EXIT_SUGGESTION_BLOCKERS.test(t)) return null;
+  const m = t.match(EXIT_SUGGESTION_RE);
+  if (!m) return null;
+  const low = parseFloat(m[2]);
+  const high = parseFloat(m[3]);
+  if (!Number.isFinite(low) || !Number.isFinite(high)) return null;
+  return { ticker: m[1], low, high };
+}
+
+// Embed dédié aux suggestions de sortie. Couleur ambre (distincte des
+// signaux cyan et des IPOs teal) pour signaler visuellement "exit" et non
+// "nouveau trade". Footer rappelle que c'est une sortie, pas une entrée.
+const EXIT_EMBED_COLOR = 0xf59e0b; // amber-500
+
+function brandedEmbedExit(parsed, brand, createdAt) {
+  const eb = new EmbedBuilder()
+    .setColor(EXIT_EMBED_COLOR)
+    .setTitle(`🚪 EXIT — $${parsed.ticker}`)
+    .addFields({
+      name: 'Suggested exit zone',
+      value: `**${fmtPrice(parsed.low)}–${fmtPrice(parsed.high)}**`,
+      inline: false,
+    })
+    .setFooter({ text: `via ${brand.BRAND_NAME} · suggested exit, not a new entry` })
+    .setTimestamp(createdAt ? roundToMinute(createdAt) : new Date());
+  if (brand.BRAND_THUMBNAIL_URL) eb.setThumbnail(brand.BRAND_THUMBNAIL_URL);
+  return eb;
+}
+
+// ─────────────────────────────────────────────────────────────────────
 // IPO announcements — détection + parsing
 // ─────────────────────────────────────────────────────────────────────
 // Les messages IPO ont une structure multi-section qui ne rentre pas dans
@@ -612,6 +666,8 @@ module.exports = {
   parseSignalNote,
   parseExitStatus,
   EXIT_STATUS_PATTERNS,
+  isExitSuggestion,
+  brandedEmbedExit,
   isIPOAnnouncement,
   parseIPOAnnouncement,
   brandedEmbedIPO,

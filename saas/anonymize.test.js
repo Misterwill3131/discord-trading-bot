@@ -659,3 +659,103 @@ test('brandedEmbedIPO: tronque les ipos à 23 max + 1 field footer', () => {
   // 23 IPOs + 1 footer = 24 ≤ 25 (limite Discord)
   assert.strictEqual(json.fields.length, 24);
 });
+
+// ── Exit suggestions (format compact "TICKER X-Y[emoji]") ─────────────
+
+const { isExitSuggestion, brandedEmbedExit } = require('./anonymize');
+
+test('isExitSuggestion: format canonique "ELPW 6.60-9🔥" → match', () => {
+  const r = isExitSuggestion('ELPW 6.60-9🔥');
+  assert.deepStrictEqual(r, { ticker: 'ELPW', low: 6.6, high: 9 });
+});
+
+test('isExitSuggestion: $ prefix optionnel', () => {
+  const r = isExitSuggestion('$ELPW 6.60-9🔥');
+  assert.strictEqual(r.ticker, 'ELPW');
+});
+
+test('isExitSuggestion: emoji optionnel', () => {
+  const r = isExitSuggestion('ELPW 6.60-9');
+  assert.deepStrictEqual(r, { ticker: 'ELPW', low: 6.6, high: 9 });
+});
+
+test('isExitSuggestion: en dash et em dash supportés', () => {
+  assert.ok(isExitSuggestion('ELPW 6.60–9'));
+  assert.ok(isExitSuggestion('ELPW 6.60—9'));
+});
+
+test('isExitSuggestion: espaces autour du dash supportés', () => {
+  assert.ok(isExitSuggestion('ELPW 6.60 - 9 🔥'));
+});
+
+test('isExitSuggestion: plusieurs emojis trailing OK', () => {
+  assert.ok(isExitSuggestion('$ELPW 6.60-9 🔥🚀'));
+});
+
+test('isExitSuggestion: rejette signal classique avec entry/target/sl', () => {
+  assert.strictEqual(isExitSuggestion('$AAPL entry 150 target 160 sl 145'), null);
+});
+
+test('isExitSuggestion: rejette si mot-clé "long" présent', () => {
+  assert.strictEqual(isExitSuggestion('ELPW long 6.60-9'), null);
+});
+
+test('isExitSuggestion: rejette si mot-clé "watch" présent', () => {
+  assert.strictEqual(isExitSuggestion('AAPL 150-160 watch'), null);
+});
+
+test('isExitSuggestion: rejette si "target" présent', () => {
+  assert.strictEqual(isExitSuggestion('ELPW 6.60-9 target hit'), null);
+});
+
+test('isExitSuggestion: rejette ticker seul', () => {
+  assert.strictEqual(isExitSuggestion('ELPW'), null);
+});
+
+test('isExitSuggestion: rejette texte trop long (> 80 chars)', () => {
+  const long = 'ELPW 6.60-9 ' + 'x'.repeat(80);
+  assert.strictEqual(isExitSuggestion(long), null);
+});
+
+test('isExitSuggestion: rejette texte vide / null / undefined', () => {
+  assert.strictEqual(isExitSuggestion(''), null);
+  assert.strictEqual(isExitSuggestion(null), null);
+  assert.strictEqual(isExitSuggestion(undefined), null);
+});
+
+test('isExitSuggestion: rejette si du texte additionnel après le range', () => {
+  assert.strictEqual(isExitSuggestion('ELPW 6.60-9 some text here'), null);
+});
+
+test('brandedEmbedExit: title et zone formatés correctement', () => {
+  const parsed = { ticker: 'ELPW', low: 6.6, high: 9 };
+  const embed = brandedEmbedExit(parsed, SAMPLE_BRAND, new Date('2026-05-04T12:34:56Z'));
+  const json = embed.toJSON();
+  assert.strictEqual(json.title, '🚪 EXIT — $ELPW');
+  assert.strictEqual(json.fields.length, 1);
+  assert.strictEqual(json.fields[0].name, 'Suggested exit zone');
+  assert.ok(json.fields[0].value.includes('6.60'));
+  assert.ok(json.fields[0].value.includes('9'));
+  // Footer rappelle que c'est une sortie
+  assert.ok(json.footer.text.includes('suggested exit'));
+});
+
+test('brandedEmbedExit: couleur amber distincte des signaux', () => {
+  const embed = brandedEmbedExit({ ticker: 'X', low: 1, high: 2 }, SAMPLE_BRAND, new Date());
+  // 0xf59e0b = 16096779 (amber-500)
+  assert.strictEqual(embed.toJSON().color, 0xf59e0b);
+});
+
+test('brandedEmbedExit: aucun ID Discord dans le JSON sérialisé', () => {
+  const parsed = { ticker: 'ELPW', low: 6.6, high: 9 };
+  const embed = brandedEmbedExit(parsed, SAMPLE_BRAND, new Date());
+  const serialized = JSON.stringify(embed.toJSON());
+  for (const forbidden of FORBIDDEN_PATTERNS) {
+    assert.ok(!serialized.includes(forbidden),
+      `Embed exit contient le pattern interdit: ${forbidden}`);
+  }
+});
+
+test('isExitSuggestion: format alternatif avec entiers (pas de décimales)', () => {
+  assert.deepStrictEqual(isExitSuggestion('XYZ 5-10'), { ticker: 'XYZ', low: 5, high: 10 });
+});

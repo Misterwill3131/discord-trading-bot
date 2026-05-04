@@ -13,6 +13,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const db = require('../db/sqlite');
+const pg = require('../db/postgres');
 const licenses = require('./licenses');
 const {
   buildSignalDTO,
@@ -121,6 +122,11 @@ async function sendToClient(clientSaas, license, embed) {
 
 // Broadcast vers toutes les licences prêtes. Renvoie le résumé numérique
 // pour logging caller-side.
+//
+// Pour chaque relay vers un guild client, on log dans 2 endroits :
+// - SQLite relay_log (audit primaire du bot, déjà existant)
+// - Postgres signal_relays (lu par le site pour stats + recent feed
+//   sur /account dashboard) — best-effort, no-op si DATABASE_URL absent
 async function broadcast(clientSaas, dto) {
   const embed = brandedEmbed(dto, brand);
   const targets = licenses.listReadyForRelay();
@@ -134,6 +140,18 @@ async function broadcast(clientSaas, dto) {
       status: res.status,
       error: res.error || null,
     });
+    // Mirror Postgres pour le dashboard customer (best-effort).
+    pg.insertSignalRelay({
+      guildId: lic.guild_id,
+      ticker: dto.ticker,
+      side: dto.side, // 'long' | 'short' | undefined
+      entryPrice: dto.entry_price,
+      targetPrice: dto.target_price,
+      stopPrice: dto.stop_price,
+      sourceMessageId: dto.source_message_id,
+      relayedMessageId: res.msgId || null,
+      status: res.status,
+    }).catch(() => {});
     if (res.status === 'ok') {
       ok++;
       db.licenseTouchRelay(lic.guild_id);

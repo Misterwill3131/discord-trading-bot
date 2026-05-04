@@ -18,10 +18,12 @@ const {
   buildSignalDTO,
   brandedEmbed,
   brandedEmbedIPO,
+  brandedEmbedExit,
   sanitizeText,
   sanitizeTextPreserveLines,
   isIPOAnnouncement,
   parseIPOAnnouncement,
+  isExitSuggestion,
 } = require('./anonymize');
 const brand = require('./brand');
 
@@ -250,6 +252,33 @@ async function broadcastIPO(clientSaas, sourceMessageId, embed) {
   return { ok, skip, error, total: targets.length };
 }
 
+// Broadcast d'une suggestion de sortie : embed dédié envoyé dans le
+// target_channel_id (même salon que les signaux d'entrée — cohérence du
+// lifecycle de la position : entry → exit lus dans le même fil).
+async function broadcastExit(clientSaas, sourceMessageId, embed) {
+  const targets = licenses.listReadyForRelay();
+  let ok = 0, skip = 0, error = 0;
+  for (const lic of targets) {
+    const res = await sendToClient(clientSaas, lic, embed);
+    db.relayLogInsert({
+      guild_id: lic.guild_id,
+      source_message_id: sourceMessageId,
+      relayed_message_id: res.msgId || null,
+      status: res.status,
+      error: res.error || null,
+    });
+    if (res.status === 'ok') {
+      ok++;
+      db.licenseTouchRelay(lic.guild_id);
+    } else if (res.status === 'skip') {
+      skip++;
+    } else {
+      error++;
+    }
+  }
+  return { ok, skip, error, total: targets.length };
+}
+
 // Clé KV settings où sont persistées les overrides runtime.
 // Si présente, l'array de channel IDs override l'env var SOURCE_CHANNEL_IDS.
 // Modifiable à chaud via /saas source — pas de redeploy nécessaire.
@@ -323,6 +352,11 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
                 `[saas/relay] MISSED IPO — channel="${message.channel?.name || '?'}" ` +
                 `id=${message.channelId} (add to SOURCE_CHANNEL_IDS to relay)`
               );
+            } else if (isExitSuggestion(message.content || '')) {
+              console.log(
+                `[saas/relay] MISSED exit — channel="${message.channel?.name || '?'}" ` +
+                `id=${message.channelId} (add to SOURCE_CHANNEL_IDS to relay)`
+              );
             } else if (isPassthroughBot(message, loadPassthroughBotNames())) {
               console.log(
                 `[saas/relay] MISSED passthrough — channel="${message.channel?.name || '?'}" ` +
@@ -389,6 +423,28 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
           `→ ok=${result.ok} skip=${result.skip} err=${result.error} (of ${result.total})`
         );
         return;
+      }
+
+      // Filtre 5b : suggestion de sortie compacte (ex: "ELPW 6.60-9🔥").
+      // Format strict TICKER X-Y[emoji], pas de mots-clés signal. Bypass
+      // shouldRelay/buildSignalDTO — sinon parsé comme un faux long avec
+      // entry=6.60 target=9. Embed dédié dans target_channel_id (même
+      // salon que les signaux : lifecycle entry → exit dans un seul fil).
+      {
+        const exitParsed = isExitSuggestion(message.content || '');
+        if (exitParsed) {
+          if (!clientSaas.isReady?.()) {
+            console.warn('[saas/relay] clientSaas not ready — skipping exit broadcast');
+            return;
+          }
+          const embed = brandedEmbedExit(exitParsed, brand, message.createdAt);
+          const result = await broadcastExit(clientSaas, String(message.id), embed);
+          console.log(
+            `[saas/relay] EXIT msg=${message.id} ticker=${exitParsed.ticker} ` +
+            `zone=${exitParsed.low}-${exitParsed.high} → ok=${result.ok} skip=${result.skip} err=${result.error} (of ${result.total})`
+          );
+          return;
+        }
       }
 
       // Filtre 5 : bot passthrough (relayer texte brut sans embed). Bypass
@@ -461,6 +517,7 @@ module.exports = {
   broadcast,                  // exposé pour tests
   broadcastRaw,               // exposé pour tests
   broadcastIPO,               // exposé pour tests
+  broadcastExit,              // exposé pour tests
   shouldRelay,                // exposé pour tests
   isAuthorBlocked,            // exposé pour tests
   isPassthroughBot,           // exposé pour tests

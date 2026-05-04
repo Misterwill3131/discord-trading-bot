@@ -51,6 +51,26 @@ function sanitizeText(s) {
   return out.replace(/\s+/g, ' ').trim();
 }
 
+// Variante de sanitizeText qui préserve les sauts de ligne — nécessaire
+// pour les messages multi-section (IPO, recaps structurés) où la
+// structure visuelle (paragraphes, bullets) porte du sens. On strip les
+// patterns Discord identiques, mais on collapse uniquement les espaces
+// horizontaux (pas les \n).
+//
+// Comportement : trim chaque ligne, max 2 \n consécutifs, trim global.
+function sanitizeTextPreserveLines(s) {
+  if (!s) return '';
+  let out = String(s);
+  for (const re of PATTERNS) out = out.replace(re, '');
+  out = out.replace(/@everyone\b/gi, '').replace(/@here\b/gi, '');
+  return out
+    .split('\n')
+    .map(line => line.replace(/[^\S\n]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 // Arrondit un Date (ou ms) à la minute (secondes/ms à 0). Renvoie un Date.
 // Anti-fingerprint : empêche la corrélation par timestamp sub-seconde
 // entre le message source et le message relayé.
@@ -220,6 +240,81 @@ function parseExitStatus(text) {
     if (re.test(text)) return true;
   }
   return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// IPO announcements — détection + parsing
+// ─────────────────────────────────────────────────────────────────────
+// Les messages IPO ont une structure multi-section qui ne rentre pas dans
+// le modèle entry/target/stop. Format typique :
+//
+//   📅 IPOs expected next week
+//
+//   $TICKER1 – Name
+//   • bullet
+//   • bullet
+//
+//   $TICKER2 – Name
+//   • bullet
+//
+//   🗓 Both expected to trade: ...
+//
+// Heuristique stricte : "IPO" + au moins 1 $TICKER + un mot-clé financier
+// (raise, valuation, price range, expected to trade, shares, market cap).
+const IPO_FINANCIAL_KEYWORDS = /\b(?:raise|valuation|price\s+range|expected\s+to\s+trade|shares?|float|market\s+cap)\b/i;
+
+function isIPOAnnouncement(text) {
+  if (!text) return false;
+  if (!/\bipos?\b/i.test(text)) return false;
+  if (!/\$[A-Z]{1,6}\b/.test(text)) return false;
+  if (!IPO_FINANCIAL_KEYWORDS.test(text)) return false;
+  return true;
+}
+
+// Parse un message IPO en blocs structurés. Retourne :
+//   { header: string|null, ipos: [{ ticker, name, bullets }], footer: string|null }
+// ou null si le message n'est pas reconnu comme IPO.
+//
+// Stratégie : split par double newline (\n\s*\n). Chaque bloc commençant
+// par "$TICKER" est traité comme un IPO ; les blocs avant le premier
+// $TICKER deviennent le header ; les blocs après deviennent le footer.
+function parseIPOAnnouncement(text) {
+  if (!text) return null;
+  if (!isIPOAnnouncement(text)) return null;
+
+  const blocks = text.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
+  let header = null;
+  let footer = null;
+  const ipos = [];
+
+  for (const block of blocks) {
+    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) continue;
+    const firstLine = lines[0];
+
+    // Bloc IPO : première ligne commence par "$TICKER" suivi optionnellement
+    // d'un séparateur (–, -, —, :) et du nom de la société.
+    const tickerMatch = firstLine.match(/^\$([A-Z]{1,6})\b\s*[–\-—:]?\s*(.*)$/);
+    if (tickerMatch) {
+      const ticker = tickerMatch[1];
+      const name = (tickerMatch[2] || '').trim();
+      const bullets = lines.slice(1)
+        .map(l => l.replace(/^[•\-\*▪◆►]\s*/, '').trim())
+        .filter(Boolean);
+      ipos.push({
+        ticker,
+        name: name || null,
+        bullets,
+      });
+    } else if (ipos.length === 0) {
+      header = header ? `${header}\n${block}` : block;
+    } else {
+      footer = footer ? `${footer}\n${block}` : block;
+    }
+  }
+
+  if (ipos.length === 0) return null;
+  return { header, ipos, footer };
 }
 
 function buildSignalDTO(message) {
@@ -400,6 +495,46 @@ function brandedEmbedConditional(dto, brand) {
   return eb;
 }
 
+// Construit un embed pour une annonce IPO multi-ticker. `ipoData` =
+// { header, ipos: [{ ticker, name, bullets }], footer } produit par
+// parseIPOAnnouncement (déjà sanitisé pour l'anonymisation).
+//
+// Layout : title = header (ou défaut), 1 field par IPO, footer optionnel
+// dans un dernier field. Discord limites : 25 fields, name 256 chars,
+// value 1024 chars, total 6000 chars — on tronque safe.
+function brandedEmbedIPO(ipoData, brand, createdAt) {
+  const eb = new EmbedBuilder()
+    .setColor(brand.BRAND_COLOR)
+    .setFooter({ text: `via ${brand.BRAND_NAME}` })
+    .setTimestamp(createdAt ? roundToMinute(createdAt) : new Date());
+
+  const title = (ipoData.header || '📅 IPO Announcement').slice(0, 256);
+  eb.setTitle(title);
+
+  // Hard cap 23 ipos pour laisser 1 field au footer + marge.
+  const ipos = ipoData.ipos.slice(0, 23);
+  for (const ipo of ipos) {
+    const fieldName = (ipo.name ? `$${ipo.ticker} — ${ipo.name}` : `$${ipo.ticker}`).slice(0, 256);
+    const value = ipo.bullets.length > 0
+      ? ipo.bullets.map(b => `• ${b}`).join('\n')
+      : '_(no details provided)_';
+    eb.addFields({ name: fieldName, value: value.slice(0, 1024), inline: false });
+  }
+
+  if (ipoData.footer) {
+    eb.addFields({
+      name: '​',
+      value: ipoData.footer.slice(0, 1024),
+      inline: false,
+    });
+  }
+
+  if (brand.BRAND_THUMBNAIL_URL) eb.setThumbnail(brand.BRAND_THUMBNAIL_URL);
+  if (brand.BRAND_IMAGE_URL) eb.setImage(brand.BRAND_IMAGE_URL);
+
+  return eb;
+}
+
 // Construit l'embed Discord branded depuis un DTO. PURE : retourne un
 // EmbedBuilder, ne l'envoie pas. Le caller fait le `.send({ embeds: [...] })`
 // avec `allowedMentions: { parse: [] }`.
@@ -461,6 +596,7 @@ function brandedEmbed(dto, brand) {
 
 module.exports = {
   sanitizeText,
+  sanitizeTextPreserveLines,
   roundToMinute,
   detectSide,
   buildSignalDTO,
@@ -476,4 +612,7 @@ module.exports = {
   parseSignalNote,
   parseExitStatus,
   EXIT_STATUS_PATTERNS,
+  isIPOAnnouncement,
+  parseIPOAnnouncement,
+  brandedEmbedIPO,
 };

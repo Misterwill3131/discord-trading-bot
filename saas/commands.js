@@ -17,6 +17,8 @@
 //   /setup channel:<channel>             — salon des signaux principaux
 //   /setup-passthrough channel:<channel> — salon des alertes TrendVision (opt-in)
 //   /setup-passthrough channel:none      — désactive la réception passthrough
+//   /setup-ipo channel:<channel>         — salon des annonces IPO (opt-in)
+//   /setup-ipo                           — désactive la réception IPO
 //   /status
 //   /connect code:<code>
 // ─────────────────────────────────────────────────────────────────────
@@ -125,6 +127,18 @@ function buildClientCommands() {
       .setRequired(false)
       .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement));
 
+  // Salon dédié aux annonces IPO (multi-ticker, format embed structuré).
+  // Channel optionnel : si omis, désactive la réception IPO.
+  const setupIPO = new SlashCommandBuilder()
+    .setName('setup-ipo')
+    .setDescription(`Choose a separate channel for IPO announcements (optional)`)
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .setDMPermission(false)
+    .addChannelOption(o => o.setName('channel')
+      .setDescription('Target channel for IPO announcements. Omit to disable.')
+      .setRequired(false)
+      .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement));
+
   const status = new SlashCommandBuilder()
     .setName('status')
     .setDescription(`Show your ${BRAND_NAME} subscription status`)
@@ -138,7 +152,7 @@ function buildClientCommands() {
     .setDMPermission(false)
     .addStringOption(o => o.setName('code').setDescription('Your claim code').setRequired(true));
 
-  return [setup.toJSON(), setupPassthrough.toJSON(), status.toJSON(), connect.toJSON()];
+  return [setup.toJSON(), setupPassthrough.toJSON(), setupIPO.toJSON(), status.toJSON(), connect.toJSON()];
 }
 
 // ── Handlers ────────────────────────────────────────────────────────
@@ -221,6 +235,7 @@ async function handleSaasInfo(interaction) {
       { name: 'Expires', value: lic.expires_at ? lic.expires_at.slice(0, 10) : 'lifetime', inline: true },
       { name: 'Signals channel', value: lic.target_channel_id ? `<#${lic.target_channel_id}>` : '(not set)', inline: true },
       { name: 'Passthrough channel', value: lic.passthrough_channel_id ? `<#${lic.passthrough_channel_id}>` : '(disabled)', inline: true },
+      { name: 'IPO channel', value: lic.ipo_channel_id ? `<#${lic.ipo_channel_id}>` : '(disabled)', inline: true },
       { name: 'Last relay', value: lic.last_relay_at || 'never', inline: true },
       { name: 'Relays 7d', value: `ok=${stats.ok} skip=${stats.skip} err=${stats.error}`, inline: true },
     );
@@ -356,6 +371,37 @@ async function handleSetupPassthrough(interaction) {
   });
 }
 
+// /setup-ipo channel:<channel?>
+// Configure (ou désactive) le salon de réception des annonces IPO
+// multi-ticker (embed structuré).
+async function handleSetupIPO(interaction) {
+  if (!manageGuildOnly(interaction)) return;
+  const lic = licenses.get(interaction.guildId);
+  if (!licenses.isActive(lic)) {
+    return safeReply(interaction, {
+      content: 'No active subscription found for this server. Use /connect with your claim code first.',
+    });
+  }
+  const channel = interaction.options.getChannel('channel', false);
+  if (!channel) {
+    licenses.setIPOChannel(interaction.guildId, null, { admin: interaction.user.id });
+    return safeReply(interaction, {
+      content: `IPO announcements disabled. You will no longer receive IPO messages.`,
+    });
+  }
+  const me = interaction.guild.members.me;
+  const perms = channel.permissionsFor(me);
+  if (!perms || !perms.has(PermissionFlagsBits.SendMessages) || !perms.has(PermissionFlagsBits.EmbedLinks)) {
+    return safeReply(interaction, {
+      content: `I need "Send Messages" and "Embed Links" permissions in ${channel}. Please adjust and retry.`,
+    });
+  }
+  licenses.setIPOChannel(interaction.guildId, channel.id, { admin: interaction.user.id });
+  return safeReply(interaction, {
+    content: `IPO announcements will now be posted in ${channel}, separately from signals and passthrough alerts.`,
+  });
+}
+
 async function handleStatus(interaction) {
   if (!manageGuildOnly(interaction)) return;
   const lic = licenses.get(interaction.guildId);
@@ -371,6 +417,7 @@ async function handleStatus(interaction) {
       { name: 'Expires', value: lic.expires_at ? lic.expires_at.slice(0, 10) : 'lifetime', inline: true },
       { name: 'Signals channel', value: lic.target_channel_id ? `<#${lic.target_channel_id}>` : '(not set — run /setup)', inline: false },
       { name: 'Passthrough channel (TrendVision)', value: lic.passthrough_channel_id ? `<#${lic.passthrough_channel_id}>` : '(disabled — run /setup-passthrough to enable)', inline: false },
+      { name: 'IPO channel', value: lic.ipo_channel_id ? `<#${lic.ipo_channel_id}>` : '(disabled — run /setup-ipo to enable)', inline: false },
       { name: 'Last signal received', value: lic.last_relay_at || 'never', inline: false },
     )
     .setFooter({ text: `via ${BRAND_NAME}` });
@@ -453,6 +500,7 @@ function registerSaasCommands(clientSaas, opts) {
         }
         case 'setup':              return handleSetup(interaction, clientSaas);
         case 'setup-passthrough':  return handleSetupPassthrough(interaction);
+        case 'setup-ipo':          return handleSetupIPO(interaction);
         case 'status':             return handleStatus(interaction);
         case 'connect':            return handleConnect(interaction);
         default:

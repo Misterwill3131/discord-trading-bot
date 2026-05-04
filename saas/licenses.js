@@ -96,6 +96,15 @@ function setPassthroughChannel(guildId, channelId, { admin } = {}) {
   }
 }
 
+// Channel dédié pour les annonces IPO multi-ticker. Passer null pour
+// désactiver la réception des IPOs sur ce serveur.
+function setIPOChannel(guildId, channelId, { admin } = {}) {
+  db.licenseSetIPOChannel(guildId, channelId);
+  if (admin) {
+    db.adminActionInsert({ admin, action: 'set-ipo-channel', guild_id: guildId, payload: { channelId } });
+  }
+}
+
 // Renouvelle une licence (Launchpass renewed event). expiresAtIso ISO string.
 function renew(guildId, expiresAtIso) {
   db.licenseSetExpires(guildId, expiresAtIso, 'active');
@@ -120,6 +129,12 @@ function listReadyForRelay() {
 // Liste à parcourir pour broadcast une alerte passthrough (TrendVision, etc.).
 function listReadyForPassthrough() {
   return db.licenseListPassthroughReady().filter(l => !isExpired(l));
+}
+
+// Licences ACTIVES avec ipo_channel_id défini ET non expirées.
+// Liste à parcourir pour broadcast une annonce IPO.
+function listReadyForIPO() {
+  return db.licenseListIPOReady().filter(l => !isExpired(l));
 }
 
 function findByLaunchpassSub(subId) {
@@ -264,11 +279,13 @@ module.exports = {
   cancel,
   setTargetChannel,
   setPassthroughChannel,
+  setIPOChannel,
   renew,
   get,
   list,
   listReadyForRelay,
   listReadyForPassthrough,
+  listReadyForIPO,
   findByLaunchpassSub,
   // claim flow
   generateClaimCode,

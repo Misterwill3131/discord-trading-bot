@@ -383,6 +383,10 @@ addColumnIfMissing('trend_state', 'volume_above_alerted_today', 'INTEGER DEFAULT
 // salon distinct du target_channel_id (signaux principaux).
 addColumnIfMissing('licenses', 'passthrough_channel_id', 'TEXT');
 
+// Salon dédié aux annonces IPO multi-section. Distinct des signaux
+// classiques et du salon passthrough.
+addColumnIfMissing('licenses', 'ipo_channel_id', 'TEXT');
+
 // ── Prepared statements (réutilisables, plus rapides) ────────────────
 
 // INSERT OR IGNORE : si un id existe déjà, on saute sans erreur. Utile
@@ -956,7 +960,9 @@ const stmtLicenseSetStatus      = db.prepare('UPDATE licenses SET status = ? WHE
 const stmtLicenseSetExpires     = db.prepare('UPDATE licenses SET expires_at = ?, status = ? WHERE guild_id = ?');
 const stmtLicenseSetTargetCh    = db.prepare('UPDATE licenses SET target_channel_id = ? WHERE guild_id = ?');
 const stmtLicenseSetPassCh      = db.prepare('UPDATE licenses SET passthrough_channel_id = ? WHERE guild_id = ?');
+const stmtLicenseSetIPOCh       = db.prepare('UPDATE licenses SET ipo_channel_id = ? WHERE guild_id = ?');
 const stmtLicenseListPassthrough = db.prepare("SELECT * FROM licenses WHERE status = 'active' AND passthrough_channel_id IS NOT NULL");
+const stmtLicenseListIPO        = db.prepare("SELECT * FROM licenses WHERE status = 'active' AND ipo_channel_id IS NOT NULL");
 const stmtLicenseTouchRelay     = db.prepare("UPDATE licenses SET last_relay_at = datetime('now') WHERE guild_id = ?");
 const stmtLicenseFindByLpSub    = db.prepare('SELECT * FROM licenses WHERE launchpass_subscription_id = ? LIMIT 1');
 const stmtLicenseDelete         = db.prepare('DELETE FROM licenses WHERE guild_id = ?');
@@ -1004,10 +1010,19 @@ function licenseSetPassthroughChannel(guildId, channelId) {
   return stmtLicenseSetPassCh.run(channelId ? String(channelId) : null, String(guildId)).changes > 0;
 }
 
+function licenseSetIPOChannel(guildId, channelId) {
+  return stmtLicenseSetIPOCh.run(channelId ? String(channelId) : null, String(guildId)).changes > 0;
+}
+
 // Active licenses qui ont un passthrough_channel_id configuré. Le filtrage
 // d'expiration reste à la charge du caller (cohérent avec licenseList).
 function licenseListPassthroughReady() {
   return stmtLicenseListPassthrough.all();
+}
+
+// Active licenses qui ont un ipo_channel_id configuré.
+function licenseListIPOReady() {
+  return stmtLicenseListIPO.all();
 }
 
 function licenseTouchRelay(guildId) {
@@ -1507,7 +1522,9 @@ module.exports = {
   licenseSetExpires,
   licenseSetTargetChannel,
   licenseSetPassthroughChannel,
+  licenseSetIPOChannel,
   licenseListPassthroughReady,
+  licenseListIPOReady,
   licenseTouchRelay,
   licenseFindByLaunchpassSub,
   licenseDelete,

@@ -14,7 +14,15 @@
 
 const db = require('../db/sqlite');
 const licenses = require('./licenses');
-const { buildSignalDTO, brandedEmbed, sanitizeText } = require('./anonymize');
+const {
+  buildSignalDTO,
+  brandedEmbed,
+  brandedEmbedIPO,
+  sanitizeText,
+  sanitizeTextPreserveLines,
+  isIPOAnnouncement,
+  parseIPOAnnouncement,
+} = require('./anonymize');
 const brand = require('./brand');
 
 // Filtres heuristiques avant relais. On ne relaye QUE les messages où un
@@ -191,6 +199,57 @@ async function broadcastRaw(clientSaas, sourceMessageId, content) {
   return { ok, skip, error, total: targets.length };
 }
 
+// Envoie un embed IPO à UN guild client dans son ipo_channel_id.
+async function sendIPOToClient(clientSaas, license, embed) {
+  try {
+    const guild = clientSaas.guilds.cache.get(license.guild_id);
+    if (!guild) {
+      return { status: 'skip', error: 'bot-not-in-guild' };
+    }
+    if (!license.ipo_channel_id) {
+      return { status: 'skip', error: 'no-ipo-channel' };
+    }
+    const channel = await clientSaas.channels.fetch(license.ipo_channel_id).catch(() => null);
+    if (!channel || !channel.isTextBased?.()) {
+      return { status: 'error', error: 'channel-unavailable' };
+    }
+    const sent = await channel.send({
+      embeds: [embed],
+      allowedMentions: { parse: [] },
+    });
+    return { status: 'ok', msgId: sent.id };
+  } catch (err) {
+    return { status: 'error', error: err.message ? err.message.slice(0, 200) : 'unknown' };
+  }
+}
+
+// Broadcast d'une annonce IPO : embed structuré multi-IPO envoyé dans
+// l'ipo_channel_id de chaque licence qui en a configuré un (opt-in via
+// /setup-ipo).
+async function broadcastIPO(clientSaas, sourceMessageId, embed) {
+  const targets = licenses.listReadyForIPO();
+  let ok = 0, skip = 0, error = 0;
+  for (const lic of targets) {
+    const res = await sendIPOToClient(clientSaas, lic, embed);
+    db.relayLogInsert({
+      guild_id: lic.guild_id,
+      source_message_id: sourceMessageId,
+      relayed_message_id: res.msgId || null,
+      status: res.status,
+      error: res.error || null,
+    });
+    if (res.status === 'ok') {
+      ok++;
+      db.licenseTouchRelay(lic.guild_id);
+    } else if (res.status === 'skip') {
+      skip++;
+    } else {
+      error++;
+    }
+  }
+  return { ok, skip, error, total: targets.length };
+}
+
 // Clé KV settings où sont persistées les overrides runtime.
 // Si présente, l'array de channel IDs override l'env var SOURCE_CHANNEL_IDS.
 // Modifiable à chaud via /saas source — pas de redeploy nécessaire.
@@ -259,7 +318,12 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
         // SOURCE_CHANNEL_IDS sans copier les IDs un par un depuis Discord.
         try {
           if (!isAuthorBlocked(message, blockedBotNames) && message.guildId) {
-            if (isPassthroughBot(message, loadPassthroughBotNames())) {
+            if (isIPOAnnouncement(message.content || '')) {
+              console.log(
+                `[saas/relay] MISSED IPO — channel="${message.channel?.name || '?'}" ` +
+                `id=${message.channelId} (add to SOURCE_CHANNEL_IDS to relay)`
+              );
+            } else if (isPassthroughBot(message, loadPassthroughBotNames())) {
               console.log(
                 `[saas/relay] MISSED passthrough — channel="${message.channel?.name || '?'}" ` +
                 `id=${message.channelId} author="${message.author?.username || '?'}" ` +
@@ -297,6 +361,32 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
         console.log(
           `[saas/relay] reject: author blocked — author="${message.author?.username || '?'}" ` +
           `id=${message.author?.id} msg=${message.id}`
+        );
+        return;
+      }
+
+      // Filtre 5a : annonce IPO (multi-ticker, format structuré). Bypass
+      // shouldRelay (ne rentre pas dans le modèle entry/target/stop). Détecté
+      // via heuristique stricte : "IPO" + $TICKER + mot-clé financier.
+      if (isIPOAnnouncement(message.content || '')) {
+        const sanitized = sanitizeTextPreserveLines(message.content || '');
+        const parsed = parseIPOAnnouncement(sanitized);
+        if (!parsed || parsed.ipos.length === 0) {
+          console.log(
+            `[saas/relay] IPO detected but parse failed — author="${message.author?.username || '?'}" ` +
+            `msg=${message.id}`
+          );
+          return;
+        }
+        if (!clientSaas.isReady?.()) {
+          console.warn('[saas/relay] clientSaas not ready — skipping IPO broadcast');
+          return;
+        }
+        const embed = brandedEmbedIPO(parsed, brand, message.createdAt);
+        const result = await broadcastIPO(clientSaas, String(message.id), embed);
+        console.log(
+          `[saas/relay] IPO msg=${message.id} tickers=[${parsed.ipos.map(i => i.ticker).join(',')}] ` +
+          `→ ok=${result.ok} skip=${result.skip} err=${result.error} (of ${result.total})`
         );
         return;
       }
@@ -370,6 +460,7 @@ module.exports = {
   register,
   broadcast,                  // exposé pour tests
   broadcastRaw,               // exposé pour tests
+  broadcastIPO,               // exposé pour tests
   shouldRelay,                // exposé pour tests
   isAuthorBlocked,            // exposé pour tests
   isPassthroughBot,           // exposé pour tests

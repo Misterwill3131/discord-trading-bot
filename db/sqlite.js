@@ -225,6 +225,21 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_daily_alert_log_date ON daily_alert_log(alert_date);
 
+  -- Cache des classifications LLM. Clé : SHA-256 du texte trimmé.
+  -- Un même message = même classification → cache forever (pas de TTL).
+  -- Évite de re-payer l'API pour les duplicates ("watch list updated"
+  -- reposté, signal copié, etc.). Stocke aussi le modèle utilisé pour
+  -- pouvoir invalider proprement quand on change de modèle.
+  CREATE TABLE IF NOT EXISTS llm_classifications (
+    text_hash      TEXT PRIMARY KEY,                 -- SHA-256 hex du texte trimmé
+    text_sample    TEXT NOT NULL,                    -- 200 premiers chars (debug/audit)
+    type           TEXT NOT NULL,                    -- 'entry'|'exit'|'ipo'|'passthrough'|'ignore'
+    entities_json  TEXT NOT NULL,                    -- JSON {ticker, entry, target, stop, low, high, confidence}
+    model          TEXT NOT NULL,                    -- ex: 'claude-haiku-4-5-20251001'
+    ts             TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_llm_classifications_ts ON llm_classifications(ts);
+
   -- Audit admin : trace immuable des actions sur les licences (pour
   -- support, conformité, et debug si un client se plaint d'une suspension).
   CREATE TABLE IF NOT EXISTS admin_actions (
@@ -1147,6 +1162,52 @@ function dailyAlertLogPurgeOld(keepDays = 30) {
   return stmtDailyAlertLogPurge.run(cutoff).changes;
 }
 
+// ── llm_classifications ─────────────────────────────────────────────
+
+const stmtLlmClassifyGet = db.prepare(`
+  SELECT type, entities_json, model FROM llm_classifications WHERE text_hash = ?
+`);
+const stmtLlmClassifyPut = db.prepare(`
+  INSERT OR REPLACE INTO llm_classifications (text_hash, text_sample, type, entities_json, model)
+  VALUES (@text_hash, @text_sample, @type, @entities_json, @model)
+`);
+const stmtLlmClassifyStats = db.prepare(`
+  SELECT type, COUNT(*) AS n FROM llm_classifications GROUP BY type
+`);
+
+// Lookup cache. Renvoie { type, entities, model } ou null si miss.
+function llmClassifyGet(hash) {
+  const row = stmtLlmClassifyGet.get(hash);
+  if (!row) return null;
+  let entities = null;
+  try { entities = JSON.parse(row.entities_json); } catch { entities = {}; }
+  return { type: row.type, entities, model: row.model };
+}
+
+// Insère ou remplace le cache (REPLACE permet d'override si on re-classifie
+// avec un modèle plus récent — voir llmClassifyInvalidateModel).
+function llmClassifyPut(hash, textSample, type, entities, model) {
+  stmtLlmClassifyPut.run({
+    text_hash:     String(hash),
+    text_sample:   String(textSample || '').slice(0, 200),
+    type:          String(type),
+    entities_json: JSON.stringify(entities || {}),
+    model:         String(model),
+  });
+}
+
+// Invalide tout le cache d'un modèle donné (utile après un changement de
+// prompt ou un upgrade Haiku → Sonnet). Renvoie le nombre de lignes supprimées.
+function llmClassifyInvalidateModel(model) {
+  return db.prepare('DELETE FROM llm_classifications WHERE model = ?').run(String(model)).changes;
+}
+
+function llmClassifyStats() {
+  const out = {};
+  for (const row of stmtLlmClassifyStats.all()) out[row.type] = row.n;
+  return out;
+}
+
 // ── admin_actions ───────────────────────────────────────────────────
 
 const stmtAdminActionInsert = db.prepare(`
@@ -1606,6 +1667,10 @@ module.exports = {
   dailyAlertLogHas,
   dailyAlertLogPurgeOld,
   todayUTCDate,
+  llmClassifyGet,
+  llmClassifyPut,
+  llmClassifyInvalidateModel,
+  llmClassifyStats,
   relayLogRecent,
   relayLogStatsSince,
 

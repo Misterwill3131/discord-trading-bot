@@ -11,7 +11,7 @@ const fs = require('node:fs');
 const tmpDir = fs.mkdtempSync('/tmp/llm-classify-test-');
 process.env.DATA_DIR = tmpDir;
 
-const { parseClassification, hashText, isEnabled, classify, VALID_TYPES, DEFAULT_MODEL } = require('./llm-classify');
+const { parseClassification, hashText, isEnabled, classify, VALID_TYPES, DEFAULT_MODEL, PROMPT_VERSION } = require('./llm-classify');
 const db = require('../db/sqlite');
 
 // ── parseClassification ─────────────────────────────────────────────
@@ -133,15 +133,36 @@ test('classify: cache hit court-circuite l\'API', async () => {
   process.env.ANTHROPIC_API_KEY = 'fake-not-real';
   const text = 'CACHED TEST 1.0-2.0';
   const hash = hashText(text);
-  // Pre-populate cache
+  // Pre-populate avec le model versionné (sinon mismatch → cache miss)
   db.llmClassifyPut(hash, text, 'exit',
     { type: 'exit', ticker: 'CACHED', low: 1, high: 2, confidence: 0.9 },
-    DEFAULT_MODEL);
+    `${DEFAULT_MODEL}#${PROMPT_VERSION}`);
   const r = await classify(text);
   assert.ok(r);
   assert.strictEqual(r.cached, true);
   assert.strictEqual(r.type, 'exit');
   assert.strictEqual(r.entities.ticker, 'CACHED');
+});
+
+test('classify: cache miss si PROMPT_VERSION ne match pas (= ré-classifie)', async () => {
+  process.env.LLM_CLASSIFY_ENABLED = 'true';
+  process.env.ANTHROPIC_API_KEY = 'fake-not-real';
+  const text = 'STALE TEST 5.0-6.0';
+  const hash = hashText(text);
+  // Pre-populate avec une ancienne version du prompt
+  db.llmClassifyPut(hash, text, 'exit',
+    { type: 'exit', ticker: 'STALE', low: 5, high: 6, confidence: 0.9 },
+    `${DEFAULT_MODEL}#v0`);
+  // Avec la version courante différente, le cache hit doit être ignoré.
+  // L'API call va échouer (clé fake) → null. Mais l'important : on n'a
+  // PAS retourné le cache stale.
+  const r = await classify(text);
+  // r === null car l'API call a échoué (fake key), MAIS critique : on ne
+  // doit PAS avoir cached:true (sinon on aurait retourné le stale).
+  if (r !== null) {
+    assert.notStrictEqual(r.cached, true,
+      'cache hit non-versionné aurait dû être ignoré');
+  }
 });
 
 test('classify: texte vide → null sans appel', async () => {

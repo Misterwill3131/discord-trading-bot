@@ -33,6 +33,16 @@ const {
   trimNewsItems,
   purgeNewsOlderThan,
 } = require('../db/sqlite');
+// Import lazy : saas/relay.js charge le module licenses qui touche la DB
+// au boot ; on l'appelle uniquement au runtime via une fonction helper.
+let _saasRelay = null;
+function getSaasRelay() {
+  if (!_saasRelay) {
+    try { _saasRelay = require('../saas/relay'); }
+    catch (e) { _saasRelay = { mirrorNewsToPublicFeed: () => {} }; }
+  }
+  return _saasRelay;
+}
 
 // Rétention des news en DB. Au-delà, on DELETE même si on n'a pas
 // atteint la limite de lignes — c'est une contrainte de fraîcheur
@@ -122,6 +132,16 @@ function addToRecentNews(item) {
     purgeNewsOlderThan(NEWS_RETENTION_DAYS);
   } catch (e) {
     console.error('[news] DB persist failed:', e.message);
+  }
+
+  // Mirror Postgres (feed public) pour que les abonnés du dashboard
+  // (dashboard-only ET discord-owner via UNION côté site) voient les
+  // news en temps réel sur /account/live et les cards d'overview.
+  // Best-effort : on ne bloque jamais le polling ni le post Discord.
+  try {
+    getSaasRelay().mirrorNewsToPublicFeed(entry);
+  } catch (e) {
+    console.error('[news] Postgres mirror failed:', e.message);
   }
 
   // Broadcast aux clients SSE connectés (dashboard /news en temps réel).

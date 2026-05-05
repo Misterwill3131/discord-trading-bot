@@ -33,6 +33,27 @@ const {
 // dessous, on log mais on ne broadcast pas (évite faux positifs LLM).
 const LLM_CONFIDENCE_THRESHOLD = parseFloat(process.env.LLM_CLASSIFY_MIN_CONFIDENCE || '0.7');
 
+// Sentinel guild_id pour le "feed public" — une copie unique de chaque
+// alerte broadcast est écrite avec ce guildId pour permettre aux abonnés
+// dashboard-only (sans serveur Discord à eux) de consulter le flux sur
+// le site. La valeur 'public' est non-numérique donc elle ne peut pas
+// collisionner avec un Discord snowflake (qui est toujours numérique).
+const PUBLIC_FEED_GUILD_ID = 'public';
+
+// Mirror un broadcast au feed public Postgres (best-effort, .catch silencieux).
+// Appelé une seule fois par broadcast (vs N fois par licensed guild) pour
+// que les dashboard-only customers voient chaque alerte exactement une fois.
+// `relayedMessageId` est null car il n'y a pas de message Discord posté
+// pour le feed public — c'est purement le journal source-level.
+function mirrorPublicFeed(payload) {
+  pg.insertSignalRelay({
+    guildId: PUBLIC_FEED_GUILD_ID,
+    relayedMessageId: null,
+    status: 'ok',
+    ...payload,
+  }).catch(() => {});
+}
+
 // Heuristique légère : "ce message MÉRITE qu'on dépense un appel LLM ?"
 // On évite d'appeler le LLM sur du chatter pur ("lol", "thanks") pour
 // limiter les coûts. On exige a minima un ticker pattern (1-6 majuscules
@@ -151,6 +172,17 @@ async function sendToClient(clientSaas, license, embed) {
 async function broadcast(clientSaas, dto) {
   const embed = brandedEmbed(dto, brand);
   const targets = licenses.listReadyForRelay();
+  // Feed public : 1 row par alerte, indépendant du nombre de licences.
+  // Permet aux abonnés dashboard-only de voir le flux côté site.
+  mirrorPublicFeed({
+    type: 'signal',
+    ticker: dto.ticker,
+    side: dto.side,
+    entryPrice: dto.entry_price,
+    targetPrice: dto.target_price,
+    stopPrice: dto.stop_price,
+    sourceMessageId: dto.source_message_id,
+  });
   let ok = 0, skip = 0, error = 0;
   for (const lic of targets) {
     const res = await sendToClient(clientSaas, lic, embed);
@@ -217,6 +249,12 @@ async function sendRawToClient(clientSaas, license, content) {
 // (opt-in explicite via /setup-passthrough).
 async function broadcastRaw(clientSaas, sourceMessageId, content) {
   const targets = licenses.listReadyForPassthrough();
+  // Feed public : voir broadcast() ci-dessus.
+  mirrorPublicFeed({
+    type: 'passthrough',
+    content: typeof content === 'string' ? content.slice(0, 2000) : null,
+    sourceMessageId,
+  });
   let ok = 0, skip = 0, error = 0;
   for (const lic of targets) {
     const res = await sendRawToClient(clientSaas, lic, content);
@@ -279,6 +317,12 @@ async function broadcastIPO(clientSaas, sourceMessageId, embed) {
   const targets = licenses.listReadyForIPO();
   // Extrait un summary depuis l'embed pour stocker dans Postgres.content.
   const ipoSummary = embed && embed.data ? (embed.data.title || embed.data.description || '').slice(0, 2000) : null;
+  // Feed public : voir broadcast() ci-dessus.
+  mirrorPublicFeed({
+    type: 'ipo',
+    content: ipoSummary,
+    sourceMessageId,
+  });
   let ok = 0, skip = 0, error = 0;
   for (const lic of targets) {
     const res = await sendIPOToClient(clientSaas, lic, embed);
@@ -325,6 +369,14 @@ async function broadcastExit(clientSaas, sourceMessageId, embed, meta = {}) {
     : embed && embed.data
       ? (embed.data.title || embed.data.description || '').slice(0, 2000)
       : null;
+  // Feed public : voir broadcast() ci-dessus.
+  mirrorPublicFeed({
+    type: 'signal',
+    ticker: meta.ticker || null,
+    side: 'exit',
+    content: exitContent,
+    sourceMessageId,
+  });
   let ok = 0, skip = 0, error = 0;
   for (const lic of targets) {
     const res = await sendToClient(clientSaas, lic, embed);

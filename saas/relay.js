@@ -313,8 +313,18 @@ async function broadcastIPO(clientSaas, sourceMessageId, embed) {
 // Broadcast d'une suggestion de sortie : embed dédié envoyé dans le
 // target_channel_id (même salon que les signaux d'entrée — cohérence du
 // lifecycle de la position : entry → exit lus dans le même fil).
-async function broadcastExit(clientSaas, sourceMessageId, embed) {
+// `meta` = { ticker, low, high } : utilisé pour le mirror Postgres
+// (signal_relays.ticker + content). Permet au dashboard customer
+// d'afficher l'exit avec ticker structuré et zone de sortie texte.
+async function broadcastExit(clientSaas, sourceMessageId, embed, meta = {}) {
   const targets = licenses.listReadyForRelay();
+  // Préfère un summary structuré "Exit zone $low–$high"; fallback sur le
+  // titre/description de l'embed si meta absent (backward compat).
+  const exitContent = meta.low != null && meta.high != null
+    ? `Exit zone $${meta.low}–$${meta.high}`
+    : embed && embed.data
+      ? (embed.data.title || embed.data.description || '').slice(0, 2000)
+      : null;
   let ok = 0, skip = 0, error = 0;
   for (const lic of targets) {
     const res = await sendToClient(clientSaas, lic, embed);
@@ -325,6 +335,19 @@ async function broadcastExit(clientSaas, sourceMessageId, embed) {
       status: res.status,
       error: res.error || null,
     });
+    // Mirror Postgres pour le dashboard customer (best-effort).
+    // type='signal' + side='exit' : reste dans le bucket "signal" (lifecycle
+    // entry/exit) plutôt que de créer un type top-level dédié.
+    pg.insertSignalRelay({
+      guildId: lic.guild_id,
+      type: 'signal',
+      ticker: meta.ticker || null,
+      side: 'exit',
+      content: exitContent,
+      sourceMessageId,
+      relayedMessageId: res.msgId || null,
+      status: res.status,
+    }).catch(() => {});
     if (res.status === 'ok') {
       ok++;
       db.licenseTouchRelay(lic.guild_id);
@@ -412,7 +435,9 @@ async function tryLLMFallback(clientSaas, message) {
       brand,
       message.createdAt,
     );
-    const r = await broadcastExit(clientSaas, String(message.id), embed);
+    const r = await broadcastExit(clientSaas, String(message.id), embed, {
+      ticker: entities.ticker, low: entities.low, high: entities.high,
+    });
     db.dailyAlertLogInsert({
       ticker: entities.ticker, alert_type: 'exit', source_message_id: String(message.id),
     });
@@ -580,7 +605,9 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
             return;
           }
           const embed = brandedEmbedExit(exitParsed, brand, message.createdAt);
-          const result = await broadcastExit(clientSaas, String(message.id), embed);
+          const result = await broadcastExit(clientSaas, String(message.id), embed, {
+            ticker: exitParsed.ticker, low: exitParsed.low, high: exitParsed.high,
+          });
           db.dailyAlertLogInsert({
             ticker: exitParsed.ticker,
             alert_type: 'exit',
@@ -666,7 +693,9 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
           brand,
           message.createdAt,
         );
-        const result = await broadcastExit(clientSaas, String(message.id), exitEmbed);
+        const result = await broadcastExit(clientSaas, String(message.id), exitEmbed, {
+          ticker: dto.ticker, low: dto.entry_price, high: dto.target_price,
+        });
         db.dailyAlertLogInsert({
           ticker: dto.ticker,
           alert_type: 'exit',

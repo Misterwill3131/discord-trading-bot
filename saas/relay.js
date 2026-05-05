@@ -164,6 +164,7 @@ async function broadcast(clientSaas, dto) {
     // Mirror Postgres pour le dashboard customer (best-effort).
     pg.insertSignalRelay({
       guildId: lic.guild_id,
+      type: 'signal',
       ticker: dto.ticker,
       side: dto.side, // 'long' | 'short' | undefined
       entryPrice: dto.entry_price,
@@ -226,6 +227,15 @@ async function broadcastRaw(clientSaas, sourceMessageId, content) {
       status: res.status,
       error: res.error || null,
     });
+    // Mirror Postgres pour le dashboard customer (best-effort).
+    pg.insertSignalRelay({
+      guildId: lic.guild_id,
+      type: 'passthrough',
+      content: typeof content === 'string' ? content.slice(0, 2000) : null,
+      sourceMessageId,
+      relayedMessageId: res.msgId || null,
+      status: res.status,
+    }).catch(() => {});
     if (res.status === 'ok') {
       ok++;
       db.licenseTouchRelay(lic.guild_id);
@@ -267,6 +277,8 @@ async function sendIPOToClient(clientSaas, license, embed) {
 // /setup-ipo).
 async function broadcastIPO(clientSaas, sourceMessageId, embed) {
   const targets = licenses.listReadyForIPO();
+  // Extrait un summary depuis l'embed pour stocker dans Postgres.content.
+  const ipoSummary = embed && embed.data ? (embed.data.title || embed.data.description || '').slice(0, 2000) : null;
   let ok = 0, skip = 0, error = 0;
   for (const lic of targets) {
     const res = await sendIPOToClient(clientSaas, lic, embed);
@@ -277,6 +289,15 @@ async function broadcastIPO(clientSaas, sourceMessageId, embed) {
       status: res.status,
       error: res.error || null,
     });
+    // Mirror Postgres pour le dashboard customer (best-effort).
+    pg.insertSignalRelay({
+      guildId: lic.guild_id,
+      type: 'ipo',
+      content: ipoSummary,
+      sourceMessageId,
+      relayedMessageId: res.msgId || null,
+      status: res.status,
+    }).catch(() => {});
     if (res.status === 'ok') {
       ok++;
       db.licenseTouchRelay(lic.guild_id);

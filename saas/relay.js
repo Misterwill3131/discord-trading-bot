@@ -15,6 +15,7 @@
 const db = require('../db/sqlite');
 const pg = require('../db/postgres');
 const licenses = require('./licenses');
+const llmClassify = require('../services/llm-classify');
 const {
   buildSignalDTO,
   brandedEmbed,
@@ -27,6 +28,23 @@ const {
   isExitSuggestion,
   looksLikeShortSignal,
 } = require('./anonymize');
+
+// Seuil de confiance LLM minimum pour acter sur une classification. En
+// dessous, on log mais on ne broadcast pas (évite faux positifs LLM).
+const LLM_CONFIDENCE_THRESHOLD = parseFloat(process.env.LLM_CLASSIFY_MIN_CONFIDENCE || '0.7');
+
+// Heuristique légère : "ce message MÉRITE qu'on dépense un appel LLM ?"
+// On évite d'appeler le LLM sur du chatter pur ("lol", "thanks") pour
+// limiter les coûts. On exige a minima un ticker pattern (1-6 majuscules
+// précédé éventuellement de $) OU au moins 2 nombres.
+function looksWorthLLM(text) {
+  if (!text) return false;
+  const t = String(text);
+  if (t.length < 4 || t.length > 500) return false;
+  const hasTicker = /\$?[A-Z]{2,6}\b/.test(t);
+  const numCount = (t.match(/\d+(?:\.\d+)?/g) || []).length;
+  return hasTicker || numCount >= 2;
+}
 const brand = require('./brand');
 
 // Filtres heuristiques avant relais. On ne relaye QUE les messages où un
@@ -340,6 +358,90 @@ function setSourceChannels(channelIds) {
 //
 // sourceChannelIds est utilisé comme FALLBACK uniquement — la liste effective
 // est lue à chaque message via loadSourceChannels (qui priorise l'override DB).
+// Appelle le LLM pour classifier un message rejeté par les heuristiques,
+// puis broadcast selon la classification. Best-effort : tout échec
+// (API down, JSON malformé, low confidence) → log silencieux + return.
+//
+// Important : NE broadcast QUE si confiance >= LLM_CONFIDENCE_THRESHOLD
+// pour éviter d'inonder les clients de faux positifs LLM.
+async function tryLLMFallback(clientSaas, message) {
+  const result = await llmClassify.classify(message.content || '');
+  if (!result) return; // API indispo / JSON invalide / disabled
+  const { type, entities, cached, latencyMs, model } = result;
+  const conf = entities?.confidence ?? 0;
+
+  console.log(
+    `[saas/relay] LLM msg=${message.id} type=${type} ticker=${entities?.ticker || '-'} ` +
+    `conf=${conf.toFixed(2)} cached=${cached} latency=${latencyMs}ms model=${model}`
+  );
+
+  if (conf < LLM_CONFIDENCE_THRESHOLD) return;
+  if (type === 'ignore') return;
+
+  if (!clientSaas.isReady?.()) {
+    console.warn('[saas/relay] clientSaas not ready — skipping LLM-routed broadcast');
+    return;
+  }
+
+  // Routing selon classification LLM
+  if (type === 'exit' && entities.ticker
+      && Number.isFinite(entities.low) && Number.isFinite(entities.high)) {
+    const embed = brandedEmbedExit(
+      { ticker: entities.ticker, low: entities.low, high: entities.high },
+      brand,
+      message.createdAt,
+    );
+    const r = await broadcastExit(clientSaas, String(message.id), embed);
+    db.dailyAlertLogInsert({
+      ticker: entities.ticker, alert_type: 'exit', source_message_id: String(message.id),
+    });
+    console.log(
+      `[saas/relay] EXIT (LLM) msg=${message.id} ticker=${entities.ticker} ` +
+      `zone=${entities.low}-${entities.high} → ok=${r.ok} skip=${r.skip} err=${r.error}`
+    );
+    return;
+  }
+
+  if (type === 'entry' && entities.ticker && Number.isFinite(entities.entry)) {
+    // Construit un DTO synthétique à partir des entités LLM, en partant
+    // du DTO regex (préserve note, ts_minute, source_message_id).
+    const baseDto = buildSignalDTO(message);
+    const syntheticDto = {
+      ...baseDto,
+      ticker:       entities.ticker,
+      entry_price:  entities.entry,
+      target_price: Number.isFinite(entities.target) ? entities.target : null,
+      stop_price:   Number.isFinite(entities.stop) ? entities.stop : null,
+    };
+    const r = await broadcast(clientSaas, syntheticDto);
+    db.dailyAlertLogInsert({
+      ticker: entities.ticker, alert_type: 'entry', source_message_id: String(message.id),
+    });
+    console.log(
+      `[saas/relay] ENTRY (LLM) msg=${message.id} ticker=${entities.ticker} ` +
+      `entry=${entities.entry} target=${entities.target} stop=${entities.stop} ` +
+      `→ ok=${r.ok} skip=${r.skip} err=${r.error}`
+    );
+    return;
+  }
+
+  if (type === 'passthrough') {
+    const sanitized = sanitizeText(message.content || '');
+    if (!sanitized) return;
+    const r = await broadcastRaw(clientSaas, String(message.id), sanitized);
+    console.log(
+      `[saas/relay] passthrough (LLM) msg=${message.id} → ok=${r.ok} skip=${r.skip} err=${r.error}`
+    );
+    return;
+  }
+
+  // type=='ipo' : pas géré par LLM (l'embed IPO nécessite parseIPOAnnouncement
+  // pour la structure multi-section ; on log et on laisse tomber). Si la
+  // regex IPO fast-path n'a pas attrapé, c'est probablement un format
+  // dégradé qu'on préfère ignorer plutôt que d'envoyer un embed bancal.
+  console.log(`[saas/relay] LLM type=${type} not routed (no handler) msg=${message.id}`);
+}
+
 function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds }) {
   if (!clientSource || !clientSaas) {
     console.warn('[saas/relay] clientSource and clientSaas required — skipping wire-up');
@@ -507,6 +609,13 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
             `entry=${dto.entry_price} target=${dto.target_price} exit_update=${dto.is_exit_update} ` +
             `author="${message.author?.username || '?'}" content="${preview}"`
           );
+        }
+        // LLM fallback : tenter une 2e opinion sur les messages que les
+        // heuristiques ont rejetés mais qui pourraient être des signaux
+        // déguisés (format inhabituel raté par les regex). Best-effort,
+        // pas de blocage si LLM indispo.
+        if (llmClassify.isEnabled() && looksWorthLLM(message.content || '')) {
+          await tryLLMFallback(clientSaas, message);
         }
         return;
       }

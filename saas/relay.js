@@ -499,14 +499,20 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
         return;
       }
 
-      // Filet de sécurité : si le ticker a déjà reçu une alerte d'entrée
-      // aujourd'hui (UTC) ET le message courant ressemble à un format
-      // court ambigu (peu d'infos, pas de mots-clés explicites), on le
-      // re-route en EXIT au lieu de broadcaster une 2e entrée. Couvre les
-      // cas où isExitSuggestion a raté la détection (caractère exotique,
-      // variante de format).
-      if (looksLikeShortSignal(message.content || '', dto)
-          && db.dailyAlertLogHas(dto.ticker, 'entry')) {
+      // Filet de sécurité : si le message ressemble à un format court
+      // ambigu (peu d'infos, pas de mots-clés explicites comme entry/
+      // target/sl/long/short/etc.), on le re-route en EXIT au lieu de
+      // broadcaster une 2e entrée. Couvre les cas où isExitSuggestion
+      // a raté la détection (regex stricte trop pointue : caractère
+      // exotique, espace bizarre, contenu multi-ligne, etc.).
+      //
+      // Domaine métier : dans le serveur source, "TICKER X-Y" sans
+      // mots-clés signifie TOUJOURS une notification de sortie de
+      // position (entry-exit récap d'un trade clôturé). Les vrais
+      // nouveaux signaux ont toujours des mots-clés explicites
+      // (entry/target/sl/long/setup/etc.) qui sont dans la denylist
+      // SHORT_SIGNAL_BLOCKERS, donc ils ne déclenchent pas ce filet.
+      if (looksLikeShortSignal(message.content || '', dto)) {
         const exitEmbed = brandedEmbedExit(
           { ticker: dto.ticker, low: dto.entry_price, high: dto.target_price },
           brand,
@@ -519,7 +525,7 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
           source_message_id: dto.source_message_id,
         });
         console.log(
-          `[saas/relay] EXIT (safety net) msg=${dto.source_message_id} ticker=${dto.ticker} ` +
+          `[saas/relay] EXIT (compact) msg=${dto.source_message_id} ticker=${dto.ticker} ` +
           `zone=${dto.entry_price}-${dto.target_price} → ok=${result.ok} skip=${result.skip} err=${result.error} (of ${result.total})`
         );
         return;

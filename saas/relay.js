@@ -354,6 +354,21 @@ async function broadcastIPO(clientSaas, sourceMessageId, embed) {
   return { ok, skip, error, total: targets.length };
 }
 
+// Mirror Postgres d'un item de news (FinancialJuice ou autre source RSS).
+// Écrit UNIQUEMENT au feed public — discord-owner customers voient ces
+// rows via UNION côté site (le bot poste déjà la news dans le channel
+// opérateur via news/poller.js, pas dans les guilds clients).
+function mirrorNewsToPublicFeed(item) {
+  if (!item || !item.title) return;
+  const url = item.link ? ` — ${item.link}` : '';
+  const content = `${item.title}${url}`.slice(0, 2000);
+  mirrorPublicFeed({
+    type: 'news',
+    content,
+    sourceMessageId: item.id || null,
+  });
+}
+
 // Broadcast d'une suggestion de sortie : embed dédié envoyé dans le
 // target_channel_id (même salon que les signaux d'entrée — cohérence du
 // lifecycle de la position : entry → exit lus dans le même fil).
@@ -792,6 +807,7 @@ module.exports = {
   broadcastRaw,               // exposé pour tests
   broadcastIPO,               // exposé pour tests
   broadcastExit,              // exposé pour tests
+  mirrorNewsToPublicFeed,     // appelé depuis news/poller.js pour chaque headline
   shouldRelay,                // exposé pour tests
   isAuthorBlocked,            // exposé pour tests
   isPassthroughBot,           // exposé pour tests

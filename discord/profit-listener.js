@@ -90,6 +90,11 @@ function registerProfitListener(client, { profitsChannelId }) {
       // price ranges → count chaque range, sinon → 1 (image ou ticker seul)
       const profitCount = reason === 'price range(s)' ? textCount : 1;
       await profitCounter.addProfitMessage(content, profitCount);
+
+      // Réaction flamme pour confirmer visuellement la détection.
+      // Try/catch silencieux : un échec de réaction (perm manquante, message
+      // déjà supprimé) ne doit pas casser le flux de comptage.
+      try { await message.react('🔥'); } catch (_) {}
     }
   });
 }

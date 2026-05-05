@@ -105,13 +105,17 @@ async function getLicenseByGuildId(guildId) {
 // Insert best-effort : si Postgres down ou table inexistante, on log et
 // on continue (le SQLite relay_log local reste l'audit primaire pour le
 // bot).
+// type values : 'signal' (default), 'passthrough', 'ipo', 'market_alert'.
+// Schema migration 0006 a ajouté type + content sur signal_relays.
 async function insertSignalRelay({
   guildId,
+  type,
   ticker,
   side,
   entryPrice,
   targetPrice,
   stopPrice,
+  content,
   sourceMessageId,
   relayedMessageId,
   status,
@@ -121,16 +125,18 @@ async function insertSignalRelay({
   try {
     await p.query(
       `INSERT INTO signal_relays
-        (guild_id, ticker, side, entry_price, target_price, stop_price,
-         source_message_id, relayed_message_id, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        (guild_id, type, ticker, side, entry_price, target_price, stop_price,
+         content, source_message_id, relayed_message_id, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         guildId,
+        type || 'signal',
         ticker || null,
         side || null,
         entryPrice != null ? String(entryPrice) : null,
         targetPrice != null ? String(targetPrice) : null,
         stopPrice != null ? String(stopPrice) : null,
+        content || null,
         sourceMessageId || null,
         relayedMessageId || null,
         status || 'ok',

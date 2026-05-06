@@ -271,12 +271,26 @@ function extractExitGainPct(content) {
   return null;
 }
 
+// Extrait un pnl explicite (+X% ou -X%) du contenu d'un message.
+// Retourne la première match trouvée, ou null si aucune.
+// Exemples :
+//   "$TSLA out +20%"       → "+20%"
+//   "$AAPL out -5%"        → "-5%"
+//   "$NVDA out +12.5%"     → "+12.5%"
+//   "$TSLA 150 entry long" → null
+function extractPnl(content) {
+  if (!content || typeof content !== 'string') return null;
+  const match = content.match(/[+-]\d+(\.\d+)?%/);
+  return match ? match[0] : null;
+}
+
 module.exports = {
   extractPrices,
   extractTicker,
   detectTicker,
   enrichContent,
   extractExitGainPct,
+  extractPnl,
   stripDiscordMeta,
   TICKER_IGNORE,
 };

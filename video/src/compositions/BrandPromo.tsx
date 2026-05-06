@@ -1,5 +1,6 @@
 import { AbsoluteFill, Sequence } from 'remotion';
 // import { Audio, staticFile } from 'remotion';
+import { LifestyleHook } from '../components/LifestyleHook';
 import { HookBeat } from '../components/HookBeat';
 import { ValueBeat } from '../components/ValueBeat';
 import { CtaBeat } from '../components/CtaBeat';
@@ -16,12 +17,15 @@ export const BrandPromo = () => {
       {/* <Audio src={staticFile('audio/track.mp3')} /> */}
 
       <Sequence from={0} durationInFrames={90}>
+        <LifestyleHook overlayText="BOOM" />
+      </Sequence>
+      <Sequence from={90} durationInFrames={90}>
         <HookBeat />
       </Sequence>
-      <Sequence from={90} durationInFrames={240}>
+      <Sequence from={180} durationInFrames={240}>
         <ValueBeat />
       </Sequence>
-      <Sequence from={330} durationInFrames={120}>
+      <Sequence from={420} durationInFrames={120}>
         <CtaBeat />
       </Sequence>
     </AbsoluteFill>

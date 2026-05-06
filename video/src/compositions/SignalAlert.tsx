@@ -15,13 +15,10 @@ export type SignalAlertProps = {
   pnl?: string;
   author: string;
   message: string;            // NEW
-  timestamp?: string;         // NEW
+  timestamp: string;
 };
 
 export const SignalAlert = ({ ticker, author, message, timestamp }: SignalAlertProps) => {
-  // Si pas de timestamp fourni, utiliser la date courante (au render)
-  const ts = timestamp || new Date().toISOString();
-
   return (
     <AbsoluteFill style={{ backgroundColor: 'black' }}>
       {/*
@@ -39,7 +36,7 @@ export const SignalAlert = ({ ticker, author, message, timestamp }: SignalAlertP
         <RevealAct ticker={ticker} />
       </Sequence>
       <Sequence from={150} durationInFrames={90}>
-        <DataAct author={author} message={message} timestamp={ts} />
+        <DataAct author={author} message={message} timestamp={timestamp} />
       </Sequence>
       <Sequence from={240} durationInFrames={30}>
         <CtaAct />

@@ -23,7 +23,7 @@ describe('BrandPromo composition', () => {
     expect(comp.width).toBe(1080);
     expect(comp.height).toBe(1920);
     expect(comp.fps).toBe(30);
-    expect(comp.durationInFrames).toBe(450);
+    expect(comp.durationInFrames).toBe(540);
   });
 });
 

@@ -147,6 +147,50 @@ async function insertSignalRelay({
   }
 }
 
+// ── Screener alerts (TrendVision scanners) ───────────────────────────
+// Le bot écoute 9 channels TrendVision (ipo-scanner, whale-scanner, etc.)
+// et insère chaque message ici. Le site lit pour /account/screener.
+//
+// Schema défini côté site (lib/db/schema.ts → screener_alerts).
+// Migration 0007 sur Neon.
+//
+// Insert best-effort : si Postgres down, table absente, ou conflit
+// d'unicité (message déjà ingéré au restart bot), on log et on
+// continue. ON CONFLICT DO NOTHING sur source_message_id pour la
+// dedup au niveau DB.
+async function insertScreenerAlert({
+  sourceChannelId,
+  sourceChannelName,
+  sourceMessageId,
+  category,
+  ticker,
+  content,
+  embedJson,
+}) {
+  const p = getPool();
+  if (!p || !sourceMessageId || !category) return;
+  try {
+    await p.query(
+      `INSERT INTO screener_alerts
+        (source_channel_id, source_channel_name, source_message_id,
+         category, ticker, content, embed_json)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (source_message_id) DO NOTHING`,
+      [
+        sourceChannelId || '',
+        sourceChannelName || '',
+        sourceMessageId,
+        category,
+        ticker || null,
+        content || null,
+        embedJson ? JSON.stringify(embedJson) : null,
+      ],
+    );
+  } catch (err) {
+    console.error('[postgres] insertScreenerAlert failed:', err.message);
+  }
+}
+
 // Permet de fermer proprement la pool au shutdown du bot.
 async function close() {
   if (pool) {
@@ -161,5 +205,6 @@ module.exports = {
   consumeClaimCodeAndCreateLicense,
   getLicenseByGuildId,
   insertSignalRelay,
+  insertScreenerAlert,
   close,
 };

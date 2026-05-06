@@ -41,6 +41,7 @@ const CUSTOM_AVATARS = {
   'thedutchess1':   AV('thedutchess1_avatar.png'),
   'Legacy Trading': AV('Legacy Trading_avatar.png'),
   'Protrader Alerts': AV('Protrader Alerts_avatar.png'),
+  'MsKim' : AV('MsKim.png'),
 };
 
 // Rôles personnalisés (id Discord → nom affiché + couleur). Si présent

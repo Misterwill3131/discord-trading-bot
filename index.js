@@ -74,6 +74,7 @@ const { registerPublicRoutes } = require('./routes/public');
 const { registerCheckoutRoutes } = require('./routes/checkout');
 const { registerCustomerAccountRoutes } = require('./routes/customer-account');
 const { registerAdminCmsRoutes } = require('./routes/admin-cms');
+const { registerRenderQueueRoutes } = require('./routes/render-queue');
 
 // ── Configuration env ──────────────────────────────────────────────
 const DISCORD_TOKEN      = process.env.DISCORD_TOKEN;
@@ -305,6 +306,11 @@ const client = new Client({
 setCanvasDiscordClient(client);
 profitCounter.setDiscordClient(client);
 discordClientRef = client;  // active sendTradingAlert()
+
+// Phase 3 render queue : routes HTTP pour le worker local (poll + ACK MP4).
+// Doit être enregistré APRÈS la création de `client` car le helper d'upload
+// Discord a besoin du client pour poster dans RENDER_OUTPUT_CHANNEL_ID.
+registerRenderQueueRoutes(app, client);
 
 // Listeners + scheduler. Les helpers internes font eux-mêmes leur
 // `client.once('ready')` si nécessaire — pas de ordre requis ici.

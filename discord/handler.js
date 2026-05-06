@@ -25,9 +25,9 @@
 const fetch = require('node-fetch');
 
 const { BLOCKED_AUTHORS, getDisplayName } = require('../utils/authors');
-const { extractPrices, extractTicker, stripDiscordMeta } = require('../utils/prices');
+const { extractPrices, extractTicker, stripDiscordMeta, extractPnl } = require('../utils/prices');
 const { classifySignal } = require('../filters/signal');
-const { getMessagesByTicker } = require('../db/sqlite');
+const { getMessagesByTicker, enqueueRenderJob } = require('../db/sqlite');
 const { customFilters } = require('../state/custom-filters');
 const { messageLog, logEvent } = require('../state/messages');
 const { generateImage, generateProofImage } = require('../canvas/proof');
@@ -131,6 +131,33 @@ async function sendToMakeWebhook(makeWebhookUrl, payload) {
     console.log('Sent to Make, status: ' + result.status);
   } catch (err) {
     console.error('Error sending to Make:', err.message);
+  }
+}
+
+// Phase 3 — quand un exit gagnant arrive avec une entrée matchable,
+// enqueue un job pour que le worker local rende la proof video.
+function maybeEnqueueProofRender({
+  filterType, signalTicker, pnl, originalAlert,
+  authorName, content, messageCreatedAt,
+}) {
+  if (filterType !== 'exit') return;
+  if (!originalAlert) return;
+  if (!originalAlert.ts) return;        // skip replies sans parent ts
+  if (!pnl || pnl.startsWith('-')) return;  // pnl manquant ou négatif
+
+  try {
+    enqueueRenderJob({
+      ticker: signalTicker,
+      entry_author: originalAlert.author,
+      entry_message: originalAlert.content,
+      entry_ts: originalAlert.ts,
+      exit_author: authorName,
+      exit_message: content,
+      exit_ts: messageCreatedAt.toISOString(),
+      pnl,
+    });
+  } catch (err) {
+    console.error('[render-queue] enqueue failed:', err.message);
   }
 }
 
@@ -390,6 +417,26 @@ function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhoo
       }
     }
 
+    // ── Phase 3 : enqueue render job pour exit gagnant matchable ─────
+    // Indépendant du recap heuristic : on filtre sur filterType==='exit'
+    // + pnl explicite positif. Le worker local poll render_jobs.
+    if (filterType === 'exit' && signalTicker) {
+      const exitOriginalAlert = findOriginalAlert({
+        signalTicker,
+        messageCreatedAt: message.createdAt,
+        isReply, parentContent, parentAuthor,
+      });
+      maybeEnqueueProofRender({
+        filterType,
+        signalTicker,
+        pnl: extractPnl(content),
+        originalAlert: exitOriginalAlert,
+        authorName: message.author.username,
+        content,
+        messageCreatedAt: message.createdAt,
+      });
+    }
+
     // ── Promo image 1080×1080 pour signaux complets ──────────────────
     const pricesData = extractPrices(classifyContent);
     let promoImageBase64 = null;
@@ -431,4 +478,5 @@ module.exports = {
   handleStatsCommand,
   findOriginalAlert,
   formatAnalystEntryEmail,
+  maybeEnqueueProofRender,
 };

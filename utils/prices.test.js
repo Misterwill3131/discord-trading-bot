@@ -120,3 +120,38 @@ test('"NVDA 2.50...3.50 setup" → range NON collapsé (3 dots = séparateur)', 
     assert.strictEqual(p.target_price, 3.5);
   }
 });
+
+const { extractPnl } = require('./prices');
+
+test('extractPnl returns positive pnl from "+20%"', () => {
+  assert.strictEqual(extractPnl('$TSLA out +20%'), '+20%');
+});
+
+test('extractPnl returns negative pnl from "-5%"', () => {
+  assert.strictEqual(extractPnl('$AAPL out -5%'), '-5%');
+});
+
+test('extractPnl handles decimal pnl "+12.5%"', () => {
+  assert.strictEqual(extractPnl('$NVDA out +12.5%'), '+12.5%');
+});
+
+test('extractPnl returns null when no pnl present', () => {
+  assert.strictEqual(extractPnl('$TSLA 150 entry long'), null);
+});
+
+test('extractPnl returns null for empty string', () => {
+  assert.strictEqual(extractPnl(''), null);
+});
+
+test('extractPnl returns null for null/undefined', () => {
+  assert.strictEqual(extractPnl(null), null);
+  assert.strictEqual(extractPnl(undefined), null);
+});
+
+test('extractPnl picks first match if multiple', () => {
+  assert.strictEqual(extractPnl('out +10% target was +15%'), '+10%');
+});
+
+test('extractPnl ignores plain numbers without %', () => {
+  assert.strictEqual(extractPnl('$TSLA 150 entry'), null);
+});

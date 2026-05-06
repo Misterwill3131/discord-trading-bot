@@ -1,6 +1,7 @@
 import { Composition } from 'remotion';
 import { BrandPromo } from './compositions/BrandPromo';
 import { SignalAlert, SignalAlertProps } from './compositions/SignalAlert';
+import { SignalAlertProof, SignalAlertProofProps } from './compositions/SignalAlertProof';
 
 const signalAlertDefaults: SignalAlertProps = {
   ticker: 'TSLA',
@@ -12,6 +13,17 @@ const signalAlertDefaults: SignalAlertProps = {
   author: 'Z',
   message: '$TSLA 150-155 entry long',
   timestamp: '2026-04-25T13:32:00-04:00',
+};
+
+const signalAlertProofDefaults: SignalAlertProofProps = {
+  ticker: 'TSLA',
+  entryAuthor: 'Z',
+  entryMessage: '$TSLA 150 entry long',
+  entryTimestamp: '2026-04-25T13:32:00-04:00',
+  exitAuthor: 'Z',
+  exitMessage: '$TSLA out +20%',
+  exitTimestamp: '2026-04-25T16:30:00-04:00',
+  pnl: '+20%',
 };
 
 export const Root = () => {
@@ -33,6 +45,15 @@ export const Root = () => {
         width={1080}
         height={1920}
         defaultProps={signalAlertDefaults}
+      />
+      <Composition
+        id="SignalAlertProof"
+        component={SignalAlertProof}
+        durationInFrames={510}
+        fps={30}
+        width={1080}
+        height={1920}
+        defaultProps={signalAlertProofDefaults}
       />
     </>
   );

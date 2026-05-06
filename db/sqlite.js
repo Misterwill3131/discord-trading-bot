@@ -391,6 +391,26 @@ db.exec(`
   );
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS render_jobs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker          TEXT NOT NULL,
+    entry_author    TEXT NOT NULL,
+    entry_message   TEXT NOT NULL,
+    entry_ts        TEXT NOT NULL,
+    exit_author     TEXT NOT NULL,
+    exit_message    TEXT NOT NULL,
+    exit_ts         TEXT NOT NULL,
+    pnl             TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    done_at         TEXT,
+    error           TEXT,
+    discord_msg_id  TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_render_jobs_status ON render_jobs(status, created_at);
+`);
+
 // ── Trend module: daily-reference signals — column migrations ─────────
 // SQLite ne supporte pas ALTER TABLE IF NOT EXISTS, donc on inspecte
 // table_info pour rester idempotent et safe au re-démarrage.
@@ -1592,6 +1612,61 @@ function backupDb(destPath) {
   return db.backup(destPath);
 }
 
+// ═════════════════════════════════════════════════════════════════════
+//  Render jobs — queue de rendu vidéo (Phase 3 auto-render proof videos)
+// ═════════════════════════════════════════════════════════════════════
+//
+// Le bot enfile un job ici quand un signal exit gagnant matche une entry.
+// Un worker local poll l'endpoint HTTP, processe le job (Remotion render),
+// puis appelle markRenderJobDone/markRenderJobFailed.
+
+const stmtEnqueueRenderJob = db.prepare(`
+  INSERT INTO render_jobs
+    (ticker, entry_author, entry_message, entry_ts,
+     exit_author, exit_message, exit_ts, pnl)
+  VALUES
+    (@ticker, @entry_author, @entry_message, @entry_ts,
+     @exit_author, @exit_message, @exit_ts, @pnl)
+`);
+
+const stmtGetPendingRenderJobs = db.prepare(`
+  SELECT id, ticker, entry_author, entry_message, entry_ts,
+         exit_author, exit_message, exit_ts, pnl, status, created_at
+  FROM render_jobs
+  WHERE status = 'pending'
+  ORDER BY created_at ASC
+  LIMIT ?
+`);
+
+const stmtMarkRenderJobDone = db.prepare(`
+  UPDATE render_jobs
+  SET status = 'done', done_at = datetime('now'), discord_msg_id = ?
+  WHERE id = ?
+`);
+
+const stmtMarkRenderJobFailed = db.prepare(`
+  UPDATE render_jobs
+  SET status = 'failed', done_at = datetime('now'), error = ?
+  WHERE id = ?
+`);
+
+function enqueueRenderJob(payload) {
+  const result = stmtEnqueueRenderJob.run(payload);
+  return result.lastInsertRowid;
+}
+
+function getPendingRenderJobs(limit = 10) {
+  return stmtGetPendingRenderJobs.all(limit);
+}
+
+function markRenderJobDone(id, discordMsgId) {
+  stmtMarkRenderJobDone.run(discordMsgId || null, id);
+}
+
+function markRenderJobFailed(id, errorMessage) {
+  stmtMarkRenderJobFailed.run(errorMessage || 'unknown error', id);
+}
+
 module.exports = {
   db,
   DB_PATH,
@@ -1722,4 +1797,10 @@ module.exports = {
 
   // diagnostic
   getDbStats,
+
+  // render jobs (Phase 3 auto-render proof videos)
+  enqueueRenderJob,
+  getPendingRenderJobs,
+  markRenderJobDone,
+  markRenderJobFailed,
 };

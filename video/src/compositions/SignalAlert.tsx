@@ -1,4 +1,5 @@
 import { AbsoluteFill, Sequence } from 'remotion';
+// import { Audio, staticFile } from 'remotion';
 import { RevealAct } from '../components/RevealAct';
 import { DataAct } from '../components/DataAct';
 import { CtaAct } from '../components/CtaAct';
@@ -17,6 +18,14 @@ export type SignalAlertProps = {
 export const SignalAlert = ({ ticker, type, direction, entry, target, stop, pnl, author }: SignalAlertProps) => {
   return (
     <AbsoluteFill style={{ backgroundColor: 'black' }}>
+      {/*
+        Pour activer une piste audio :
+        1. Dépose un MP3 dans video/public/audio/signal-track.mp3
+        2. Décommente l'import Audio + staticFile en haut
+        3. Décommente la balise <Audio> ci-dessous
+      */}
+      {/* <Audio src={staticFile('audio/signal-track.mp3')} /> */}
+
       <Sequence from={0} durationInFrames={60}>
         <RevealAct ticker={ticker} />
       </Sequence>

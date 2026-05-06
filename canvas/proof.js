@@ -285,7 +285,7 @@ async function generateImage(author, content, timestamp /*, parentAuthor, parent
   // Username — rouge pour Legacy Trading, dégradé rose pour les autres.
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
-  ctx.font = 'bold 16px ' + FONT;
+  ctx.font = '16px ' + FONT;
   const nameW = ctx.measureText(author || 'Z').width;
   if (author === 'Legacy Trading') {
     ctx.fillStyle = '#e84040';
@@ -431,7 +431,7 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
 
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
-  ctx.font = 'bold 16px ' + FONT;
+  ctx.font = '16px ' + FONT;
   const nameW = ctx.measureText(author || 'Z').width;
 
   if (author === 'Legacy Trading') {
@@ -587,7 +587,7 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
 
   // Nom de l'auteur de l'alerte.
   const refNameX = CONTENT_X + REF_AVT_D + 4;
-  ctx.font = 'bold 12px ' + FONT;
+  ctx.font = '12px ' + FONT;
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
   const refNameW = ctx.measureText(alertAuthor || '?').width;

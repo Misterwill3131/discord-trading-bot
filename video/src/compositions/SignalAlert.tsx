@@ -1,5 +1,6 @@
 import { AbsoluteFill, Sequence } from 'remotion';
 // import { Audio, staticFile } from 'remotion';
+import { LifestyleHook } from '../components/LifestyleHook';
 import { RevealAct } from '../components/RevealAct';
 import { DataAct } from '../components/DataAct';
 import { CtaAct } from '../components/CtaAct';
@@ -13,9 +14,14 @@ export type SignalAlertProps = {
   stop?: string;
   pnl?: string;
   author: string;
+  message: string;            // NEW
+  timestamp?: string;         // NEW
 };
 
-export const SignalAlert = ({ ticker, type, direction, entry, target, stop, pnl, author }: SignalAlertProps) => {
+export const SignalAlert = ({ ticker, author, message, timestamp }: SignalAlertProps) => {
+  // Si pas de timestamp fourni, utiliser la date courante (au render)
+  const ts = timestamp || new Date().toISOString();
+
   return (
     <AbsoluteFill style={{ backgroundColor: 'black' }}>
       {/*
@@ -26,21 +32,16 @@ export const SignalAlert = ({ ticker, type, direction, entry, target, stop, pnl,
       */}
       {/* <Audio src={staticFile('audio/signal-track.mp3')} /> */}
 
-      <Sequence from={0} durationInFrames={60}>
+      <Sequence from={0} durationInFrames={90}>
+        <LifestyleHook overlayText={`$${ticker}`} />
+      </Sequence>
+      <Sequence from={90} durationInFrames={60}>
         <RevealAct ticker={ticker} />
       </Sequence>
-      <Sequence from={60} durationInFrames={90}>
-        <DataAct
-          type={type}
-          direction={direction}
-          entry={entry}
-          target={target}
-          stop={stop}
-          pnl={pnl}
-          author={author}
-        />
+      <Sequence from={150} durationInFrames={90}>
+        <DataAct author={author} message={message} timestamp={ts} />
       </Sequence>
-      <Sequence from={150} durationInFrames={30}>
+      <Sequence from={240} durationInFrames={30}>
         <CtaAct />
       </Sequence>
     </AbsoluteFill>

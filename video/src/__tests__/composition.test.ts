@@ -36,7 +36,7 @@ describe('SignalAlert composition', () => {
     expect(comp.width).toBe(1080);
     expect(comp.height).toBe(1920);
     expect(comp.fps).toBe(30);
-    expect(comp.durationInFrames).toBe(180);
+    expect(comp.durationInFrames).toBe(270);
   });
 
   test('has default props with expected fields', async () => {
@@ -52,6 +52,7 @@ describe('SignalAlert composition', () => {
       target: '165',
       stop: '148',
       author: 'Z',
+      message: '$TSLA 150-155 entry long',
     });
   });
 

@@ -10,6 +10,8 @@ const signalAlertDefaults: SignalAlertProps = {
   target: '165',
   stop: '148',
   author: 'Z',
+  message: '$TSLA 150-155 entry long',
+  timestamp: '2026-04-25T13:32:00-04:00',
 };
 
 export const Root = () => {
@@ -26,7 +28,7 @@ export const Root = () => {
       <Composition
         id="SignalAlert"
         component={SignalAlert}
-        durationInFrames={180}
+        durationInFrames={270}
         fps={30}
         width={1080}
         height={1920}

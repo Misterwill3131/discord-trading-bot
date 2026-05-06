@@ -64,6 +64,7 @@ const { registerSaasAdminRoutes } = require('./routes/saas-admin');
 const { registerGuildGuard } = require('./saas/guards');
 const { registerSaasCommands } = require('./saas/commands');
 const { register: registerSaasRelay } = require('./saas/relay');
+const { register: registerScreenerIngest } = require('./discord/screener-ingest');
 const licenseSync = require('./saas/license-sync');
 
 // Site public de vente (landing, pricing, FAQ, legal, funnel post-action).
@@ -381,6 +382,13 @@ if (SAAS_BOT_TOKEN) {
     sourceGuildId: SAAS_SOURCE_GUILD_ID,
     sourceChannelIds: SAAS_SOURCE_CHANNELS,
   });
+
+  // Screener ingest : listener parallèle sur le même client source
+  // pour les 9 channels TrendVision (ipo, whale, zero-borrow, volume,
+  // all-in-one, squeeze, halts, social-media, tv-news). Insère dans
+  // Postgres screener_alerts. Les channels sont distincts de
+  // SOURCE_CHANNEL_IDS donc pas de double-handling.
+  registerScreenerIngest(client);
 
   clientSaas.once('ready', () => {
     console.log('[saas] Bot connected as ' + clientSaas.user.tag);

@@ -1,6 +1,7 @@
 import { AbsoluteFill, Sequence } from 'remotion';
 import { RevealAct } from '../components/RevealAct';
 import { DataAct } from '../components/DataAct';
+import { CtaAct } from '../components/CtaAct';
 
 export type SignalAlertProps = {
   ticker: string;
@@ -29,6 +30,9 @@ export const SignalAlert = ({ ticker, type, direction, entry, target, stop, pnl,
           pnl={pnl}
           author={author}
         />
+      </Sequence>
+      <Sequence from={150} durationInFrames={30}>
+        <CtaAct />
       </Sequence>
     </AbsoluteFill>
   );

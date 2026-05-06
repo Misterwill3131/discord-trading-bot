@@ -1,6 +1,16 @@
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+// DB isolation — set BEFORE requiring anything that loads db/sqlite.js
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'handler-render-test-'));
+process.env.DATA_DIR = tmpDir;
+
+// Now safe to require modules that load db/sqlite
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { formatAnalystEntryEmail } = require('./handler');
+const { formatAnalystEntryEmail, maybeEnqueueProofRender } = require('./handler');
+const { getPendingRenderJobs } = require('../db/sqlite');
 
 // ── formatAnalystEntryEmail ──────────────────────────────────────────
 // L'email est essentiellement une image inline (cf. notifications/email.js).
@@ -42,17 +52,6 @@ test('formatAnalystEntryEmail always starts with 📥 (required by email filter)
   });
   assert.ok(msg.startsWith('📥'));
 });
-
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
-
-// DB isolation
-const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'handler-render-test-'));
-process.env.DATA_DIR = tmpDir;
-
-const { getPendingRenderJobs } = require('../db/sqlite');
-const { maybeEnqueueProofRender } = require('./handler');
 
 test('maybeEnqueueProofRender enqueues job on winning exit with valid entry', () => {
   const before = getPendingRenderJobs().length;

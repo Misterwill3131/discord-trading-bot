@@ -155,7 +155,7 @@ async function postVideoToChannel(client, channelId, mp4Buffer, caption, filenam
 
 `channelId` vient de l'env var `RENDER_OUTPUT_CHANNEL_ID`. Si pas définie, le job est marqué `failed` avec error `"RENDER_OUTPUT_CHANNEL_ID not set"`.
 
-### 5. Worker — `video/scripts/render-worker.js`
+### 5. Worker — `video/scripts/render-worker.ts`
 
 Le worker vit **à l'intérieur du sous-projet `video/`** (et non à la racine `scripts/`) pour réutiliser ses deps Remotion existantes (`@remotion/bundler`, `@remotion/renderer`). Cela évite de dupliquer ces deps côté bot, qui doit rester léger (pas de Chromium sur Railway). Lancement : `cd video && npm run worker` (nouveau script à ajouter à `video/package.json`).
 
@@ -259,7 +259,7 @@ Tests minimaux dans `scripts/video-render-worker.test.js` (nouveau fichier) :
 
 ### Verification end-to-end (manuel)
 
-1. Lance le worker : `node video/scripts/render-worker.js`
+1. Lance le worker : `node video/scripts/render-worker.ts`
 2. Dans Discord (canal `#trading-floor`), poste `$TSLA 150 entry long` (auteur Z) → puis 30s plus tard `$TSLA out +20%` en reply
 3. Vérifie que `render_jobs` contient un job pending (via `/api/db-viewer` ou query direct)
 4. Attends 30s — worker poll, render, upload
@@ -285,7 +285,7 @@ Au sortir de Phase 3 :
 1. **Bot tests** : `npm test` à la racine — tous les tests existants passent + nouveaux tests render-queue.
 2. **Bot deploy Railway** : nouveau code se déploie sans crash, `render_jobs` table créée par migration au boot.
 3. **Env vars** : `RENDER_WORKER_TOKEN` et `RENDER_OUTPUT_CHANNEL_ID` configurés sur Railway. `BOT_URL` et `RENDER_WORKER_TOKEN` configurés localement (par ex. dans `.env.local`).
-4. **Worker boot** : `node video/scripts/render-worker.js` log `[worker] ready, polling http://...` sans erreur.
+4. **Worker boot** : `node video/scripts/render-worker.ts` log `[worker] ready, polling http://...` sans erreur.
 5. **Test exit gagnant** : poste un message `$TSLA 150 entry long` (Z) puis `$TSLA out +20%` (reply). Job apparaît dans DB. Worker poll, render, upload. Vidéo apparaît dans le canal Discord. Job devient done.
 6. **Test exit perdant** : poste `$AAPL 100 entry long` puis `$AAPL out -5%`. Aucun job créé (pnl négatif filtré).
 7. **Test sans entry matchable** : poste juste `$NVDA out +10%` (pas d'entry préalable). Aucun job (findOriginalAlert null).

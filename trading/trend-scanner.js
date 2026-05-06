@@ -333,17 +333,24 @@ async function runScanCycle({
         store.applyStateUpdates(ticker, verdict.stateUpdates);
       }
 
-      // 8. Direction transition (existing logic, unchanged)
+      // 8. Direction transition. On track l'état (mise à jour de la DB) pour
+      // toutes les transitions, mais on ne fire l'alerte QUE si la nouvelle
+      // direction est uptrend ou downtrend. Skip les transitions vers
+      // 'sideways' (signal trop fréquent, peu actionnable). Le state reste
+      // à jour donc la prochaine transition (ex. sideways → uptrend) montre
+      // bien "Was: sideways" dans son alerte.
       const tNow = now();
       const dedupMs = dedupMinutes * 60 * 1000;
       const messages = [];
       const prevDir = state.direction || null;
       if (verdict.direction !== prevDir) {
-        messages.push({
-          type: 'direction',
-          content: formatDirectionAlert(ticker, prevDir, verdict.direction, verdict.snapshot),
-        });
         store.updateDirection(ticker, verdict.direction, tNow);
+        if (verdict.direction !== 'sideways') {
+          messages.push({
+            type: 'direction',
+            content: formatDirectionAlert(ticker, prevDir, verdict.direction, verdict.snapshot),
+          });
+        }
       }
 
       // 9. Events: dispatch with appropriate dedup logic per type

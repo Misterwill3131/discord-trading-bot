@@ -8,6 +8,7 @@
     "render": "remotion render BrandPromo out/brand-promo.mp4",
     "render:signal": "remotion render SignalAlert out/signal-alert.mp4",
     "render:proof": "remotion render SignalAlertProof out/signal-alert-proof.mp4",
+    "worker": "tsx scripts/render-worker.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -21,6 +22,7 @@
   },
   "devDependencies": {
     "@types/react": "^18.0.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.0.0",
     "vitest": "^1.0.0"
   }

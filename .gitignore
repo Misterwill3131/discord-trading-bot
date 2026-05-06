@@ -22,3 +22,5 @@ boom.db
 boom.db-journal
 boom.db-wal
 boom.db-shm
+video/node_modules/
+video/out/

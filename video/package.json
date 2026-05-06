@@ -6,6 +6,7 @@
   "scripts": {
     "studio": "remotion studio",
     "render": "remotion render BrandPromo out/brand-promo.mp4",
+    "render:signal": "remotion render SignalAlert out/signal-alert.mp4",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

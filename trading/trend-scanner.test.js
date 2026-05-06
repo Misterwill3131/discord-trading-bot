@@ -107,6 +107,23 @@ function uptrendCandles() {
   return out;
 }
 
+// Build candles that resolve to "sideways" direction.
+// Pattern : uptrend seed (100→105) puis oscillation ±2.5 autour de 105.
+// Casse l'alignement EMA9/EMA20/pente requis pour uptrend ou downtrend.
+// Same approach as the sideways detectDirection test in trend-engine.test.js.
+function sidewaysCandles() {
+  const out = [];
+  for (let i = 0; i < 20; i++) {
+    const c = 100 + i * 0.25;
+    out.push({ t: i, o: c, h: c, l: c, c, v: 1000 });
+  }
+  for (let i = 0; i < 20; i++) {
+    const c = 105 + (i % 2 ? -2.5 : 2.5);
+    out.push({ t: 20 + i, o: c, h: c, l: c, c, v: 1000 });
+  }
+  return out;
+}
+
 function fakeYahoo(arg) {
   // Backwards-compat: fakeYahoo({ AAPL: [...] }) — old shape, used by existing tests.
   // New shape: fakeYahoo({ intraday: { AAPL: [...] }, daily: { AAPL: [...] }, quote: { AAPL: { quoteType: 'EQUITY' } } })
@@ -225,6 +242,37 @@ test('runScanCycle: deleted channel → cleaned from DB', async () => {
   };
   await runScanCycle({ store, yahoo, discord, now: () => 1_000_000 });
   assert.strictEqual(store.getChannel('g1'), null, 'channel should be cleaned');
+});
+
+test('runScanCycle: transition to sideways updates state but does NOT alert', async () => {
+  const { store } = makeStoreDb();
+  store.addToWatchlist('g1', 'AAPL', 1);
+  store.setChannel('g1', 'c1', 1);
+  const yahoo = fakeYahoo({ AAPL: sidewaysCandles() });
+  const discord = fakeDiscordClient();
+  await runScanCycle({ store, yahoo, discord, now: () => 1_000_000 });
+  // State updated to sideways
+  const s = store.getState('AAPL');
+  assert.strictEqual(s.direction, 'sideways');
+  // No direction alert sent (sideways is filtered out)
+  const directionAlert = discord.sent.find(m => /Now: sideways/.test(m.content));
+  assert.strictEqual(directionAlert, undefined, 'sideways alert should be suppressed');
+});
+
+test('runScanCycle: transition to uptrend (from sideways) DOES alert', async () => {
+  const { store } = makeStoreDb();
+  // Pre-set state as sideways from a prior scan
+  store.applyStateUpdates('AAPL', { direction: 'sideways', direction_changed_at: 500_000 });
+  store.addToWatchlist('g1', 'AAPL', 1);
+  store.setChannel('g1', 'c1', 1);
+  const yahoo = fakeYahoo({ AAPL: uptrendCandles() });
+  const discord = fakeDiscordClient();
+  await runScanCycle({ store, yahoo, discord, now: () => 1_000_000 });
+  // State now uptrend
+  assert.strictEqual(store.getState('AAPL').direction, 'uptrend');
+  // Alert sent with "Was: sideways · Now: uptrend"
+  const directionAlert = discord.sent.find(m => /Was: sideways · Now: uptrend/.test(m.content));
+  assert.ok(directionAlert, 'expected sideways → uptrend alert');
 });
 
 const { formatDateET } = require('./trend-scanner');

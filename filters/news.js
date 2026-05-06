@@ -123,15 +123,43 @@ const NEWS_KEYWORDS = [
 ];
 
 // Blacklist : rejet même si un keyword whitelist est aussi présent.
+//
+// Politique éditoriale : le feed customer doit être uniquement géopolitique
+// et économie. Sports/entertainment/lifestyle = bruit pur, on bloque
+// agressivement.
 const NEWS_BLOCKED = [
-  // Sports & divertissement — bruit pur.
-  'sport', 'football', 'soccer', 'basketball', 'nba', 'nfl', 'mlb', 'tennis',
-  'olympic', 'fifa', 'world cup', 'celebrity', 'kardashian', 'hollywood',
-  'movie', 'film', 'actor', 'actress', 'grammy', 'oscar', 'emmy',
-  'entertainment', 'reality tv', 'concert', 'album', 'music', 'gaming',
-  'video game', 'esport',
-  // Banques centrales non-US — pertinent pour leurs marchés locaux mais
-  // bruit pour un bot qui trade US. On laisse passer "Fed" via whitelist.
+  // ─── Sports — toutes disciplines ───
+  'sport', 'sports', 'athletic', 'athlete',
+  'football', 'soccer', 'basketball', 'baseball', 'hockey', 'rugby',
+  'cricket', 'tennis', 'golf', 'volleyball', 'handball', 'badminton',
+  'boxing', 'wrestling', 'ufc', 'mma', 'martial arts',
+  'cycling', 'cyclist', 'tour de france', 'giro',
+  'swimming', 'gymnastics', 'athletics',
+  'formula 1', 'formula one', 'f1', 'nascar', 'motogp', 'rally',
+  'skiing', 'snowboard', 'surf', 'sailing', 'rowing',
+  'esport', 'esports', 'video game', 'gaming',
+  // Ligues / compétitions / institutions sportives
+  'nba', 'nfl', 'mlb', 'nhl', 'mls', 'epl', 'premier league',
+  'champions league', 'europa league', 'la liga', 'bundesliga',
+  'serie a', 'ligue 1', 'concacaf', 'uefa', 'fifa',
+  'world cup', 'copa america', 'euros', 'olympic', 'olympics',
+  'super bowl', 'world series', 'stanley cup', 'masters tournament',
+  'wimbledon', 'us open', 'french open', 'australian open', 'roland garros',
+  'commonwealth games', 'asian games', 'pan american games',
+  // Termes de score / résultat sportifs (signaux "match report")
+  'goal scorer', 'touchdown', 'home run', 'shutout', 'penalty kick',
+  'final score', 'match report', 'half time', 'fulltime', 'overtime',
+  // ─── Entertainment / lifestyle / celebrity ───
+  'celebrity', 'kardashian', 'hollywood', 'paparazzi',
+  'movie', 'film', 'actor', 'actress', 'director', 'screenplay', 'box office',
+  'grammy', 'oscar', 'emmy', 'tony award', 'cannes', 'sundance',
+  'entertainment', 'reality tv', 'tv show', 'tv series', 'netflix series',
+  'concert', 'tour', 'album', 'music video', 'singer', 'rapper',
+  'fashion week', 'red carpet', 'gala',
+  'royal wedding', 'royal family', 'prince', 'princess',
+  // ─── Banques centrales non-US ───
+  // Pertinent pour leurs marchés locaux mais bruit pour un bot qui trade
+  // US. On laisse passer "Fed" / "FOMC" / "Powell" via la whitelist.
   'ecb', 'european central bank', 'lagarde',
   'boj', 'bank of japan', 'ueda',
   'boe', 'bank of england', 'bailey',

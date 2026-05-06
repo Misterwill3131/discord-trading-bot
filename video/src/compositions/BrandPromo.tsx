@@ -1,6 +1,7 @@
 import { AbsoluteFill, Sequence } from 'remotion';
 import { HookBeat } from '../components/HookBeat';
 import { ValueBeat } from '../components/ValueBeat';
+import { CtaBeat } from '../components/CtaBeat';
 
 export const BrandPromo = () => {
   return (
@@ -10,6 +11,9 @@ export const BrandPromo = () => {
       </Sequence>
       <Sequence from={90} durationInFrames={240}>
         <ValueBeat />
+      </Sequence>
+      <Sequence from={330} durationInFrames={120}>
+        <CtaBeat />
       </Sequence>
     </AbsoluteFill>
   );

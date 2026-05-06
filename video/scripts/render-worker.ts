@@ -13,7 +13,7 @@ import { bundle } from '@remotion/bundler';
 import { renderMedia, selectComposition } from '@remotion/renderer';
 import * as fs from 'fs';
 import * as path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -77,8 +77,11 @@ async function fetchPendingJobs(botUrl: string, token: string): Promise<RenderJo
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`GET /api/render-queue failed: ${res.status}`);
-  const body = await res.json() as { jobs: RenderJob[] };
-  return body.jobs;
+  const body = await res.json() as { jobs?: unknown };
+  if (!body || !Array.isArray(body.jobs)) {
+    throw new Error('GET /api/render-queue returned malformed body (missing jobs array)');
+  }
+  return body.jobs as RenderJob[];
 }
 
 async function ackJobSuccess(
@@ -142,11 +145,17 @@ async function processJob(
 
   console.log(`[worker] rendered ${outPath}`);
 
-  await ackJobSuccess(
-    botUrl, token, job.id, outPath,
-    buildCaption(job), job.ticker, job.exitTimestamp,
-  );
-  console.log(`[worker] job ${job.id} ACKed (Discord uploaded)`);
+  try {
+    await ackJobSuccess(
+      botUrl, token, job.id, outPath,
+      buildCaption(job), job.ticker, job.exitTimestamp,
+    );
+    console.log(`[worker] job ${job.id} ACKed (Discord uploaded)`);
+  } catch (err) {
+    // Render succeeded but upload failed — the MP4 is on disk and recoverable.
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`upload failed (MP4 saved at ${outPath}): ${msg}`);
+  }
 }
 
 async function main() {
@@ -195,7 +204,8 @@ function sleep(ms: number) {
 }
 
 // Entrée du script (uniquement si exécuté directement, pas en test).
-if (process.argv[1] && process.argv[1].endsWith('render-worker.ts')) {
+// Utilise pathToFileURL pour gérer les chemins Windows (backslashes) correctement.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(err => {
     console.error('[worker] FATAL:', err);
     process.exit(1);

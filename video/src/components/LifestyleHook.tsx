@@ -1,4 +1,4 @@
-import { AbsoluteFill, Img, useCurrentFrame, interpolate } from 'remotion';
+import { AbsoluteFill, Img, useCurrentFrame, interpolate, Easing } from 'remotion';
 import { useMemo } from 'react';
 import { pickImages } from '../lifestyle';
 
@@ -7,67 +7,124 @@ type Props = {
   // Seed déterministe pour piquer 4 images dans le pool de 30. Chaque seed
   // différent donne une combinaison différente, donc 2 vidéos avec des seeds
   // différents (ex: ticker+timestamp) ont des hooks lifestyle uniques.
-  // Default 'default' = combinaison fixe (utile pour tests / dev).
   seed?: string;
 };
 
 // Phase de hook lifestyle : 3s = 90 frames @ 30fps.
-// 4 images du pool LIFESTYLE_IMAGES (sélection déterministe via seed)
-// s'enchaînent en slots de 22 frames (~0.73s), avec un flash blanc bref
-// entre chaque cut (3 frames).
-// Le texte overlay (si fourni) fade-in à la fin du slot 2 (frames 60-75)
-// et reste visible sur le slot 3 (frames 66-89).
-export const LifestyleHook = ({ overlayText, seed = 'default' }: Props) => {
+// 4 images du pool LIFESTYLE_IMAGES avec :
+//  - crossfade 4 frames entre chaque cut (vs flash blanc dur précédent)
+//  - Ken Burns : zoom-in subtil 1.05 → 1.15 sur la durée totale de chaque image
+//  - pan directionnel par image (left/right/up/down) pour un mouvement organique
+//  - vignette radiale pour focus cinématique
+const TOTAL_FRAMES = 90;
+const SLOT = 22; // frames "actifs" par image (sans compter les crossfades)
+const FADE = 4; // crossfade duration en frames
+
+type SlotProps = {
+  src: string;
+  slotIndex: number;
+  pan: 'left' | 'right' | 'up' | 'down';
+};
+
+// Une image avec son propre cycle de vie (fade in/out + Ken Burns).
+const ImageSlot = ({ src, slotIndex, pan }: SlotProps) => {
   const frame = useCurrentFrame();
+  const slotStart = slotIndex * SLOT;
+  const slotEnd = slotStart + SLOT;
 
-  // Index de l'image courante (0..3) basé sur le frame.
-  const slotDuration = 22; // frames par image (légèrement < 24 = 0.8s pour avoir un peu d'overlap)
-  // 22*4 = 88 frames ; le clamp à 3 garantit que la dernière image
-  // (slot 3) couvre les 2 frames restantes (88-89), donc 24 frames au total.
-  const currentSlot = Math.min(3, Math.floor(frame / slotDuration));
-  // Pique 4 images du pool selon le seed (mémoïsé : pas de re-shuffle entre frames).
-  const images = useMemo(() => pickImages(seed, 4), [seed]);
+  // Fade in : (slotStart - FADE) → slotStart. Première image skip fade-in.
+  // Fade out : slotEnd → (slotEnd + FADE). Dernière image skip fade-out.
+  // Note : interpolate exige des valeurs strictement croissantes.
+  // Pour la première image, on commence à -1 (pas de fade-in visible).
+  // Pour la dernière image, on termine à TOTAL_FRAMES+1 (pas de fade-out visible).
+  const fadeInStart = slotIndex === 0 ? -1 : slotStart - FADE;
+  const fadeInEnd = slotIndex === 0 ? 0 : slotStart;
+  const fadeOutStart = slotIndex === 3 ? TOTAL_FRAMES : slotEnd;
+  const fadeOutEnd = slotIndex === 3 ? TOTAL_FRAMES + 1 : slotEnd + FADE;
 
-  // Flash blanc entre les cuts : 3 frames d'opacity 1→0 au début de chaque slot.
-  const flashStart = currentSlot * slotDuration;
-  const flashOpacity = interpolate(
+  const opacity = interpolate(
     frame,
-    [flashStart, flashStart + 3],
-    [1, 0],
-    { extrapolateRight: 'clamp', extrapolateLeft: 'clamp' }
+    [fadeInStart, fadeInEnd, fadeOutStart, fadeOutEnd],
+    [0, 1, 1, 0],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
   );
 
-  // Overlay text sur la dernière image (frames 60-90).
-  const overlayOpacity = interpolate(
+  // Ken Burns zoom : 1.05 → 1.15 sur toute la durée de vie de l'image
+  // (du début du fade-in à la fin du fade-out).
+  const lifetimeStart = fadeInStart;
+  const lifetimeEnd = fadeOutEnd;
+  const scale = interpolate(
     frame,
-    [60, 75],
+    [lifetimeStart, lifetimeEnd],
+    [1.05, 1.15],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.linear }
+  );
+
+  // Pan : translation lente dans une direction au cours de la vie de l'image.
+  // 40px de range, ce qui est subtil mais perceptible.
+  const panProgress = interpolate(
+    frame,
+    [lifetimeStart, lifetimeEnd],
     [0, 1],
-    { extrapolateRight: 'clamp', extrapolateLeft: 'clamp' }
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
   );
-  const overlayScale = interpolate(
-    frame,
-    [60, 70, 75],
-    [0.5, 1.1, 1],
-    { extrapolateRight: 'clamp', extrapolateLeft: 'clamp' }
-  );
+  const panRange = 40;
+  let translateX = 0;
+  let translateY = 0;
+  if (pan === 'left') translateX = -panProgress * panRange;
+  else if (pan === 'right') translateX = panProgress * panRange;
+  else if (pan === 'up') translateY = -panProgress * panRange;
+  else translateY = panProgress * panRange;
 
   return (
-    <AbsoluteFill style={{ backgroundColor: 'black' }}>
-      {/* Image courante (cover, plein écran) */}
+    <AbsoluteFill style={{ opacity }}>
       <Img
-        src={images[currentSlot]}
+        src={src}
         style={{
           width: '100%',
           height: '100%',
           objectFit: 'cover',
+          transform: `scale(${scale}) translate(${translateX}px, ${translateY}px)`,
         }}
       />
+    </AbsoluteFill>
+  );
+};
 
-      {/* Flash blanc entre les cuts */}
+export const LifestyleHook = ({ overlayText, seed = 'default' }: Props) => {
+  const frame = useCurrentFrame();
+  const images = useMemo(() => pickImages(seed, 4), [seed]);
+
+  // Pans variés par image pour éviter la monotonie.
+  const pans: Array<'left' | 'right' | 'up' | 'down'> = ['right', 'left', 'up', 'right'];
+
+  // Overlay text : fade-in + scale punch (spring-like) sur la dernière image.
+  const overlayOpacity = interpolate(
+    frame,
+    [60, 75],
+    [0, 1],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic) }
+  );
+  const overlayScale = interpolate(
+    frame,
+    [60, 72, 78],
+    [0.4, 1.15, 1],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic) }
+  );
+
+  return (
+    <AbsoluteFill style={{ backgroundColor: 'black' }}>
+      {/* 4 images empilées avec crossfades + Ken Burns */}
+      {images.map((src, i) => (
+        <ImageSlot key={i} src={src} slotIndex={i} pan={pans[i]} />
+      ))}
+
+      {/* Vignette cinématique (assombrit les bords pour focus centre) */}
       <AbsoluteFill
         style={{
-          background: 'white',
-          opacity: currentSlot > 0 ? flashOpacity : 0,
+          background:
+            'radial-gradient(ellipse at center, transparent 35%, rgba(0,0,0,0.55) 100%)',
+          pointerEvents: 'none',
         }}
       />
 
@@ -89,7 +146,8 @@ export const LifestyleHook = ({ overlayText, seed = 'default' }: Props) => {
               letterSpacing: -3,
               textAlign: 'center',
               fontFamily: 'sans-serif',
-              textShadow: '0 0 40px rgba(0,0,0,0.8)',
+              textShadow:
+                '0 0 60px rgba(0,0,0,0.95), 0 0 30px rgba(0,0,0,0.8), 0 4px 12px rgba(0,0,0,0.7)',
               opacity: overlayOpacity,
               transform: `scale(${overlayScale})`,
             }}

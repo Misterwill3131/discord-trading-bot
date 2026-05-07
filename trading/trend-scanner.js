@@ -240,22 +240,26 @@ function formatVolumeAboveAlert(ticker, ev, snap, nowMs) {
   ].join('\n');
 }
 
-async function postToChannel({ discord, store, guildId, channelId, content }) {
+// channelType : 'main' (default) ou 'gap'. Détermine quel champ DB on
+// nettoie quand le channel est UnknownChannel — on évite ainsi de purger
+// la config principale quand c'est juste le salon gap qui a été supprimé.
+async function postToChannel({ discord, store, guildId, channelId, content, channelType = 'main' }) {
   try {
     const channel = await discord.channels.fetch(channelId);
     await channel.send(content);
     return { ok: true };
   } catch (err) {
     if (err && err.code === DISCORD_UNKNOWN_CHANNEL) {
-      console.warn(`[trend] channel ${channelId} unknown — clearing for guild ${guildId}`);
-      store.deleteChannel(guildId);
+      console.warn(`[trend] ${channelType} channel ${channelId} unknown — clearing for guild ${guildId}`);
+      if (channelType === 'gap') store.deleteGapChannel(guildId);
+      else                       store.deleteChannel(guildId);
       return { ok: false, reason: 'unknown_channel' };
     }
     if (err && (err.code === DISCORD_MISSING_PERMISSIONS || err.code === DISCORD_MISSING_ACCESS)) {
-      console.warn(`[trend] missing permissions for channel ${channelId} (guild ${guildId})`);
+      console.warn(`[trend] missing permissions for ${channelType} channel ${channelId} (guild ${guildId})`);
       return { ok: false, reason: 'missing_permissions' };
     }
-    console.error(`[trend] postToChannel failed: ${err && err.message}`);
+    console.error(`[trend] postToChannel (${channelType}) failed: ${err && err.message}`);
     return { ok: false, reason: 'error' };
   }
 }
@@ -386,12 +390,23 @@ async function runScanCycle({
 
       const guilds = store.getGuildsWatching(ticker);
       for (const guildId of guilds) {
-        const channelId = store.getChannel(guildId);
-        if (!channelId) continue;
+        const mainChannelId = store.getChannel(guildId);
+        if (!mainChannelId) continue;
+        // gap_channel_id (nullable) : si défini, gap_up/gap_down sont routés
+        // ici au lieu du channel principal. Local var pour pouvoir le clear
+        // au sein de la boucle si Yahoo retourne UnknownChannel.
+        let gapChannelId = store.getGapChannel(guildId);
         for (const msg of messages) {
-          const result = await postToChannel({ discord, store, guildId, channelId, content: msg.content });
+          const isGap = msg.type === 'gap_up' || msg.type === 'gap_down';
+          const useGap = isGap && gapChannelId;
+          const channelId = useGap ? gapChannelId : mainChannelId;
+          const channelType = useGap ? 'gap' : 'main';
+          const result = await postToChannel({ discord, store, guildId, channelId, content: msg.content, channelType });
           if (result.ok) alerts += 1;
-          if (result.reason === 'unknown_channel') break;
+          if (result.reason === 'unknown_channel') {
+            if (channelType === 'main') break;  // main dead → skip remaining messages for this guild
+            gapChannelId = null;                // gap dead → fallback to main for future gap msgs
+          }
         }
       }
     } catch (err) {

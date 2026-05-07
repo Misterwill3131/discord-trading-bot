@@ -1,16 +1,23 @@
 import { AbsoluteFill, Img, useCurrentFrame, interpolate } from 'remotion';
-import { LIFESTYLE_IMAGES } from '../lifestyle';
+import { useMemo } from 'react';
+import { pickImages } from '../lifestyle';
 
 type Props = {
   overlayText?: string;
+  // Seed déterministe pour piquer 4 images dans le pool de 30. Chaque seed
+  // différent donne une combinaison différente, donc 2 vidéos avec des seeds
+  // différents (ex: ticker+timestamp) ont des hooks lifestyle uniques.
+  // Default 'default' = combinaison fixe (utile pour tests / dev).
+  seed?: string;
 };
 
 // Phase de hook lifestyle : 3s = 90 frames @ 30fps.
-// 4 images de LIFESTYLE_IMAGES s'enchaînent en slots de 22 frames (~0.73s),
-// avec un flash blanc bref entre chaque cut (3 frames).
+// 4 images du pool LIFESTYLE_IMAGES (sélection déterministe via seed)
+// s'enchaînent en slots de 22 frames (~0.73s), avec un flash blanc bref
+// entre chaque cut (3 frames).
 // Le texte overlay (si fourni) fade-in à la fin du slot 2 (frames 60-75)
 // et reste visible sur le slot 3 (frames 66-89).
-export const LifestyleHook = ({ overlayText }: Props) => {
+export const LifestyleHook = ({ overlayText, seed = 'default' }: Props) => {
   const frame = useCurrentFrame();
 
   // Index de l'image courante (0..3) basé sur le frame.
@@ -18,7 +25,8 @@ export const LifestyleHook = ({ overlayText }: Props) => {
   // 22*4 = 88 frames ; le clamp à 3 garantit que la dernière image
   // (slot 3) couvre les 2 frames restantes (88-89), donc 24 frames au total.
   const currentSlot = Math.min(3, Math.floor(frame / slotDuration));
-  const images = LIFESTYLE_IMAGES.slice(0, 4);
+  // Pique 4 images du pool selon le seed (mémoïsé : pas de re-shuffle entre frames).
+  const images = useMemo(() => pickImages(seed, 4), [seed]);
 
   // Flash blanc entre les cuts : 3 frames d'opacity 1→0 au début de chaque slot.
   const flashStart = currentSlot * slotDuration;

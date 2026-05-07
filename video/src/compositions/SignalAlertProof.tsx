@@ -33,7 +33,7 @@ export const SignalAlertProof = ({
 
       {/* Phase 1 — Lifestyle hook (0-3s) */}
       <Sequence from={0} durationInFrames={90}>
-        <LifestyleHook overlayText={pnl} />
+        <LifestyleHook overlayText={pnl} seed={`${ticker}-${entryTimestamp}`} />
       </Sequence>
 
       {/* Phase 2 — Result tease (3-5s) */}

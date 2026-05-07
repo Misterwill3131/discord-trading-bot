@@ -17,7 +17,7 @@ export const BrandPromo = () => {
       {/* <Audio src={staticFile('audio/track.mp3')} /> */}
 
       <Sequence from={0} durationInFrames={90}>
-        <LifestyleHook overlayText="BOOM" />
+        <LifestyleHook overlayText="BOOM" seed="brand-promo-v1" />
       </Sequence>
       <Sequence from={90} durationInFrames={90}>
         <HookBeat />

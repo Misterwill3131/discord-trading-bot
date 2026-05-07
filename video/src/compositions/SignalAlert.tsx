@@ -30,7 +30,7 @@ export const SignalAlert = ({ ticker, author, message, timestamp }: SignalAlertP
       {/* <Audio src={staticFile('audio/signal-track.mp3')} /> */}
 
       <Sequence from={0} durationInFrames={90}>
-        <LifestyleHook overlayText={`$${ticker}`} />
+        <LifestyleHook overlayText={`$${ticker}`} seed={`${ticker}-${timestamp}`} />
       </Sequence>
       <Sequence from={90} durationInFrames={60}>
         <RevealAct ticker={ticker} />

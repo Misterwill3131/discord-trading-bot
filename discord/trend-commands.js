@@ -205,16 +205,19 @@ async function handleStatus(message, { store, scannerConfig }) {
   if (!guildId) return message.reply('Use this command in a server.').catch(() => {});
   const channelId = store.getChannel(guildId);
   const gapChannelId = store.getGapChannel(guildId);
+  const directionDisabled = store.isDirectionDisabled(guildId);
   const watchCount = store.getWatchlist(guildId).length;
   const channelLine = channelId ? `<#${channelId}> ✅` : '⚠️ not set (use `!trend channel #channel`)';
   const gapLine = gapChannelId
     ? `<#${gapChannelId}> ✅`
     : '(uses main alert channel — set with `!trend gap-channel #channel`)';
+  const directionLine = directionDisabled ? '❌ disabled' : '✅ enabled';
   const marketOpen = require('../trading/trend-scanner').isUSMarketOpen(new Date());
   const lines = [
     'Trend bot status (this server):',
     `• Alert channel: ${channelLine}`,
     `• Gap channel: ${gapLine}`,
+    `• Direction alerts: ${directionLine}`,
     `• Watchlist: ${watchCount} ticker${watchCount === 1 ? '' : 's'}`,
     `• Scanner: running (every ${scannerConfig?.intervalMin || 5} min)`,
     `• Market: ${marketOpen ? 'open' : 'closed'}`,
@@ -338,6 +341,44 @@ async function handleChannel(message, args, { store }) {
 // Avec argument 'off' / 'remove' / 'clear' : retire le routage dédié.
 // Avec un salon : route les gaps vers ce salon.
 //
+// `!trend direction` — toggle on/off pour les alertes uptrend/downtrend
+// per-guild. Le state interne reste tracké, seule l'alerte Discord est
+// supprimée. Permet aux serveurs d'opter-out du bruit des transitions
+// de direction tout en conservant les events ponctuels (breakout, gap, etc.).
+//
+// Sans argument : affiche le statut actuel.
+// 'on' / 'enable' / 'enabled' / 'yes' : active les alertes.
+// 'off' / 'disable' / 'disabled' / 'no' : désactive.
+async function handleDirection(message, args, { store }) {
+  if (!message.guildId) {
+    return message.reply('Use this command in a server.').catch(() => {});
+  }
+
+  if (args.length < 2) {
+    const disabled = store.isDirectionDisabled(message.guildId);
+    return message.reply(`Direction alerts (uptrend/downtrend): ${disabled ? '❌ disabled' : '✅ enabled'}`).catch(() => {});
+  }
+
+  if (!requireManageGuild(message)) return;
+
+  const arg = args[1].toLowerCase();
+  let disabled;
+  if (['off', 'disable', 'disabled', 'no'].includes(arg)) disabled = true;
+  else if (['on', 'enable', 'enabled', 'yes'].includes(arg)) disabled = false;
+  else {
+    return message.reply('Usage: `!trend direction on` · `!trend direction off`').catch(() => {});
+  }
+
+  const ok = store.setDirectionDisabled(message.guildId, disabled, Date.now());
+  if (!ok) {
+    return message.reply('⚠️ Set the main alert channel first with `!trend channel #channel`.').catch(() => {});
+  }
+  return message.reply(disabled
+    ? '✅ Direction alerts (uptrend/downtrend) disabled for this server.'
+    : '✅ Direction alerts (uptrend/downtrend) enabled for this server.'
+  ).catch(() => {});
+}
+
 // NOTE : nécessite qu'un main channel soit déjà configuré (`!trend channel`)
 // car la ligne trend_channel doit exister pour que setGapChannel puisse
 // l'updater.
@@ -399,7 +440,7 @@ function registerTrendCommands(client, { store, yahoo, scannerConfig }) {
 
     const args = text.slice('!trend'.length).trim().split(/\s+/).filter(Boolean);
     if (args.length === 0) {
-      return message.reply('Usage: `!trend <TICKER>` · `!trend watch <TICKER>` · `!trend unwatch <TICKER>` · `!trend watchlist` · `!trend status` · `!trend list` · `!trend channel #channel` · `!trend gap-channel #channel`').catch(() => {});
+      return message.reply('Usage: `!trend <TICKER>` · `!trend watch <TICKER>` · `!trend unwatch <TICKER>` · `!trend watchlist` · `!trend status` · `!trend list` · `!trend channel #channel` · `!trend gap-channel #channel` · `!trend direction on|off`').catch(() => {});
     }
 
     const sub = args[0].toLowerCase();
@@ -407,6 +448,7 @@ function registerTrendCommands(client, { store, yahoo, scannerConfig }) {
     if (sub === 'unwatch')      return handleUnwatch(message, args, { store });
     if (sub === 'channel')      return handleChannel(message, args, { store });
     if (sub === 'gap-channel')  return handleGapChannel(message, args, { store });
+    if (sub === 'direction')    return handleDirection(message, args, { store });
     if (sub === 'watchlist')    return handleWatchlist(message, { store, yahoo });
     if (sub === 'status')       return handleStatus(message, { store, scannerConfig });
     if (sub === 'list')         return handleList(message, { store });

@@ -73,7 +73,8 @@ function makeStoreDb() {
     );
     CREATE TABLE trend_channel (
       guild_id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, set_at INTEGER NOT NULL,
-      gap_channel_id TEXT
+      gap_channel_id TEXT,
+      direction_disabled INTEGER DEFAULT 0
     );
     CREATE TABLE trend_state (
       ticker TEXT PRIMARY KEY,
@@ -532,4 +533,49 @@ test('runScanCycle: gap fallback to main channel when no gap_channel_id set', as
   const gapMsg = discord.sent.find(s => /gap up/.test(s.content));
   assert.ok(gapMsg);
   assert.strictEqual(gapMsg.channelId, 'main-c', 'gap falls back to main channel when no gap channel set');
+});
+
+test('runScanCycle: direction_disabled skips direction alerts but other events still fire', async () => {
+  const { store } = makeStoreDb();
+  store.addToWatchlist('g1', 'AAPL', 1, 'EQUITY');
+  store.setChannel('g1', 'c1', 1);
+  store.setDirectionDisabled('g1', true, 1);
+  // uptrendCandles produces uptrend direction + breakout. Both should fire
+  // normally, but direction is suppressed for this guild.
+  const yahoo = fakeYahoo({
+    intraday: { AAPL: uptrendCandles() },
+    daily: { AAPL: [
+      { t: 1, o: 100, h: 105, l: 95,  c: 102, v: 8000 },
+      { t: 2, o: 102, h: 119, l: 100, c: 117, v: 9000 },
+      { t: 3, o: 117, h: 121, l: 116, c: 120, v: 5000 },
+    ]},
+  });
+  const discord = fakeDiscordClient();
+  await runScanCycle({ store, yahoo, discord, now: () => Date.now() });
+  const directionMsg = discord.sent.find(s => /Now: uptrend/.test(s.content));
+  assert.strictEqual(directionMsg, undefined, 'direction alert should be suppressed');
+  // State still tracked (direction transition happened in DB).
+  assert.strictEqual(store.getState('AAPL').direction, 'uptrend');
+  // Other events still go through (e.g., PDH break).
+  const otherMsg = discord.sent.find(s => /PDH break/.test(s.content));
+  assert.ok(otherMsg, 'non-direction events should still fire');
+});
+
+test('runScanCycle: direction_disabled false → direction alerts fire normally', async () => {
+  const { store } = makeStoreDb();
+  store.addToWatchlist('g1', 'AAPL', 1, 'EQUITY');
+  store.setChannel('g1', 'c1', 1);
+  // Default: not disabled.
+  const yahoo = fakeYahoo({
+    intraday: { AAPL: uptrendCandles() },
+    daily: { AAPL: [
+      { t: 1, o: 100, h: 105, l: 95,  c: 102, v: 8000 },
+      { t: 2, o: 102, h: 119, l: 100, c: 117, v: 9000 },
+      { t: 3, o: 117, h: 121, l: 116, c: 120, v: 5000 },
+    ]},
+  });
+  const discord = fakeDiscordClient();
+  await runScanCycle({ store, yahoo, discord, now: () => Date.now() });
+  const directionMsg = discord.sent.find(s => /Now: uptrend/.test(s.content));
+  assert.ok(directionMsg, 'direction alert should fire when not disabled');
 });

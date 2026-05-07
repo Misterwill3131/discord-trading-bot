@@ -7,6 +7,13 @@ type Props = {
   timestamp: string;            // ISO 8601
   scale?: number;               // Default 1
   position?: 'center' | 'top-left' | 'bottom-right';  // Default 'center'
+  // Optionnel : si fourni, affiche un preview "↩ author: message" en haut
+  // de la card (style Discord reply UI). Utilisé quand un message est une
+  // réponse à un autre — on montre le contexte au viewer.
+  replyTo?: {
+    author: string;
+    messagePreview: string;
+  };
 };
 
 // Format heure NY 24h, ex: "9:32am" → "09:32"
@@ -146,7 +153,7 @@ function positionStyle(position: 'center' | 'top-left' | 'bottom-right'): React.
 const TYPING_END = 12;
 const MESSAGE_START = 12;
 
-export const DiscordCard = ({ author, message, timestamp, scale = 1, position = 'center' }: Props) => {
+export const DiscordCard = ({ author, message, timestamp, scale = 1, position = 'center', replyTo }: Props) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -203,6 +210,31 @@ export const DiscordCard = ({ author, message, timestamp, scale = 1, position = 
           transform: `${positionStyle(position).transform} scale(${messageScale})`,
         }}
       >
+        {/* Reply preview Discord-style (apparaît AU-DESSUS du header si replyTo défini) */}
+        {replyTo && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              fontSize: 22,
+              color: '#80848e',
+              marginBottom: 12,
+              paddingLeft: 8,
+              opacity: messageOpacity,
+            }}
+          >
+            <span style={{ fontSize: 22, color: '#4f5258' }}>┌──</span>
+            <span style={{ fontSize: 18 }}>↩</span>
+            <span style={{ color: '#dcddde', fontWeight: 700 }}>@{replyTo.author}</span>
+            <span style={{ opacity: 0.85, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 600 }}>
+              {replyTo.messagePreview.length > 70
+                ? replyTo.messagePreview.slice(0, 70) + '…'
+                : replyTo.messagePreview}
+            </span>
+          </div>
+        )}
+
         {/* Header row (toujours visible quand la carte est là) */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14 }}>
           <Avatar author={author} />

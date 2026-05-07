@@ -8,6 +8,7 @@ import { ResultTease } from '../components/ResultTease';
 import { DiscordCard } from '../components/DiscordCard';
 import { TimePassAct } from '../components/TimePassAct';
 import { ResultCta } from '../components/ResultCta';
+import { parseReplyMarkdown } from '../utils/parseReply';
 
 export type SignalAlertProofProps = {
   ticker: string;
@@ -41,6 +42,19 @@ export const SignalAlertProof = ({
   ticker, entryAuthor, entryMessage, entryTimestamp,
   exitAuthor, exitMessage, exitTimestamp, pnl,
 }: SignalAlertProofProps) => {
+  // Parse les messages Discord pour extraire le contenu propre des replies.
+  // Strip le markdown brut "> *Replying to X [message](url)* ..." pour ne garder
+  // que le contenu utile dans les cards. Si l'exit est une réponse, on affiche
+  // aussi un preview "↩ @<author>: <entry>" en haut de la card via replyTo.
+  const entryParsed = parseReplyMarkdown(entryMessage);
+  const exitParsed = parseReplyMarkdown(exitMessage);
+
+  // Si l'exit est une réponse, on présume que le parent est l'entry (cas le
+  // plus courant pour un trade). On utilise entryMessage (clean) comme preview.
+  const exitReplyTo = exitParsed.replyAuthor
+    ? { author: entryAuthor, messagePreview: entryParsed.content }
+    : undefined;
+
   return (
     <AbsoluteFill style={{ backgroundColor: 'black' }}>
       {/* === AUDIO === */}
@@ -101,7 +115,7 @@ export const SignalAlertProof = ({
         <TransitionSeries.Sequence durationInFrames={98}>
           <DiscordCard
             author={entryAuthor}
-            message={entryMessage}
+            message={entryParsed.content}
             timestamp={entryTimestamp}
             position="center"
           />
@@ -122,13 +136,14 @@ export const SignalAlertProof = ({
           timing={linearTiming({ durationInFrames: SLIDE_FRAMES })}
         />
 
-        {/* Phase 5 — Exit card (~3s, avec typing indicator) */}
+        {/* Phase 5 — Exit card (~3s, avec typing indicator + reply preview si applicable) */}
         <TransitionSeries.Sequence durationInFrames={96}>
           <DiscordCard
             author={exitAuthor}
-            message={exitMessage}
+            message={exitParsed.content}
             timestamp={exitTimestamp}
             position="center"
+            replyTo={exitReplyTo}
           />
         </TransitionSeries.Sequence>
 

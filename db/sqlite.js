@@ -432,6 +432,11 @@ addColumnIfMissing('trend_state', 'volume_above_alerted_today', 'INTEGER DEFAULT
 // channel principal (rétrocompat). Permet de séparer les alertes overnight
 // du flux trend principal (direction, breakout, reversal, PDH/PDL, volume).
 addColumnIfMissing('trend_channel', 'gap_channel_id', 'TEXT');
+// Toggle per-guild : 1 = pas d'alertes direction (uptrend/downtrend), 0 =
+// comportement normal. Utile pour les serveurs qui veulent uniquement les
+// events ponctuels (breakout, reversal, PDH/PDL, gap, volume) sans le bruit
+// des transitions de direction.
+addColumnIfMissing('trend_channel', 'direction_disabled', 'INTEGER DEFAULT 0');
 
 // ── SaaS licenses : passthrough channel séparé pour bots upstream ─────
 // Permet de router les alertes "passthrough" (ex: TrendVision) vers un

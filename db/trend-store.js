@@ -49,7 +49,13 @@ function createTrendStore(db) {
     `SELECT gap_channel_id FROM trend_channel WHERE guild_id = ?`
   );
   const selectAllChannels = db.prepare(
-    `SELECT guild_id, channel_id, gap_channel_id FROM trend_channel ORDER BY guild_id`
+    `SELECT guild_id, channel_id, gap_channel_id, direction_disabled FROM trend_channel ORDER BY guild_id`
+  );
+  const updateDirectionDisabled = db.prepare(
+    `UPDATE trend_channel SET direction_disabled = ?, set_at = ? WHERE guild_id = ?`
+  );
+  const selectDirectionDisabled = db.prepare(
+    `SELECT direction_disabled FROM trend_channel WHERE guild_id = ?`
   );
 
   // ── State ─────────────────────────────────────────────────────────
@@ -166,7 +172,18 @@ function createTrendStore(db) {
         guildId: r.guild_id,
         channelId: r.channel_id,
         gapChannelId: r.gap_channel_id,
+        directionDisabled: !!r.direction_disabled,
       }));
+    },
+    setDirectionDisabled(guildId, disabled, nowMs) {
+      // Returns true if updated, false if no row exists (caller must
+      // setChannel first).
+      const res = updateDirectionDisabled.run(disabled ? 1 : 0, nowMs, guildId);
+      return res.changes > 0;
+    },
+    isDirectionDisabled(guildId) {
+      const row = selectDirectionDisabled.get(guildId);
+      return row ? !!row.direction_disabled : false;
     },
 
     getState(ticker) {

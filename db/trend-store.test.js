@@ -14,7 +14,8 @@ function makeDb() {
     );
     CREATE TABLE trend_channel (
       guild_id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, set_at INTEGER NOT NULL,
-      gap_channel_id TEXT
+      gap_channel_id TEXT,
+      direction_disabled INTEGER DEFAULT 0
     );
     CREATE TABLE trend_state (
       ticker TEXT PRIMARY KEY,
@@ -148,9 +149,44 @@ test('getAllConfiguredGuilds returns all rows ordered by guild_id', () => {
   assert.strictEqual(all[0].guildId, 'g1');
   assert.strictEqual(all[0].channelId, 'c1');
   assert.strictEqual(all[0].gapChannelId, null);
+  assert.strictEqual(all[0].directionDisabled, false);
   assert.strictEqual(all[1].guildId, 'g2');
   assert.strictEqual(all[1].gapChannelId, 'gc2');
   assert.strictEqual(all[2].guildId, 'g3');
+});
+
+test('isDirectionDisabled defaults to false when no row exists', () => {
+  const store = createTrendStore(makeDb());
+  assert.strictEqual(store.isDirectionDisabled('g1'), false);
+});
+
+test('isDirectionDisabled defaults to false after setChannel', () => {
+  const store = createTrendStore(makeDb());
+  store.setChannel('g1', 'c1', 1000);
+  assert.strictEqual(store.isDirectionDisabled('g1'), false);
+});
+
+test('setDirectionDisabled returns false if no main channel row exists', () => {
+  const store = createTrendStore(makeDb());
+  assert.strictEqual(store.setDirectionDisabled('g1', true, 1000), false);
+  assert.strictEqual(store.isDirectionDisabled('g1'), false);
+});
+
+test('setDirectionDisabled toggles correctly when row exists', () => {
+  const store = createTrendStore(makeDb());
+  store.setChannel('g1', 'c1', 1000);
+  assert.strictEqual(store.setDirectionDisabled('g1', true, 2000), true);
+  assert.strictEqual(store.isDirectionDisabled('g1'), true);
+  assert.strictEqual(store.setDirectionDisabled('g1', false, 3000), true);
+  assert.strictEqual(store.isDirectionDisabled('g1'), false);
+});
+
+test('setChannel does not clobber direction_disabled', () => {
+  const store = createTrendStore(makeDb());
+  store.setChannel('g1', 'c1', 1000);
+  store.setDirectionDisabled('g1', true, 2000);
+  store.setChannel('g1', 'c2', 3000);  // update main channel
+  assert.strictEqual(store.isDirectionDisabled('g1'), true);  // toggle preserved
 });
 
 test('getState returns null for unknown ticker', () => {

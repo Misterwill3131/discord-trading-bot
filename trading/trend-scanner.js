@@ -396,7 +396,12 @@ async function runScanCycle({
         // ici au lieu du channel principal. Local var pour pouvoir le clear
         // au sein de la boucle si Yahoo retourne UnknownChannel.
         let gapChannelId = store.getGapChannel(guildId);
+        // Per-guild toggle : si activé, on skip les messages 'direction'
+        // (uptrend/downtrend). Le state continue à être tracké pour que la
+        // ré-activation ultérieure montre les bonnes transitions.
+        const directionDisabled = store.isDirectionDisabled(guildId);
         for (const msg of messages) {
+          if (msg.type === 'direction' && directionDisabled) continue;
           const isGap = msg.type === 'gap_up' || msg.type === 'gap_down';
           const useGap = isGap && gapChannelId;
           const channelId = useGap ? gapChannelId : mainChannelId;

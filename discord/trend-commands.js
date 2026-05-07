@@ -225,12 +225,37 @@ async function handleStatus(message, { store, scannerConfig }) {
   return message.reply(lines.join('\n')).catch(() => {});
 }
 
+// Liste blanche d'utilisateurs auxquels on accorde l'équivalent ManageGuild
+// pour les commandes !trend, sur un serveur précis. Format env :
+//   TREND_TRUSTED_USERS=guildId:userId,guildId:userId,...
+// Lu une fois au load du module. Pour ajouter/retirer : modifier l'env var
+// + redéployer (Railway redémarre auto).
+function parseTrustedUsers(envValue) {
+  if (!envValue || typeof envValue !== 'string') return new Set();
+  return new Set(
+    envValue
+      .split(',')
+      .map(s => s.trim())
+      .filter(s => /^\d{1,20}:\d{1,20}$/.test(s))  // guildId:userId, snowflakes only
+  );
+}
+
+const TRUSTED_PAIRS = parseTrustedUsers(process.env.TREND_TRUSTED_USERS);
+
+function isTrustedTrendUser(guildId, userId) {
+  if (!guildId || !userId) return false;
+  return TRUSTED_PAIRS.has(`${guildId}:${userId}`);
+}
+
 function requireManageGuild(message) {
   if (!message.guildId) {
     message.reply('Use this command in a server.').catch(() => {});
     return false;
   }
-  if (!message.member?.permissions?.has(PermissionsBitField.Flags.ManageGuild)) {
+  // ManageGuild OR trusted user (env-listed) — both authorize trend admin commands.
+  const hasManageGuild = !!message.member?.permissions?.has(PermissionsBitField.Flags.ManageGuild);
+  const isTrusted = isTrustedTrendUser(message.guildId, message.author?.id);
+  if (!hasManageGuild && !isTrusted) {
     message.reply('❌ You need Manage Server permission to use this command.').catch(() => {});
     return false;
   }
@@ -459,4 +484,4 @@ function registerTrendCommands(client, { store, yahoo, scannerConfig }) {
   });
 }
 
-module.exports = { registerTrendCommands };
+module.exports = { registerTrendCommands, parseTrustedUsers };

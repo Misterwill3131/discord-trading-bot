@@ -428,6 +428,10 @@ addColumnIfMissing('trend_state', 'pdl_alerts_today',           'INTEGER DEFAULT
 addColumnIfMissing('trend_state', 'pdl_above_since',            'INTEGER');
 addColumnIfMissing('trend_state', 'gap_alerted_today',          'INTEGER DEFAULT 0');
 addColumnIfMissing('trend_state', 'volume_above_alerted_today', 'INTEGER DEFAULT 0');
+// Salon dédié pour les alertes gap_up / gap_down. NULL = utilise le
+// channel principal (rétrocompat). Permet de séparer les alertes overnight
+// du flux trend principal (direction, breakout, reversal, PDH/PDL, volume).
+addColumnIfMissing('trend_channel', 'gap_channel_id', 'TEXT');
 
 // ── SaaS licenses : passthrough channel séparé pour bots upstream ─────
 // Permet de router les alertes "passthrough" (ex: TrendVision) vers un

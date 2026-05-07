@@ -26,6 +26,9 @@ function createTrendStore(db) {
   );
 
   // ── Channel ───────────────────────────────────────────────────────
+  // Note : trend_channel.gap_channel_id est nullable et préservé par
+  // upsertChannel (le SET ne le touche pas). Donc setChannel ne clobber
+  // pas une config gap-channel existante.
   const upsertChannel = db.prepare(
     `INSERT INTO trend_channel (guild_id, channel_id, set_at) VALUES (?, ?, ?)
      ON CONFLICT(guild_id) DO UPDATE SET channel_id = excluded.channel_id, set_at = excluded.set_at`
@@ -35,6 +38,15 @@ function createTrendStore(db) {
   );
   const deleteChannelStmt = db.prepare(
     `DELETE FROM trend_channel WHERE guild_id = ?`
+  );
+  // setGapChannel suppose qu'une ligne existe déjà (i.e., setChannel a
+  // été appelée). Si pas de ligne, UPDATE retourne 0 changes — le caller
+  // (command handler) doit le gérer.
+  const updateGapChannel = db.prepare(
+    `UPDATE trend_channel SET gap_channel_id = ?, set_at = ? WHERE guild_id = ?`
+  );
+  const selectGapChannel = db.prepare(
+    `SELECT gap_channel_id FROM trend_channel WHERE guild_id = ?`
   );
 
   // ── State ─────────────────────────────────────────────────────────
@@ -128,6 +140,20 @@ function createTrendStore(db) {
     },
     deleteChannel(guildId) {
       deleteChannelStmt.run(guildId);
+    },
+    setGapChannel(guildId, channelId, nowMs) {
+      // Returns true if updated, false if no row exists (caller must
+      // setChannel first). Pass channelId=null to clear.
+      const res = updateGapChannel.run(channelId, nowMs, guildId);
+      return res.changes > 0;
+    },
+    getGapChannel(guildId) {
+      const row = selectGapChannel.get(guildId);
+      return row ? row.gap_channel_id : null;
+    },
+    deleteGapChannel(guildId) {
+      // Clears the gap channel without touching the main channel row.
+      updateGapChannel.run(null, Date.now(), guildId);
     },
 
     getState(ticker) {

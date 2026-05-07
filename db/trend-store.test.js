@@ -13,7 +13,8 @@ function makeDb() {
       PRIMARY KEY (guild_id, ticker)
     );
     CREATE TABLE trend_channel (
-      guild_id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, set_at INTEGER NOT NULL
+      guild_id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, set_at INTEGER NOT NULL,
+      gap_channel_id TEXT
     );
     CREATE TABLE trend_state (
       ticker TEXT PRIMARY KEY,
@@ -84,6 +85,50 @@ test('setChannel + getChannel + deleteChannel', () => {
   assert.strictEqual(store.getChannel('g1'), 'c2');
   store.deleteChannel('g1');
   assert.strictEqual(store.getChannel('g1'), null);
+});
+
+test('setGapChannel returns false if no main channel row exists', () => {
+  const store = createTrendStore(makeDb());
+  assert.strictEqual(store.setGapChannel('g1', 'gc1', 1000), false);
+  assert.strictEqual(store.getGapChannel('g1'), null);
+});
+
+test('setGapChannel returns true and stores when main channel exists', () => {
+  const store = createTrendStore(makeDb());
+  store.setChannel('g1', 'c1', 1000);
+  assert.strictEqual(store.setGapChannel('g1', 'gc1', 2000), true);
+  assert.strictEqual(store.getGapChannel('g1'), 'gc1');
+  // Main channel preserved.
+  assert.strictEqual(store.getChannel('g1'), 'c1');
+});
+
+test('setChannel does not clobber an existing gap_channel_id', () => {
+  const store = createTrendStore(makeDb());
+  store.setChannel('g1', 'c1', 1000);
+  store.setGapChannel('g1', 'gc1', 2000);
+  // Update main channel.
+  store.setChannel('g1', 'c2', 3000);
+  assert.strictEqual(store.getChannel('g1'), 'c2');
+  // Gap channel still set.
+  assert.strictEqual(store.getGapChannel('g1'), 'gc1');
+});
+
+test('deleteGapChannel clears gap_channel_id without touching main channel', () => {
+  const store = createTrendStore(makeDb());
+  store.setChannel('g1', 'c1', 1000);
+  store.setGapChannel('g1', 'gc1', 2000);
+  store.deleteGapChannel('g1');
+  assert.strictEqual(store.getGapChannel('g1'), null);
+  assert.strictEqual(store.getChannel('g1'), 'c1');  // main intact
+});
+
+test('deleteChannel also removes the gap channel (whole row deleted)', () => {
+  const store = createTrendStore(makeDb());
+  store.setChannel('g1', 'c1', 1000);
+  store.setGapChannel('g1', 'gc1', 2000);
+  store.deleteChannel('g1');
+  assert.strictEqual(store.getChannel('g1'), null);
+  assert.strictEqual(store.getGapChannel('g1'), null);
 });
 
 test('getState returns null for unknown ticker', () => {

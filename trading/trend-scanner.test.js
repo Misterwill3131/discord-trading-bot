@@ -72,7 +72,8 @@ function makeStoreDb() {
       PRIMARY KEY (guild_id, ticker)
     );
     CREATE TABLE trend_channel (
-      guild_id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, set_at INTEGER NOT NULL
+      guild_id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, set_at INTEGER NOT NULL,
+      gap_channel_id TEXT
     );
     CREATE TABLE trend_state (
       ticker TEXT PRIMARY KEY,
@@ -126,15 +127,18 @@ function sidewaysCandles() {
 
 function fakeYahoo(arg) {
   // Backwards-compat: fakeYahoo({ AAPL: [...] }) — old shape, used by existing tests.
-  // New shape: fakeYahoo({ intraday: { AAPL: [...] }, daily: { AAPL: [...] }, quote: { AAPL: { quoteType: 'EQUITY' } } })
-  const isNewShape = arg && (arg.intraday || arg.daily || arg.quote);
+  // New shape: fakeYahoo({ intraday: ..., daily: ..., fiveDay: ..., quote: ... })
+  const isNewShape = arg && (arg.intraday || arg.daily || arg.fiveDay || arg.quote);
   const intradayMap = isNewShape ? (arg.intraday || {}) : (arg || {});
   const dailyMap    = isNewShape ? (arg.daily || {}) : {};
+  const fiveDayMap  = isNewShape ? (arg.fiveDay || {}) : {};
   const quoteMap    = isNewShape ? (arg.quote || {}) : {};
 
   return {
     getChart: async (ticker, range) => {
-      const map = range === '1M' ? dailyMap : intradayMap;
+      const map = range === '1M' ? dailyMap
+                : range === '5D' ? fiveDayMap
+                : intradayMap;
       return {
         quotes: (map[ticker] || []).map(b => ({
           date: new Date(b.t),
@@ -350,12 +354,12 @@ test('getDailyContext: priorHigh/priorLow fallback to yesterday when only 2 quot
 });
 
 test('getDailyContext: extracts prevSessionClose from last yesterday bar in 5D intraday', async () => {
-  // Build a 5D chart with bars from "yesterday" (date != today) and today.
-  // The last bar of yesterday represents the after-hours close (~20:00 ET).
-  const todayMidday    = Date.now();
-  const yesterdayClose = todayMidday - 18 * 60 * 60 * 1000;  // ~18h ago
-  const yesterdayLast  = todayMidday - 14 * 60 * 60 * 1000;  // ~14h ago (still yesterday ET)
-  const todayPremarket = todayMidday - 8  * 60 * 60 * 1000;  // ~8h ago (today ET)
+  // Build a 5D chart with bars guaranteed in different ET dates regardless of
+  // when the test runs : "today" = now, "yesterday" bars = 26h+30h ago (always
+  // a different calendar day even at extreme test times).
+  const todayPremarket = Date.now();
+  const yesterdayLast  = todayPremarket - 26 * 60 * 60 * 1000;  // 26h ago
+  const yesterdayClose = todayPremarket - 30 * 60 * 60 * 1000;  // 30h ago
 
   const yahoo = makeFakeYahoo({
     '1M': [
@@ -468,4 +472,64 @@ test('runScanCycle: dispatches PDH break alert when last intraday close > yester
   await runScanCycle({ store, yahoo, discord, now: () => 1_700_000_000_000 });
   const sentPDH = discord.sent.find(s => /PDH break/.test(s.content));
   assert.ok(sentPDH, 'expected PDH break alert');
+});
+
+// Helper: build a fiveDay fixture where the last yesterday bar's close is
+// `prevSessionClose` and today's first bar (premarket) timestamp matches now.
+// uptrendCandles uses numeric ticks (epoch + i ms) → ET-date '1969-12-31'.
+// For the 5D fixture we use real "yesterday" timestamps so getDailyContext
+// picks the right bar.
+function fiveDayFixtureForGap(prevSessionClose) {
+  const todayMidday = Date.now();
+  const yesterdayMid = todayMidday - 24 * 60 * 60 * 1000;  // ~24h ago
+  return [
+    { t: yesterdayMid, o: prevSessionClose, h: prevSessionClose, l: prevSessionClose, c: prevSessionClose, v: 100 },
+  ];
+}
+
+test('runScanCycle: routes gap alerts to gap_channel_id when configured', async () => {
+  const { store } = makeStoreDb();
+  store.addToWatchlist('g1', 'AAPL', 1, 'EQUITY');
+  store.setChannel('g1', 'main-c', 1);
+  store.setGapChannel('g1', 'gap-c', 1);
+  // uptrendCandles[0].o = 100. Set prev_session_close = 90 → gap_up = +11%.
+  const yahoo = fakeYahoo({
+    intraday: { AAPL: uptrendCandles() },
+    daily: { AAPL: [
+      { t: 1, o: 95,  h: 102, l: 94,  c: 100, v: 8000 },
+      { t: 2, o: 100, h: 105, l: 99,  c: 100, v: 9000 },
+      { t: 3, o: 110, h: 112, l: 109, c: 111, v: 5000 },
+    ]},
+    fiveDay: { AAPL: fiveDayFixtureForGap(90) },
+  });
+  const discord = fakeDiscordClient();
+  await runScanCycle({ store, yahoo, discord, now: () => Date.now() });
+  const gapMsg  = discord.sent.find(s => /gap up/.test(s.content));
+  const otherMsg = discord.sent.find(s => /uptrend/.test(s.content) && !/gap/.test(s.content));
+  assert.ok(gapMsg, 'expected gap_up alert (intraday[0]=100 vs prev=90)');
+  assert.strictEqual(gapMsg.channelId, 'gap-c', 'gap should route to gap channel');
+  if (otherMsg) {
+    assert.strictEqual(otherMsg.channelId, 'main-c', 'non-gap alerts stay on main channel');
+  }
+});
+
+test('runScanCycle: gap fallback to main channel when no gap_channel_id set', async () => {
+  const { store } = makeStoreDb();
+  store.addToWatchlist('g1', 'AAPL', 1, 'EQUITY');
+  store.setChannel('g1', 'main-c', 1);
+  // gap-channel not set → gap alert goes to main-c
+  const yahoo = fakeYahoo({
+    intraday: { AAPL: uptrendCandles() },
+    daily: { AAPL: [
+      { t: 1, o: 95,  h: 102, l: 94,  c: 100, v: 8000 },
+      { t: 2, o: 100, h: 105, l: 99,  c: 100, v: 9000 },
+      { t: 3, o: 110, h: 112, l: 109, c: 111, v: 5000 },
+    ]},
+    fiveDay: { AAPL: fiveDayFixtureForGap(90) },
+  });
+  const discord = fakeDiscordClient();
+  await runScanCycle({ store, yahoo, discord, now: () => Date.now() });
+  const gapMsg = discord.sent.find(s => /gap up/.test(s.content));
+  assert.ok(gapMsg);
+  assert.strictEqual(gapMsg.channelId, 'main-c', 'gap falls back to main channel when no gap channel set');
 });

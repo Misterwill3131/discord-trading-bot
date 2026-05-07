@@ -165,12 +165,17 @@ async function handleStatus(message, { store, scannerConfig }) {
   const guildId = message.guildId;
   if (!guildId) return message.reply('Use this command in a server.').catch(() => {});
   const channelId = store.getChannel(guildId);
+  const gapChannelId = store.getGapChannel(guildId);
   const watchCount = store.getWatchlist(guildId).length;
   const channelLine = channelId ? `<#${channelId}> ✅` : '⚠️ not set (use `!trend channel #channel`)';
+  const gapLine = gapChannelId
+    ? `<#${gapChannelId}> ✅`
+    : '(uses main alert channel — set with `!trend gap-channel #channel`)';
   const marketOpen = require('../trading/trend-scanner').isUSMarketOpen(new Date());
   const lines = [
     'Trend bot status (this server):',
     `• Alert channel: ${channelLine}`,
+    `• Gap channel: ${gapLine}`,
     `• Watchlist: ${watchCount} ticker${watchCount === 1 ? '' : 's'}`,
     `• Scanner: running (every ${scannerConfig?.intervalMin || 5} min)`,
     `• Market: ${marketOpen ? 'open' : 'closed'}`,
@@ -289,6 +294,64 @@ async function handleChannel(message, args, { store }) {
   return message.reply(`✅ Trend alerts will be posted to <#${channelId}>`).catch(() => {});
 }
 
+// `!trend gap-channel` — gère le salon dédié aux gap_up/gap_down.
+// Sans argument : affiche la config actuelle.
+// Avec argument 'off' / 'remove' / 'clear' : retire le routage dédié.
+// Avec un salon : route les gaps vers ce salon.
+//
+// NOTE : nécessite qu'un main channel soit déjà configuré (`!trend channel`)
+// car la ligne trend_channel doit exister pour que setGapChannel puisse
+// l'updater.
+async function handleGapChannel(message, args, { store }) {
+  if (!message.guildId) {
+    return message.reply('Use this command in a server.').catch(() => {});
+  }
+
+  if (args.length < 2) {
+    const gapChannelId = store.getGapChannel(message.guildId);
+    if (!gapChannelId) {
+      return message.reply('⚠️ No dedicated gap channel set. Gap alerts go to the main alert channel. Use `!trend gap-channel #channel` to dedicate one.').catch(() => {});
+    }
+    return message.reply(`Gap alerts channel: <#${gapChannelId}>`).catch(() => {});
+  }
+
+  if (!requireManageGuild(message)) return;
+
+  const arg = args[1].toLowerCase();
+  if (arg === 'off' || arg === 'remove' || arg === 'clear' || arg === 'none') {
+    store.deleteGapChannel(message.guildId);
+    return message.reply('✅ Dedicated gap channel removed. Gap alerts will go to the main alert channel.').catch(() => {});
+  }
+
+  const original = args[1];
+  let channelId = null;
+  const tagMatch = original.match(/^<#(\d+)>$/);
+  if (tagMatch) channelId = tagMatch[1];
+  else if (/^\d+$/.test(original)) channelId = original;
+  if (!channelId) {
+    return message.reply('Usage: `!trend gap-channel #channel` · `!trend gap-channel off`').catch(() => {});
+  }
+
+  let channel;
+  try {
+    channel = await message.client.channels.fetch(channelId);
+  } catch {
+    return message.reply('❌ That channel does not exist or I cannot access it.').catch(() => {});
+  }
+  if (!channel || channel.guildId !== message.guildId) {
+    return message.reply('❌ That channel is not in this server.').catch(() => {});
+  }
+  if (typeof channel.send !== 'function') {
+    return message.reply('❌ That channel cannot receive messages.').catch(() => {});
+  }
+
+  const ok = store.setGapChannel(message.guildId, channelId, Date.now());
+  if (!ok) {
+    return message.reply('⚠️ Set the main alert channel first with `!trend channel #channel`.').catch(() => {});
+  }
+  return message.reply(`✅ Gap alerts will be posted to <#${channelId}>`).catch(() => {});
+}
+
 function registerTrendCommands(client, { store, yahoo, scannerConfig }) {
   client.on('messageCreate', async (message) => {
     if (!message || !message.content || message.author?.bot) return;
@@ -297,13 +360,14 @@ function registerTrendCommands(client, { store, yahoo, scannerConfig }) {
 
     const args = text.slice('!trend'.length).trim().split(/\s+/).filter(Boolean);
     if (args.length === 0) {
-      return message.reply('Usage: `!trend <TICKER>` · `!trend watch <TICKER>` · `!trend unwatch <TICKER>` · `!trend watchlist` · `!trend status` · `!trend channel #channel`').catch(() => {});
+      return message.reply('Usage: `!trend <TICKER>` · `!trend watch <TICKER>` · `!trend unwatch <TICKER>` · `!trend watchlist` · `!trend status` · `!trend channel #channel` · `!trend gap-channel #channel`').catch(() => {});
     }
 
     const sub = args[0].toLowerCase();
-    if (sub === 'watch')     return handleWatch(message, args, { store, yahoo });
-    if (sub === 'unwatch')   return handleUnwatch(message, args, { store });
-    if (sub === 'channel')   return handleChannel(message, args, { store });
+    if (sub === 'watch')        return handleWatch(message, args, { store, yahoo });
+    if (sub === 'unwatch')      return handleUnwatch(message, args, { store });
+    if (sub === 'channel')      return handleChannel(message, args, { store });
+    if (sub === 'gap-channel')  return handleGapChannel(message, args, { store });
     if (sub === 'watchlist') return handleWatchlist(message, { store, yahoo });
     if (sub === 'status')    return handleStatus(message, { store, scannerConfig });
 

@@ -28,12 +28,22 @@ export type RenderJob = {
   exitMessage: string;
   exitTimestamp: string;
   pnl: string;
+  // Optionnel : base64 PNG de l'image canvas-rendered (entry+exit
+  // Discord conversation). Si null, la composition fallback sur les
+  // Discord cards Remotion natives.
+  proofImageBase64?: string | null;
 };
 
 // Props passées à la composition SignalAlertProof (sans le id côté DB).
+// Convertit proofImageBase64 (string) en data URL utilisable par <img src=...>.
 export function jobPropsToRemotion(job: RenderJob) {
-  const { id: _id, ...props } = job;
-  return props;
+  const { id: _id, proofImageBase64, ...rest } = job;
+  return {
+    ...rest,
+    proofImageDataUrl: proofImageBase64
+      ? `data:image/png;base64,${proofImageBase64}`
+      : null,
+  };
 }
 
 // Format heure NY 24h "HH:MM" depuis ISO timestamp.

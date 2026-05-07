@@ -136,7 +136,7 @@ async function sendToMakeWebhook(makeWebhookUrl, payload) {
 
 // Phase 3 — quand un exit gagnant arrive avec une entrée matchable,
 // enqueue un job pour que le worker local rende la proof video.
-function maybeEnqueueProofRender({
+async function maybeEnqueueProofRender({
   filterType, signalTicker, pnl, originalAlert,
   authorName, content, messageCreatedAt,
 }) {
@@ -144,6 +144,21 @@ function maybeEnqueueProofRender({
   if (!originalAlert) return;
   if (!originalAlert.ts) return;        // skip replies sans parent ts
   if (!pnl || pnl.startsWith('-')) return;  // pnl manquant ou négatif
+
+  // Génère l'image proof canvas (entry+exit Discord-styled, role pills,
+  // emojis custom, etc.). Stockée en base64 pour que le worker l'embed
+  // dans la vidéo Remotion. Si la génération échoue, on enqueue quand
+  // même (le worker fallback sur les Discord cards Remotion natives).
+  let proofImageBase64 = null;
+  try {
+    const proofBuf = await generateProofImage(
+      originalAlert.author, originalAlert.content, originalAlert.ts,
+      authorName, content, messageCreatedAt.toISOString()
+    );
+    proofImageBase64 = proofBuf.toString('base64');
+  } catch (err) {
+    console.warn('[render-queue] proof image generation failed (fallback cards):', err.message);
+  }
 
   try {
     enqueueRenderJob({
@@ -155,6 +170,7 @@ function maybeEnqueueProofRender({
       exit_message: content,
       exit_ts: messageCreatedAt.toISOString(),
       pnl,
+      proof_image_base64: proofImageBase64,
     });
   } catch (err) {
     console.error('[render-queue] enqueue failed:', err.message);
@@ -426,7 +442,7 @@ function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhoo
         messageCreatedAt: message.createdAt,
         isReply, parentContent, parentAuthor,
       });
-      maybeEnqueueProofRender({
+      await maybeEnqueueProofRender({
         filterType,
         signalTicker,
         pnl: extractPnl(content),

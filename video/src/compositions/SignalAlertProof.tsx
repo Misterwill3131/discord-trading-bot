@@ -5,10 +5,9 @@ import { slide } from '@remotion/transitions/slide';
 import { Stinger } from '../components/Stinger';
 import { LifestyleHook } from '../components/LifestyleHook';
 import { ResultTease } from '../components/ResultTease';
-import { DiscordCard } from '../components/DiscordCard';
 import { TimePassAct } from '../components/TimePassAct';
+import { ProofImageAct } from '../components/ProofImageAct';
 import { ResultCta } from '../components/ResultCta';
-import { parseReplyMarkdown } from '../utils/parseReply';
 
 export type SignalAlertProofProps = {
   ticker: string;
@@ -19,49 +18,45 @@ export type SignalAlertProofProps = {
   exitMessage: string;
   exitTimestamp: string;
   pnl: string;
+  // Data URL (data:image/png;base64,...) de l'image canvas-rendered
+  // entry+exit conversation. Optionnel : si null, ProofImageAct affiche
+  // un placeholder "image unavailable".
+  proofImageDataUrl?: string | null;
 };
 
 // Transitions courtes (~0.2s) entre chaque phase pour fluidité sans ralentir.
 // Sequences gonflées pour préserver le timing visuel d'origine malgré les overlaps.
 //
-// Math : 12+96+66+98+98+96+90 = 556 frames de Sequences
-// Transitions : 4 + 6 + 6 + 8 + 8 + 6 = 38 frames d'overlap
-// Total visible : 556 - 38 = 518 ✓ (cf Root.tsx)
+// Math : 12+96+66+98+188+90 = 550 frames de Sequences
+// Transitions : 4 + 6 + 8 + 8 + 6 = 32 frames d'overlap
+// Total visible : 550 - 32 = 518 ✓ (cf Root.tsx)
 const FADE_FRAMES = 6;
 const SLIDE_FRAMES = 8;
 
 // Audio cues : timestamps approximatifs (en frames) où les SFX se déclenchent.
-// Les SFX overlay le track principal de musique.
 const SFX_STINGER = 0;          // Cha-ching sur le flash d'ouverture
 const SFX_TRANS_1 = 12;         // Whoosh stinger → lifestyle
 const SFX_TRANS_2 = 108;        // Whoosh lifestyle → tease (~3.6s)
-const SFX_IMPACT = 264;         // Impact bass au climax du chart (~8.8s)
-const SFX_REVEAL = 426;         // Cha-ching sur le résultat final (~14.2s)
+const SFX_IMPACT = 222;         // Impact bass au climax du chart (~7.4s)
+const SFX_REVEAL = 460;         // Cha-ching sur le résultat final (~15.3s)
 
 export const SignalAlertProof = ({
-  ticker, entryAuthor, entryMessage, entryTimestamp,
-  exitAuthor, exitMessage, exitTimestamp, pnl,
+  ticker, entryAuthor, entryMessage: _entryMessage, entryTimestamp,
+  exitAuthor, exitMessage: _exitMessage, exitTimestamp, pnl,
+  proofImageDataUrl,
 }: SignalAlertProofProps) => {
-  // Parse les messages Discord pour extraire le contenu propre des replies.
-  // Strip le markdown brut "> *Replying to X [message](url)* ..." pour ne garder
-  // que le contenu utile dans les cards. Si l'exit est une réponse, on affiche
-  // aussi un preview "↩ @<author>: <entry>" en haut de la card via replyTo.
-  const entryParsed = parseReplyMarkdown(entryMessage);
-  const exitParsed = parseReplyMarkdown(exitMessage);
-
-  // Si l'exit est une réponse, on présume que le parent est l'entry (cas le
-  // plus courant pour un trade). On utilise entryMessage (clean) comme preview.
-  const exitReplyTo = exitParsed.replyAuthor
-    ? { author: entryAuthor, messagePreview: entryParsed.content }
-    : undefined;
+  // Caption pour la phase ProofImage : ticker + auteurs + pnl.
+  // Format : "$TICKER · ENTRY_AUTHOR → EXIT_AUTHOR · +X%"
+  // Si entry et exit même auteur, on simplifie en un seul nom.
+  const proofCaption = entryAuthor === exitAuthor
+    ? `$${ticker} · ${entryAuthor} · ${pnl}`
+    : `$${ticker} · ${entryAuthor} → ${exitAuthor} · ${pnl}`;
 
   return (
     <AbsoluteFill style={{ backgroundColor: 'black' }}>
       {/* === AUDIO === */}
-      {/* Music track principal (volume bas pour laisser respirer les SFX) */}
       <Audio src={staticFile('audio/proof-track.mp3')} volume={0.55} />
 
-      {/* SFX cues */}
       <Sequence from={SFX_STINGER} durationInFrames={45}>
         <Audio src={staticFile('audio/chaching.mp3')} volume={0.85} />
       </Sequence>
@@ -80,12 +75,11 @@ export const SignalAlertProof = ({
 
       {/* === VIDEO === */}
       <TransitionSeries>
-        {/* Phase 0 — Stinger d'ouverture (0-0.4s) : flash du PnL */}
+        {/* Phase 0 — Stinger d'ouverture (~0.4s) : flash du PnL */}
         <TransitionSeries.Sequence durationInFrames={12}>
           <Stinger pnl={pnl} />
         </TransitionSeries.Sequence>
 
-        {/* Cross-fade rapide vers la lifestyle hook */}
         <TransitionSeries.Transition
           presentation={fade()}
           timing={linearTiming({ durationInFrames: 4 })}
@@ -107,26 +101,11 @@ export const SignalAlertProof = ({
         </TransitionSeries.Sequence>
 
         <TransitionSeries.Transition
-          presentation={fade()}
-          timing={linearTiming({ durationInFrames: FADE_FRAMES })}
-        />
-
-        {/* Phase 3 — Entry card (~3s, avec typing indicator) */}
-        <TransitionSeries.Sequence durationInFrames={98}>
-          <DiscordCard
-            author={entryAuthor}
-            message={entryParsed.content}
-            timestamp={entryTimestamp}
-            position="center"
-          />
-        </TransitionSeries.Sequence>
-
-        <TransitionSeries.Transition
           presentation={slide({ direction: 'from-right' })}
           timing={linearTiming({ durationInFrames: SLIDE_FRAMES })}
         />
 
-        {/* Phase 4 — Time pass + chart explosion (~3s) */}
+        {/* Phase 3 — Chart explosion (~3s) */}
         <TransitionSeries.Sequence durationInFrames={98}>
           <TimePassAct entryTimestamp={entryTimestamp} exitTimestamp={exitTimestamp} />
         </TransitionSeries.Sequence>
@@ -136,14 +115,12 @@ export const SignalAlertProof = ({
           timing={linearTiming({ durationInFrames: SLIDE_FRAMES })}
         />
 
-        {/* Phase 5 — Exit card (~3s, avec typing indicator + reply preview si applicable) */}
-        <TransitionSeries.Sequence durationInFrames={96}>
-          <DiscordCard
-            author={exitAuthor}
-            message={exitParsed.content}
-            timestamp={exitTimestamp}
-            position="center"
-            replyTo={exitReplyTo}
+        {/* Phase 4 — Proof image (~6.3s) : "the receipts" — image canvas
+            entry+exit Discord-styled (role pills, custom emojis, etc.) */}
+        <TransitionSeries.Sequence durationInFrames={188}>
+          <ProofImageAct
+            src={proofImageDataUrl || undefined}
+            caption={proofCaption}
           />
         </TransitionSeries.Sequence>
 
@@ -152,7 +129,7 @@ export const SignalAlertProof = ({
           timing={linearTiming({ durationInFrames: FADE_FRAMES })}
         />
 
-        {/* Phase 6 — Result CTA + money rain (~3s) */}
+        {/* Phase 5 — Result CTA + money rain (~3s) */}
         <TransitionSeries.Sequence durationInFrames={90}>
           <ResultCta pnl={pnl} />
         </TransitionSeries.Sequence>

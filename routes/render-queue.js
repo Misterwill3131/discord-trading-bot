@@ -33,6 +33,10 @@ function jobToApiShape(row) {
     exitMessage: row.exit_message,
     exitTimestamp: row.exit_ts,
     pnl: row.pnl,
+    // Base64 PNG de l'image canvas-rendered (entry+exit Discord conversation
+    // avec role pills / emojis custom). null si la génération a échoué côté
+    // bot — le worker fallback sur les Discord cards Remotion natives.
+    proofImageBase64: row.proof_image_base64 || null,
   };
 }
 

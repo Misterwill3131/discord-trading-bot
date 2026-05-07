@@ -53,9 +53,9 @@ test('formatAnalystEntryEmail always starts with 📥 (required by email filter)
   assert.ok(msg.startsWith('📥'));
 });
 
-test('maybeEnqueueProofRender enqueues job on winning exit with valid entry', () => {
+test('maybeEnqueueProofRender enqueues job on winning exit with valid entry', async () => {
   const before = getPendingRenderJobs().length;
-  maybeEnqueueProofRender({
+  await maybeEnqueueProofRender({
     filterType: 'exit',
     signalTicker: 'TSLA',
     pnl: '+20%',
@@ -75,9 +75,9 @@ test('maybeEnqueueProofRender enqueues job on winning exit with valid entry', ()
   assert.strictEqual(job.pnl, '+20%');
 });
 
-test('maybeEnqueueProofRender skips losing exit', () => {
+test('maybeEnqueueProofRender skips losing exit', async () => {
   const before = getPendingRenderJobs().length;
-  maybeEnqueueProofRender({
+  await maybeEnqueueProofRender({
     filterType: 'exit',
     signalTicker: 'AAPL',
     pnl: '-5%',
@@ -89,9 +89,9 @@ test('maybeEnqueueProofRender skips losing exit', () => {
   assert.strictEqual(getPendingRenderJobs().length, before);
 });
 
-test('maybeEnqueueProofRender skips when no originalAlert', () => {
+test('maybeEnqueueProofRender skips when no originalAlert', async () => {
   const before = getPendingRenderJobs().length;
-  maybeEnqueueProofRender({
+  await maybeEnqueueProofRender({
     filterType: 'exit',
     signalTicker: 'NVDA',
     pnl: '+10%',
@@ -103,9 +103,9 @@ test('maybeEnqueueProofRender skips when no originalAlert', () => {
   assert.strictEqual(getPendingRenderJobs().length, before);
 });
 
-test('maybeEnqueueProofRender skips when originalAlert.ts is null (reply case)', () => {
+test('maybeEnqueueProofRender skips when originalAlert.ts is null (reply case)', async () => {
   const before = getPendingRenderJobs().length;
-  maybeEnqueueProofRender({
+  await maybeEnqueueProofRender({
     filterType: 'exit',
     signalTicker: 'AMD',
     pnl: '+15%',
@@ -117,9 +117,9 @@ test('maybeEnqueueProofRender skips when originalAlert.ts is null (reply case)',
   assert.strictEqual(getPendingRenderJobs().length, before);
 });
 
-test('maybeEnqueueProofRender skips entry signals (filterType=entry)', () => {
+test('maybeEnqueueProofRender skips entry signals (filterType=entry)', async () => {
   const before = getPendingRenderJobs().length;
-  maybeEnqueueProofRender({
+  await maybeEnqueueProofRender({
     filterType: 'entry',
     signalTicker: 'TSLA',
     pnl: null,

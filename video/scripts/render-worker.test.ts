@@ -30,6 +30,21 @@ describe('jobPropsToRemotion', () => {
     const props = jobPropsToRemotion(sampleJob) as Record<string, unknown>;
     expect(props.id).toBeUndefined();
   });
+
+  test('proofImageDataUrl is null when proofImageBase64 absent', () => {
+    const props = jobPropsToRemotion(sampleJob);
+    expect(props.proofImageDataUrl).toBeNull();
+  });
+
+  test('proofImageDataUrl is data URL when proofImageBase64 present', () => {
+    const props = jobPropsToRemotion({
+      ...sampleJob,
+      proofImageBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB',
+    });
+    expect(props.proofImageDataUrl).toBe(
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB'
+    );
+  });
 });
 
 describe('buildCaption', () => {

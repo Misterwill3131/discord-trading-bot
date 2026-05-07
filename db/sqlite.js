@@ -438,6 +438,13 @@ addColumnIfMissing('trend_channel', 'gap_channel_id', 'TEXT');
 // des transitions de direction.
 addColumnIfMissing('trend_channel', 'direction_disabled', 'INTEGER DEFAULT 0');
 
+// ── render_jobs : proof image base64 (Phase 3.5) ──────────────────────
+// Image PNG canvas-rendered (entry+exit conversation Discord-styled) qui
+// sera embed dans la proof video par le worker. Stockée en base64 TEXT
+// pour simplicité (~150-300 KB par job, exposée via /api/render-queue).
+// Optionnel : si null, le worker fallback sur le rendu Discord cards.
+addColumnIfMissing('render_jobs', 'proof_image_base64', 'TEXT');
+
 // ── SaaS licenses : passthrough channel séparé pour bots upstream ─────
 // Permet de router les alertes "passthrough" (ex: TrendVision) vers un
 // salon distinct du target_channel_id (signaux principaux).
@@ -1632,15 +1639,16 @@ function backupDb(destPath) {
 const stmtEnqueueRenderJob = db.prepare(`
   INSERT INTO render_jobs
     (ticker, entry_author, entry_message, entry_ts,
-     exit_author, exit_message, exit_ts, pnl)
+     exit_author, exit_message, exit_ts, pnl, proof_image_base64)
   VALUES
     (@ticker, @entry_author, @entry_message, @entry_ts,
-     @exit_author, @exit_message, @exit_ts, @pnl)
+     @exit_author, @exit_message, @exit_ts, @pnl, @proof_image_base64)
 `);
 
 const stmtGetPendingRenderJobs = db.prepare(`
   SELECT id, ticker, entry_author, entry_message, entry_ts,
-         exit_author, exit_message, exit_ts, pnl, status, created_at
+         exit_author, exit_message, exit_ts, pnl, status, created_at,
+         proof_image_base64
   FROM render_jobs
   WHERE status = 'pending'
   ORDER BY created_at ASC
@@ -1660,7 +1668,11 @@ const stmtMarkRenderJobFailed = db.prepare(`
 `);
 
 function enqueueRenderJob(payload) {
-  const result = stmtEnqueueRenderJob.run(payload);
+  // proof_image_base64 est optionnel : null si pas dispo (fallback Discord cards)
+  const result = stmtEnqueueRenderJob.run({
+    proof_image_base64: null,
+    ...payload,
+  });
   return result.lastInsertRowid;
 }
 

@@ -635,17 +635,29 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
   } catch (e) {}
 
   // Contenu tronqué de l'alerte d'origine.
+  // Utilise drawRichLine (pas fillText) pour rendre role mentions en pill
+  // et emojis custom comme dans le bloc message principal — sinon les
+  // <@&id> apparaissaient en raw dans la barre de référence.
   const refContentX = refBadgeX;
   ctx.font = '11px ' + FONT;
   ctx.fillStyle = '#ffffff';
   const truncMaxW = W - refContentX - PADDING_L;
-  let truncText = (alertContent || '').replace(/\n/g, ' ');
-  const fullTrunc = truncText;
-  while (truncText.length > 0 && ctx.measureText(truncText).width > truncMaxW) {
+  const truncEmojiSize = Math.round(11 * 1.15);
+  let fullText = (alertContent || '').replace(/\n/g, ' ');
+  // Tronque en mesurant la largeur rich (segments + emojis + pills) jusqu'à
+  // tenir dans truncMaxW. Si tronqué, append "..." puis re-mesure.
+  let truncText = fullText;
+  while (truncText.length > 0 && measureRichWidth(ctx, truncText, truncEmojiSize) > truncMaxW) {
     truncText = truncText.slice(0, -1);
   }
-  if (truncText.length < fullTrunc.length) truncText += '...';
-  ctx.fillText(truncText, refContentX, refMidY);
+  if (truncText.length < fullText.length) {
+    // Append "..." en s'assurant qu'on a la place
+    while (truncText.length > 0 && measureRichWidth(ctx, truncText + '...', truncEmojiSize) > truncMaxW) {
+      truncText = truncText.slice(0, -1);
+    }
+    truncText += '...';
+  }
+  await drawRichLine(ctx, truncText, refContentX, refMidY, 11);
   ctx.textBaseline = 'alphabetic';
 
   // ─── Bloc principal (message complet, en bas) ───

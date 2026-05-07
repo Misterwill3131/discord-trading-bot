@@ -510,7 +510,13 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
 // ═════════════════════════════════════════════════════════════════════
 //  generateProofImage — Barre de référence + bloc message (style reply)
 // ═════════════════════════════════════════════════════════════════════
-async function generateProofImage(alertAuthor, alertContent, alertTimestamp, recapAuthor, recapContent, recapTimestamp) {
+// Options :
+//   - scale (default 1) : multiplie la résolution native du canvas (utile
+//     pour le rendu vidéo où on veut une image 2x plus sharp). Le contexte
+//     est mis à l'échelle via ctx.scale() donc les coords logiques restent
+//     identiques — seule la résolution finale change.
+async function generateProofImage(alertAuthor, alertContent, alertTimestamp, recapAuthor, recapContent, recapTimestamp, options = {}) {
+  const scale = options.scale || 1;
   alertAuthor  = getDisplayName(alertAuthor);
   recapAuthor  = getDisplayName(recapAuthor);
   alertContent = resolveUserMentions(alertContent);
@@ -534,8 +540,11 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
   const recapH = PADDING_V + NAME_H + recapLines.length * LINE_H + PADDING_V;
   const H = TOP_MARGIN + REPLY_REF_H + recapH - BIG_BLOCK_SHIFT;
 
-  const canvas = createCanvas(W, H);
+  // Canvas final à scale × résolution. ctx.scale() upscale le rendu pour
+  // que toutes les coords logiques (W, H, fonts) restent identiques.
+  const canvas = createCanvas(W * scale, H * scale);
   const ctx = canvas.getContext('2d');
+  if (scale !== 1) ctx.scale(scale, scale);
   ctx.fillStyle = '#1e1f22';
   ctx.fillRect(0, 0, W, H);
 

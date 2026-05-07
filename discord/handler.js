@@ -151,9 +151,11 @@ async function maybeEnqueueProofRender({
   // même (le worker fallback sur les Discord cards Remotion natives).
   let proofImageBase64 = null;
   try {
+    // scale=2 pour rendu vidéo sharp (1480×~260 natif vs 740×~130 Discord)
     const proofBuf = await generateProofImage(
       originalAlert.author, originalAlert.content, originalAlert.ts,
-      authorName, content, messageCreatedAt.toISOString()
+      authorName, content, messageCreatedAt.toISOString(),
+      { scale: 2 }
     );
     proofImageBase64 = proofBuf.toString('base64');
   } catch (err) {

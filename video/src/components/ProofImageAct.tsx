@@ -52,20 +52,22 @@ export const ProofImageAct = ({ src, caption }: Props) => {
         padding: 80,
       }}
     >
-      {/* Image proof — 1080×1920 viewport, image is ~740px wide native.
-          object-fit: contain garde le ratio + s'adapte. Cover-tinted dim
-          background derrière déjà via le gradient parent. */}
+      {/* Image proof — 1080×1920 viewport, image canvas est ~740×130 native
+          (5.7:1 landscape). On l'affiche à 100% width avec border + glow
+          pour qu'elle ressemble à une "receipt" flottante. Centrée par le
+          flex parent. */}
       {src ? (
         <Img
           src={src}
           style={{
-            maxWidth: '100%',
-            maxHeight: '85%',
-            objectFit: 'contain',
+            width: '100%',
+            height: 'auto',
             opacity,
             transform: `scale(${scale})`,
+            transformOrigin: 'center center',
             borderRadius: 24,
-            boxShadow: '0 16px 80px rgba(0,0,0,0.7)',
+            boxShadow:
+              '0 24px 100px rgba(0,0,0,0.85), 0 0 80px rgba(52,152,219,0.25), inset 0 0 0 2px rgba(255,255,255,0.05)',
           }}
         />
       ) : (

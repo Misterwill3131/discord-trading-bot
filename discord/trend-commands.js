@@ -262,8 +262,13 @@ function requireManageGuild(message) {
   return true;
 }
 
+// PUBLIC : tout membre du serveur peut ajouter un ticker à la watchlist.
+// `!trend unwatch` reste ManageGuild (sinon n'importe qui pourrait retirer
+// le travail des autres). Validation ticker + fetch Yahoo conservés.
 async function handleWatch(message, args, { store, yahoo }) {
-  if (!requireManageGuild(message)) return;
+  if (!message.guildId) {
+    return message.reply('Use this command in a server.').catch(() => {});
+  }
   if (args.length < 2) {
     return message.reply('Usage: `!trend watch <TICKER>`').catch(() => {});
   }

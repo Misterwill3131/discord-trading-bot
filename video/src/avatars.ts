@@ -8,6 +8,7 @@ import { staticFile } from 'remotion';
 // dans canvas/config.js.
 export const CUSTOM_AVATARS: Record<string, string> = {
   'Z':                staticFile('avatars/z-avatar.jpg'),
+  'ZZ':               staticFile('avatars/z-avatar.jpg'),
   'AR':               staticFile('avatars/AR_AVATAR.png'),
   'beppels':          staticFile('avatars/beppels_avatar.png'),
   'L':                staticFile('avatars/L_avatar.png'),
@@ -24,4 +25,5 @@ export const CUSTOM_AVATARS: Record<string, string> = {
   'thedutchess1':     staticFile('avatars/thedutchess1_avatar.png'),
   'Legacy Trading':   staticFile('avatars/Legacy Trading_avatar.png'),
   'Protrader Alerts': staticFile('avatars/Protrader Alerts_avatar.png'),
+  'MsKim':            staticFile('avatars/MsKim.png'),
 };

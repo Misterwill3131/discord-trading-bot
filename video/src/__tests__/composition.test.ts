@@ -81,7 +81,7 @@ describe('SignalAlertProof composition', () => {
     expect(comp.width).toBe(1080);
     expect(comp.height).toBe(1920);
     expect(comp.fps).toBe(30);
-    expect(comp.durationInFrames).toBe(510);
+    expect(comp.durationInFrames).toBe(518);
   });
 
   test('has default props with expected fields', async () => {

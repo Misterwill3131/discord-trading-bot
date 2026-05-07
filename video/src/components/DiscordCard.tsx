@@ -71,6 +71,63 @@ const Avatar = ({ author }: { author: string }) => {
   );
 };
 
+// 3 dots animés : chacun bounce avec un délai (Discord-style typing indicator).
+const TypingDot = ({ delay, frame }: { delay: number; frame: number }) => {
+  // Cycle 18 frames (0.6s @ 30fps) : up 9f, down 9f.
+  const cycleFrame = (frame + delay) % 18;
+  const opacity = interpolate(
+    cycleFrame,
+    [0, 4, 9, 14, 18],
+    [0.3, 1, 1, 0.3, 0.3],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
+  );
+  const translateY = interpolate(
+    cycleFrame,
+    [0, 4, 9, 14, 18],
+    [0, -6, 0, 0, 0],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
+  );
+  return (
+    <span
+      style={{
+        display: 'inline-block',
+        width: 8,
+        height: 8,
+        borderRadius: '50%',
+        background: '#dcddde',
+        opacity,
+        transform: `translateY(${translateY}px)`,
+        margin: '0 2px',
+      }}
+    />
+  );
+};
+
+// Indicateur "X is typing..." à la Discord (apparaît avant le message).
+const TypingIndicator = ({ author, frame, opacity }: { author: string; frame: number; opacity: number }) => {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        color: '#80848e',
+        fontSize: 22,
+        fontStyle: 'italic',
+        opacity,
+        marginTop: 8,
+      }}
+    >
+      <span style={{ display: 'flex', alignItems: 'center' }}>
+        <TypingDot delay={0} frame={frame} />
+        <TypingDot delay={6} frame={frame} />
+        <TypingDot delay={12} frame={frame} />
+      </span>
+      <span>{author} is typing</span>
+    </div>
+  );
+};
+
 // Mapping position → CSS top/left/right/bottom + transform
 function positionStyle(position: 'center' | 'top-left' | 'bottom-right'): React.CSSProperties {
   if (position === 'top-left') {
@@ -83,18 +140,39 @@ function positionStyle(position: 'center' | 'top-left' | 'bottom-right'): React.
   return { top: '50%', left: '50%', transform: 'translate(-50%, -50%)' };
 }
 
+// Phase 1 : typing indicator (frames 0-12 = 0.4s)
+// Phase 2 : transition typing → message (frames 12-24)
+// Phase 3 : message visible (frames 24+)
+const TYPING_END = 12;
+const MESSAGE_START = 12;
+
 export const DiscordCard = ({ author, message, timestamp, scale = 1, position = 'center' }: Props) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  // Slide-up + fade-in via spring (durationInFrames 20)
-  const entry = spring({
+  // Typing indicator : visible 0-12, fade out 12-18.
+  const typingOpacity = interpolate(
     frame,
+    [0, 2, 12, 18],
+    [0, 1, 1, 0],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
+  );
+
+  // Message : spring bouncy à partir de frame 12.
+  // Damping plus bas (10) pour overshoot visible.
+  const messageEntry = spring({
+    frame: Math.max(0, frame - MESSAGE_START),
     fps,
-    config: { damping: 14 },
-    durationInFrames: 20,
+    config: { damping: 10, stiffness: 120, mass: 0.8 },
+    durationInFrames: 18,
   });
-  const translateY = interpolate(entry, [0, 1], [120, 0]);
+  const messageScale = interpolate(messageEntry, [0, 1], [0.85, 1]) * scale;
+  const messageOpacity = interpolate(
+    frame,
+    [MESSAGE_START, MESSAGE_START + 4],
+    [0, 1],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }
+  );
 
   // Couleur du nom : dégradé rose/violet, sauf Legacy Trading rouge
   const nameStyle: React.CSSProperties = author === 'Legacy Trading'
@@ -105,6 +183,9 @@ export const DiscordCard = ({ author, message, timestamp, scale = 1, position = 
         backgroundClip: 'text',
         WebkitTextFillColor: 'transparent',
       };
+
+  // Card opacity = typing OR message (les deux apparaissent au même endroit)
+  const cardOpacity = Math.max(typingOpacity * 0.7, messageOpacity);
 
   return (
     <AbsoluteFill style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'sans-serif' }}>
@@ -118,11 +199,11 @@ export const DiscordCard = ({ author, message, timestamp, scale = 1, position = 
           borderRadius: 24,
           padding: '36px 40px',
           boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-          opacity: entry,
-          transform: `${positionStyle(position).transform} translateY(${translateY}px) scale(${scale})`,
+          opacity: cardOpacity,
+          transform: `${positionStyle(position).transform} scale(${messageScale})`,
         }}
       >
-        {/* Header row */}
+        {/* Header row (toujours visible quand la carte est là) */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14 }}>
           <Avatar author={author} />
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -139,9 +220,28 @@ export const DiscordCard = ({ author, message, timestamp, scale = 1, position = 
           </div>
         </div>
 
-        {/* Message body */}
-        <div style={{ color: '#dcddde', fontSize: 36, fontWeight: 600, lineHeight: 1.4, wordBreak: 'break-word' }}>
-          {message}
+        {/* Conteneur body : typing indicator (0-18) puis message (12+) */}
+        <div style={{ minHeight: 80, position: 'relative' }}>
+          {/* Typing indicator (frames 0-18) */}
+          {frame < 20 && (
+            <div style={{ position: 'absolute', top: 0, left: 0 }}>
+              <TypingIndicator author={author} frame={frame} opacity={typingOpacity} />
+            </div>
+          )}
+
+          {/* Message (à partir du frame 12) */}
+          <div
+            style={{
+              color: '#dcddde',
+              fontSize: 36,
+              fontWeight: 600,
+              lineHeight: 1.4,
+              wordBreak: 'break-word',
+              opacity: messageOpacity,
+            }}
+          >
+            {message}
+          </div>
         </div>
       </div>
     </AbsoluteFill>

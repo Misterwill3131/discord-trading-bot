@@ -11,14 +11,16 @@ type Props = {
 };
 
 // Phase de hook lifestyle : 3s = 90 frames @ 30fps.
-// 4 images du pool LIFESTYLE_IMAGES avec :
+// 5 images du pool LIFESTYLE_IMAGES avec :
 //  - crossfade 4 frames entre chaque cut (vs flash blanc dur précédent)
 //  - Ken Burns : zoom-in subtil 1.05 → 1.15 sur la durée totale de chaque image
-//  - pan directionnel par image (left/right/up/down) pour un mouvement organique
+//  - pan directionnel par image pour un mouvement organique
 //  - vignette radiale pour focus cinématique
+//  - cuts plus rapides (18 frames vs 22 précédent) : speed ramp TikTok-style
 const TOTAL_FRAMES = 90;
-const SLOT = 22; // frames "actifs" par image (sans compter les crossfades)
+const SLOT = 18; // 5 cuts × 18 = 90 frames pile
 const FADE = 4; // crossfade duration en frames
+const NUM_IMAGES = 5;
 
 type SlotProps = {
   src: string;
@@ -37,10 +39,11 @@ const ImageSlot = ({ src, slotIndex, pan }: SlotProps) => {
   // Note : interpolate exige des valeurs strictement croissantes.
   // Pour la première image, on commence à -1 (pas de fade-in visible).
   // Pour la dernière image, on termine à TOTAL_FRAMES+1 (pas de fade-out visible).
+  const isLast = slotIndex === NUM_IMAGES - 1;
   const fadeInStart = slotIndex === 0 ? -1 : slotStart - FADE;
   const fadeInEnd = slotIndex === 0 ? 0 : slotStart;
-  const fadeOutStart = slotIndex === 3 ? TOTAL_FRAMES : slotEnd;
-  const fadeOutEnd = slotIndex === 3 ? TOTAL_FRAMES + 1 : slotEnd + FADE;
+  const fadeOutStart = isLast ? TOTAL_FRAMES : slotEnd;
+  const fadeOutEnd = isLast ? TOTAL_FRAMES + 1 : slotEnd + FADE;
 
   const opacity = interpolate(
     frame,
@@ -93,21 +96,22 @@ const ImageSlot = ({ src, slotIndex, pan }: SlotProps) => {
 
 export const LifestyleHook = ({ overlayText, seed = 'default' }: Props) => {
   const frame = useCurrentFrame();
-  const images = useMemo(() => pickImages(seed, 4), [seed]);
+  const images = useMemo(() => pickImages(seed, NUM_IMAGES), [seed]);
 
-  // Pans variés par image pour éviter la monotonie.
-  const pans: Array<'left' | 'right' | 'up' | 'down'> = ['right', 'left', 'up', 'right'];
+  // Pans variés par image pour éviter la monotonie (5 valeurs pour 5 cuts).
+  const pans: Array<'left' | 'right' | 'up' | 'down'> = ['right', 'left', 'up', 'right', 'down'];
 
   // Overlay text : fade-in + scale punch (spring-like) sur la dernière image.
+  // Avec NUM_IMAGES=5 et SLOT=18, la dernière image apparaît au frame 72.
   const overlayOpacity = interpolate(
     frame,
-    [60, 75],
+    [72, 84],
     [0, 1],
     { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic) }
   );
   const overlayScale = interpolate(
     frame,
-    [60, 72, 78],
+    [72, 82, 86],
     [0.4, 1.15, 1],
     { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic) }
   );

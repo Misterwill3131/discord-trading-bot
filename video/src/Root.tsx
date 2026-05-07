@@ -49,7 +49,7 @@ export const Root = () => {
       <Composition
         id="SignalAlertProof"
         component={SignalAlertProof}
-        durationInFrames={510}
+        durationInFrames={518}
         fps={30}
         width={1080}
         height={1920}

@@ -1,4 +1,5 @@
 import { AbsoluteFill, useCurrentFrame, useVideoConfig, spring, interpolate } from 'remotion';
+import { MoneyRain } from './MoneyRain';
 
 type Props = {
   pnl: string;
@@ -39,6 +40,9 @@ export const ResultCta = ({ pnl }: Props) => {
 
   const pnlColor = pnl.startsWith('-') ? '#ef4444' : '#10b981';
 
+  // Money rain seulement si gain (pas pour les pertes).
+  const showMoneyRain = !pnl.startsWith('-');
+
   return (
     <AbsoluteFill
       style={{
@@ -51,6 +55,9 @@ export const ResultCta = ({ pnl }: Props) => {
         fontFamily: 'sans-serif',
       }}
     >
+      {/* Money rain en arrière-plan (sous le texte mais au-dessus du fond) */}
+      {showMoneyRain && <MoneyRain count={40} seed={`cta-${pnl}`} />}
+
       <div
         style={{
           color: pnlColor,
@@ -59,6 +66,7 @@ export const ResultCta = ({ pnl }: Props) => {
           letterSpacing: -6,
           transform: `scale(${pnlScale})`,
           textShadow: `0 0 80px ${pnlColor}aa`,
+          zIndex: 2,
         }}
       >
         {pnl}

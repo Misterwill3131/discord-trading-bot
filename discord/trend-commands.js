@@ -160,6 +160,45 @@ async function handleWatchlist(message, { store, yahoo }) {
   return message.reply(lines.join('\n')).catch(() => {});
 }
 
+// `!trend list` — show all guilds (the bot is in) where the trend module is
+// configured AND the user is a member. Multi-guild visibility, no permission
+// required (read-only, the user can already see those channels via Discord).
+// Works in DM too — uses message.author.id to look up membership.
+async function handleList(message, { store }) {
+  const userId = message.author && message.author.id;
+  if (!userId) return;
+  const client = message.client;
+  const allConfigs = store.getAllConfiguredGuilds();
+  if (allConfigs.length === 0) {
+    return message.reply('Trend module not configured anywhere yet.').catch(() => {});
+  }
+
+  const lines = [];
+  for (const cfg of allConfigs) {
+    const guild = client.guilds.cache.get(cfg.guildId);
+    if (!guild) continue;  // bot no longer in this guild
+    let isMember = false;
+    try {
+      const member = await guild.members.fetch(userId);
+      isMember = !!member;
+    } catch {
+      isMember = false;  // user not in this guild (or fetch failed)
+    }
+    if (!isMember) continue;
+
+    const watchCount = store.getWatchlist(cfg.guildId).length;
+    const main = `<#${cfg.channelId}>`;
+    const gap  = cfg.gapChannelId ? `<#${cfg.gapChannelId}>` : '(uses main)';
+    lines.push(`• **${guild.name}** — main: ${main} · gap: ${gap} · ${watchCount} ticker${watchCount === 1 ? '' : 's'}`);
+  }
+
+  if (lines.length === 0) {
+    return message.reply("Trend module isn't active in any server you share with this bot.").catch(() => {});
+  }
+  const header = `Trend module active in ${lines.length} server${lines.length === 1 ? '' : 's'} you're in:`;
+  return message.reply([header, ...lines].join('\n')).catch(() => {});
+}
+
 // !trend status → affiche le statut du bot
 async function handleStatus(message, { store, scannerConfig }) {
   const guildId = message.guildId;
@@ -360,7 +399,7 @@ function registerTrendCommands(client, { store, yahoo, scannerConfig }) {
 
     const args = text.slice('!trend'.length).trim().split(/\s+/).filter(Boolean);
     if (args.length === 0) {
-      return message.reply('Usage: `!trend <TICKER>` · `!trend watch <TICKER>` · `!trend unwatch <TICKER>` · `!trend watchlist` · `!trend status` · `!trend channel #channel` · `!trend gap-channel #channel`').catch(() => {});
+      return message.reply('Usage: `!trend <TICKER>` · `!trend watch <TICKER>` · `!trend unwatch <TICKER>` · `!trend watchlist` · `!trend status` · `!trend list` · `!trend channel #channel` · `!trend gap-channel #channel`').catch(() => {});
     }
 
     const sub = args[0].toLowerCase();
@@ -368,8 +407,9 @@ function registerTrendCommands(client, { store, yahoo, scannerConfig }) {
     if (sub === 'unwatch')      return handleUnwatch(message, args, { store });
     if (sub === 'channel')      return handleChannel(message, args, { store });
     if (sub === 'gap-channel')  return handleGapChannel(message, args, { store });
-    if (sub === 'watchlist') return handleWatchlist(message, { store, yahoo });
-    if (sub === 'status')    return handleStatus(message, { store, scannerConfig });
+    if (sub === 'watchlist')    return handleWatchlist(message, { store, yahoo });
+    if (sub === 'status')       return handleStatus(message, { store, scannerConfig });
+    if (sub === 'list')         return handleList(message, { store });
 
     // Default: treat first arg as a ticker symbol.
     const ticker = args[0].replace(/\$/g, '').toUpperCase();

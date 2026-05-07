@@ -48,6 +48,9 @@ function createTrendStore(db) {
   const selectGapChannel = db.prepare(
     `SELECT gap_channel_id FROM trend_channel WHERE guild_id = ?`
   );
+  const selectAllChannels = db.prepare(
+    `SELECT guild_id, channel_id, gap_channel_id FROM trend_channel ORDER BY guild_id`
+  );
 
   // ── State ─────────────────────────────────────────────────────────
   const selectState = db.prepare(
@@ -154,6 +157,16 @@ function createTrendStore(db) {
     deleteGapChannel(guildId) {
       // Clears the gap channel without touching the main channel row.
       updateGapChannel.run(null, Date.now(), guildId);
+    },
+    // Returns ALL guilds with a configured trend channel. Used by `!trend list`
+    // to enumerate where the module is active. Caller is responsible for
+    // filtering further (e.g., only show guilds the user is a member of).
+    getAllConfiguredGuilds() {
+      return selectAllChannels.all().map(r => ({
+        guildId: r.guild_id,
+        channelId: r.channel_id,
+        gapChannelId: r.gap_channel_id,
+      }));
     },
 
     getState(ticker) {

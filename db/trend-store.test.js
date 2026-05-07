@@ -131,6 +131,28 @@ test('deleteChannel also removes the gap channel (whole row deleted)', () => {
   assert.strictEqual(store.getGapChannel('g1'), null);
 });
 
+test('getAllConfiguredGuilds returns empty when no channels set', () => {
+  const store = createTrendStore(makeDb());
+  assert.deepStrictEqual(store.getAllConfiguredGuilds(), []);
+});
+
+test('getAllConfiguredGuilds returns all rows ordered by guild_id', () => {
+  const store = createTrendStore(makeDb());
+  store.setChannel('g3', 'c3', 3000);
+  store.setChannel('g1', 'c1', 1000);
+  store.setChannel('g2', 'c2', 2000);
+  store.setGapChannel('g2', 'gc2', 2500);
+  const all = store.getAllConfiguredGuilds();
+  assert.strictEqual(all.length, 3);
+  // Sorted by guild_id ASC
+  assert.strictEqual(all[0].guildId, 'g1');
+  assert.strictEqual(all[0].channelId, 'c1');
+  assert.strictEqual(all[0].gapChannelId, null);
+  assert.strictEqual(all[1].guildId, 'g2');
+  assert.strictEqual(all[1].gapChannelId, 'gc2');
+  assert.strictEqual(all[2].guildId, 'g3');
+});
+
 test('getState returns null for unknown ticker', () => {
   const store = createTrendStore(makeDb());
   assert.strictEqual(store.getState('AAPL'), null);

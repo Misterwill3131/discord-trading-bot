@@ -9,6 +9,7 @@ import { staticFile } from 'remotion';
 export const CUSTOM_AVATARS: Record<string, string> = {
   'Z':                staticFile('avatars/z-avatar.jpg'),
   'ZZ':               staticFile('avatars/z-avatar.jpg'),
+  'templeofboom':     staticFile('avatars/z-avatar.jpg'),
   'AR':               staticFile('avatars/AR_AVATAR.png'),
   'beppels':          staticFile('avatars/beppels_avatar.png'),
   'L':                staticFile('avatars/L_avatar.png'),

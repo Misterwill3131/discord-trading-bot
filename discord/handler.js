@@ -168,10 +168,14 @@ async function maybeEnqueueProofRender({
   try {
     enqueueRenderJob({
       ticker: signalTicker,
-      entry_author: originalAlert.author,
+      // Resolve les usernames Discord raw vers les display names canoniques
+      // (ex: 'traderzz1m' → 'templeofboom') AVANT le storage. Ainsi le
+      // worker, le canvas, les captions et le proof video utilisent tous
+      // le même nom propre.
+      entry_author: getDisplayName(originalAlert.author),
       entry_message: originalAlert.content,
       entry_ts: originalAlert.ts,
-      exit_author: authorName,
+      exit_author: getDisplayName(authorName),
       exit_message: content,
       exit_ts: messageCreatedAt.toISOString(),
       pnl,

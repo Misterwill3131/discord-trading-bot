@@ -1,0 +1,16 @@
+{
+  "name": "Daily Recap (Default)",
+  "composition": "BoomRecap",
+  "description": "Récap quotidien des wins (auto-trigger sur 'RECAP:' Discord). Doré pour hero wins ≥100%, vert pour wins standards. ~30-45s adapté au nombre de tickers.",
+  "props": {
+    "dateLabel": "RECAP",
+    "accentColor": "#fbbf24",
+    "successColor": "#10b981",
+    "bgColor": "#0a0a0f",
+    "musicVolume": 0.6,
+    "sfxEnabled": true,
+    "showTop3Phase": true,
+    "ctaText": "Join the channel",
+    "ctaUrl": "https://templeofboom.com/join"
+  }
+}

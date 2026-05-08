@@ -39,6 +39,9 @@ export type RenderJob = {
   // Composition Remotion à rendre (ex: 'BoomProof', 'BoomEntry'). Default
   // 'BoomProof' (rétro-compat).
   composition?: string;
+  // JSON sérialisé contenant les props du récap (tickers, runnersHit, etc.).
+  // Uniquement peuplé pour composition === 'BoomRecap'.
+  recap_data?: string | null;
 };
 
 // Charge un template JSON depuis video/templates/<name>.json.
@@ -60,8 +63,27 @@ export function loadTemplateProps(name: string | null | undefined): Record<strin
 // côté DB qui ne sont pas des props Remotion).
 // Ordre du merge : template props (base) ← job props (override) ← image data URL.
 export function jobPropsToRemotion(job: RenderJob) {
-  const { id: _id, composition: _comp, proofImageBase64, templateName, ...rest } = job;
+  const { id: _id, composition: _comp, proofImageBase64, templateName, recap_data, ...rest } = job;
   const templateProps = loadTemplateProps(templateName) || {};
+
+  // Pour BoomRecap : parse recap_data JSON et remplace les props.
+  // Le worker ignore les entry_*/exit_* fields qui sont des placeholders
+  // pour BoomRecap (la table render_jobs les exige NOT NULL pour rétrocompat).
+  if (job.composition === 'BoomRecap' && recap_data) {
+    try {
+      const parsed = JSON.parse(recap_data);
+      return {
+        ...templateProps,
+        ...parsed,  // overrides avec date, tickers, runners, tagline, totalGainPct
+      };
+    } catch (err) {
+      console.error('[worker] Failed to parse recap_data:', (err as Error).message);
+      // Continue avec template-only props (defaults sortiront depuis le schema Zod)
+      return { ...templateProps };
+    }
+  }
+
+  // Else : flow existant (BoomProof, BoomEntry, etc.)
   // BoomEntry utilise entryImageDataUrl au lieu de proofImageDataUrl.
   // On expose les 2 keys pour que les 2 compositions puissent l'utiliser.
   const dataUrl = proofImageBase64

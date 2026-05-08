@@ -1,0 +1,222 @@
+import { AbsoluteFill, Audio, Sequence, staticFile, Img, useCurrentFrame, useVideoConfig, spring, interpolate, Easing } from 'remotion';
+import { TransitionSeries, linearTiming } from '@remotion/transitions';
+import { fade } from '@remotion/transitions/fade';
+import { slide } from '@remotion/transitions/slide';
+import { z } from 'zod';
+import { zTextarea } from '@remotion/zod-types';
+import { loadFont as loadInter } from '@remotion/google-fonts/Inter';
+import { LifestyleHook } from '../components/LifestyleHook';
+import { MoneyRain } from '../components/MoneyRain';
+
+const { fontFamily } = loadInter('normal', { weights: ['400', '600', '700', '900'] });
+
+// ─────────────────────────────────────────────────────────────────────
+// BoomEntry — Template pour annoncer un signal d'entry live
+// ─────────────────────────────────────────────────────────────────────
+// Pendant que BoomProof célèbre une exit gagnante, BoomEntry annonce
+// "🚨 LIVE: Z just called $TSLA" pour driver des conversions abonnement.
+//
+// Phases (~13s = 390 frames @ 30fps) :
+//   0 : Stinger     (12 frames, 0.4s) — "🚨 LIVE" flash rouge
+//   1 : Lifestyle   (60 frames, 2s)   — luxury hook bref
+//   2 : Tease       (60 frames, 2s)   — "Z just called this"
+//   3 : EntryCard   (150 frames, 5s)  — image canvas Discord du signal
+//   4 : CTA         (100 frames, 3.3s) — discord.gg/boom + money rain
+// ─────────────────────────────────────────────────────────────────────
+
+export const boomEntrySchema = z.object({
+  ticker: z.string().min(1).max(10).describe('Ticker stock (ex: TSLA, GDC)'),
+  author: z.string().min(1).describe("Pseudo Discord de l'analyste"),
+  message: zTextarea().describe('Texte du message entry'),
+  timestamp: z.string().describe('Timestamp ISO 8601 (ex: 2026-04-25T13:32:00-04:00)'),
+  entryImageDataUrl: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('Data URL PNG (image canvas du signal entry). Vide = fallback static.'),
+});
+
+export type BoomEntryProps = z.infer<typeof boomEntrySchema>;
+
+const FADE_FRAMES = 6;
+const SLIDE_FRAMES = 8;
+
+// ── Sub-component: Stinger LIVE rouge ──
+const StingerLive = () => {
+  const frame = useCurrentFrame();
+  const opacity = interpolate(frame, [0, 2, 6, 9], [0, 1, 1, 0], {
+    extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic),
+  });
+  const scale = interpolate(frame, [0, 3, 6, 9], [1.6, 1.0, 1.0, 1.4], {
+    extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic),
+  });
+  const flashOpacity = interpolate(frame, [0, 1, 3], [0.8, 0.3, 0], {
+    extrapolateLeft: 'clamp', extrapolateRight: 'clamp',
+  });
+  return (
+    <AbsoluteFill style={{ backgroundColor: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{
+        fontSize: 220, fontWeight: 900, fontFamily, letterSpacing: -6,
+        color: '#ef4444', textShadow: '0 0 40px #ef4444aa, 0 0 80px #ef444466',
+        opacity, transform: `scale(${scale})`,
+      }}>
+        🚨 LIVE
+      </div>
+      <AbsoluteFill style={{ background: '#fff', opacity: flashOpacity, pointerEvents: 'none' }} />
+    </AbsoluteFill>
+  );
+};
+
+// ── Sub-component: Tease "X just called this" ──
+const TeaseAct = ({ ticker, author }: { ticker: string; author: string }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const tickerEntry = spring({ frame, fps, config: { damping: 10, stiffness: 100 }, durationInFrames: 25 });
+  const tickerScale = tickerEntry * (1 + Math.sin(frame * 0.15) * 0.02);
+  const captionOpacity = interpolate(frame, [20, 35], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+  return (
+    <AbsoluteFill style={{
+      background: 'radial-gradient(circle at 50% 50%, #1a1a2e 0%, #0a0a0a 80%)',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      fontFamily, padding: 60,
+    }}>
+      <div style={{
+        color: '#ef4444', fontSize: 280, fontWeight: 900, letterSpacing: -6,
+        transform: `scale(${tickerScale})`, textShadow: '0 0 80px #ef4444aa',
+      }}>
+        ${ticker}
+      </div>
+      <div style={{
+        marginTop: 40, color: '#fff', fontSize: 56, fontWeight: 700, opacity: captionOpacity,
+      }}>
+        {author} just called this.
+      </div>
+      <div style={{
+        marginTop: 16, color: 'rgba(255,255,255,0.5)', fontSize: 38, opacity: captionOpacity,
+      }}>
+        Watch live →
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// ── Sub-component: EntryCard avec image canvas Discord ──
+const EntryCardAct = ({ src }: { src: string }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const entry = spring({ frame, fps, config: { damping: 12 }, durationInFrames: 25 });
+  const translateY = interpolate(entry, [0, 1], [80, 0]);
+  const opacity = interpolate(frame, [0, 12], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+  // Ken Burns subtle zoom-in
+  const scale = interpolate(frame, [0, 150], [1.0, 1.04], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+  // Pulse glow border
+  const glowPulse = 0.3 + Math.abs(Math.sin(frame * 0.06)) * 0.5;
+  return (
+    <AbsoluteFill style={{
+      background: 'radial-gradient(circle at 50% 40%, #1a1a2e 0%, #0a0a0a 100%)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 30,
+    }}>
+      <Img src={src} style={{
+        width: '100%', height: 'auto', opacity,
+        transform: `translateY(${translateY}px) scale(${scale})`,
+        borderRadius: 24,
+        boxShadow: `0 24px 100px rgba(0,0,0,0.85), 0 0 ${40 + glowPulse * 60}px rgba(239,68,68,${glowPulse})`,
+      }} />
+      <div style={{
+        position: 'absolute', top: 80, left: 0, right: 0, textAlign: 'center',
+        color: '#ef4444', fontSize: 40, fontWeight: 900, fontFamily, letterSpacing: 4,
+        textShadow: '0 0 20px #ef4444aa',
+      }}>
+        🚨 LIVE SIGNAL
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// ── Sub-component: CTA discord.gg/boom + money rain ──
+const CtaJoin = () => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const titleEntry = spring({ frame, fps, config: { damping: 10, stiffness: 100 }, durationInFrames: 22 });
+  const titleScale = titleEntry * (1 + Math.sin(frame * 0.15) * 0.03);
+  const urlEntry = spring({ frame: frame - 20, fps, config: { damping: 12 }, durationInFrames: 22 });
+  const urlY = interpolate(urlEntry, [0, 1], [60, 0]);
+  return (
+    <AbsoluteFill style={{
+      background: 'radial-gradient(circle at 50% 50%, #1a1a2e 0%, #0a0a0a 80%)',
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      padding: 60, fontFamily,
+    }}>
+      <MoneyRain count={40} seed="entry-cta" />
+      <div style={{
+        color: '#ef4444', fontSize: 200, fontWeight: 900, letterSpacing: -4,
+        transform: `scale(${titleScale})`, textShadow: '0 0 80px #ef4444aa', zIndex: 2,
+      }}>
+        JOIN
+      </div>
+      <div style={{
+        marginTop: 30, color: '#fff', fontSize: 64, fontWeight: 800,
+        transform: `translateY(${urlY}px)`, opacity: urlEntry, zIndex: 2,
+      }}>
+        discord.gg/boom
+      </div>
+      <div style={{
+        marginTop: 16, color: 'rgba(255,255,255,0.6)', fontSize: 36, opacity: urlEntry, zIndex: 2,
+      }}>
+        Get every signal live
+      </div>
+    </AbsoluteFill>
+  );
+};
+
+// ── Main composition ──
+export const BoomEntry = ({ ticker, author, timestamp, entryImageDataUrl }: BoomEntryProps) => {
+  const fallbackSrc = staticFile('signal-alert/card-default.png');
+  const cardSrc = entryImageDataUrl || fallbackSrc;
+  return (
+    <AbsoluteFill style={{ backgroundColor: 'black', fontFamily }}>
+      {/* Audio (optionnel — décommente quand tu auras un MP3 spécifique) */}
+      <Audio src={staticFile('audio/proof-track.mp3')} volume={0.55} />
+      <Sequence from={0} durationInFrames={45}>
+        <Audio src={staticFile('audio/whoosh-3.mp3')} volume={0.85} />
+      </Sequence>
+      <Sequence from={70} durationInFrames={20}>
+        <Audio src={staticFile('audio/whoosh-1.mp3')} volume={0.75} />
+      </Sequence>
+      <Sequence from={290} durationInFrames={60}>
+        <Audio src={staticFile('audio/chaching.mp3')} volume={0.95} />
+      </Sequence>
+
+      <TransitionSeries>
+        {/* Phase 0 — Stinger LIVE */}
+        <TransitionSeries.Sequence durationInFrames={12}>
+          <StingerLive />
+        </TransitionSeries.Sequence>
+        <TransitionSeries.Transition presentation={fade()} timing={linearTiming({ durationInFrames: 4 })} />
+
+        {/* Phase 1 — Lifestyle hook bref (2s) */}
+        <TransitionSeries.Sequence durationInFrames={66}>
+          <LifestyleHook overlayText={`$${ticker}`} seed={`entry-${ticker}-${timestamp}`} />
+        </TransitionSeries.Sequence>
+        <TransitionSeries.Transition presentation={fade()} timing={linearTiming({ durationInFrames: FADE_FRAMES })} />
+
+        {/* Phase 2 — Tease */}
+        <TransitionSeries.Sequence durationInFrames={66}>
+          <TeaseAct ticker={ticker} author={author} />
+        </TransitionSeries.Sequence>
+        <TransitionSeries.Transition presentation={slide({ direction: 'from-right' })} timing={linearTiming({ durationInFrames: SLIDE_FRAMES })} />
+
+        {/* Phase 3 — Entry card canvas (5s) */}
+        <TransitionSeries.Sequence durationInFrames={156}>
+          <EntryCardAct src={cardSrc} />
+        </TransitionSeries.Sequence>
+        <TransitionSeries.Transition presentation={fade()} timing={linearTiming({ durationInFrames: FADE_FRAMES })} />
+
+        {/* Phase 4 — CTA */}
+        <TransitionSeries.Sequence durationInFrames={100}>
+          <CtaJoin />
+        </TransitionSeries.Sequence>
+      </TransitionSeries>
+    </AbsoluteFill>
+  );
+};

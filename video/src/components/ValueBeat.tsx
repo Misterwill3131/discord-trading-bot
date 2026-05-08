@@ -1,20 +1,23 @@
-import { AbsoluteFill, useCurrentFrame, useVideoConfig, spring, interpolate } from 'remotion';
+import { AbsoluteFill, Img, staticFile, useCurrentFrame, useVideoConfig, spring, interpolate } from 'remotion';
 
+// Cards pré-générées via canvas/proof.js generateImage() — vraies images
+// Discord avec avatars custom, BOOM tags, role pills (cohérent avec ce que
+// le bot poste). Régénérer via : node scripts/generate-brand-promo-cards.js
+// (TODO: scriptifier). Pour l'instant, regen manuelle :
+//   const { generateImage } = require('./canvas/proof');
+//   await generateImage('Z', '$TSLA 150 entry long', '2026-04-25T09:32:00-04:00')
 const CARDS = [
-  { author: 'Z', time: '9:32am', message: '$TSLA 150 entry long', color: '#dcddde' },
-  { author: 'Bora', time: '10:15am', message: '$NVDA 870 scalp', color: '#dcddde' },
-  { author: 'Viking', time: '11:02am', message: '$AMD out +8%', color: '#10b981' },
+  { src: staticFile('brand-promo/card-0.png') },  // Z $TSLA 150 entry long
+  { src: staticFile('brand-promo/card-1.png') },  // Bora $NVDA 870 scalp
+  { src: staticFile('brand-promo/card-2.png') },  // Viking $AMD out +8%
 ];
 
 type CardProps = {
   index: number;
-  author: string;
-  time: string;
-  message: string;
-  color: string;
+  src: string;
 };
 
-const SignalCard = ({ index, author, time, message, color }: CardProps) => {
+const SignalCard = ({ index, src }: CardProps) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -32,24 +35,22 @@ const SignalCard = ({ index, author, time, message, color }: CardProps) => {
   });
   const y = interpolate(translateY, [0, 1], [60, 0]);
 
+  // Width 100% du parent (qui a un padding réduit pour donner ~1020px de
+  // place horizontale aux cards). Source rendue scale=2 native → sharp
+  // même à display 100% width (downscale léger).
   return (
-    <div
+    <Img
+      src={src}
       style={{
-        background: '#1e1f22',
-        padding: '24px 28px',
+        width: '100%',
+        height: 'auto',
+        marginBottom: 30,
         borderRadius: 12,
-        marginBottom: 18,
         opacity,
         transform: `translateY(${y}px)`,
-        boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+        boxShadow: '0 6px 24px rgba(0,0,0,0.5)',
       }}
-    >
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
-        <span style={{ color: '#D649CC', fontWeight: 700, fontSize: 32 }}>{author}</span>
-        <span style={{ color: '#80848e', fontSize: 22 }}>{time}</span>
-      </div>
-      <div style={{ color, fontSize: 32, fontWeight: 600 }}>{message}</div>
-    </div>
+    />
   );
 };
 
@@ -61,7 +62,7 @@ export const ValueBeat = () => {
     <AbsoluteFill
       style={{
         background: 'linear-gradient(180deg, #0a0a0a 0%, #1a1a2e 100%)',
-        padding: '120px 60px 60px',
+        padding: '120px 30px 60px',
         fontFamily: 'sans-serif',
       }}
     >
@@ -79,7 +80,7 @@ export const ValueBeat = () => {
         Real-time signals<br />from top traders
       </div>
       {CARDS.map((c, i) => (
-        <SignalCard key={c.author} index={i} {...c} />
+        <SignalCard key={i} index={i} src={c.src} />
       ))}
     </AbsoluteFill>
   );

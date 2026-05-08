@@ -202,7 +202,10 @@ async function drawRichLine(ctx, text, x, y, fontSize) {
 // ═════════════════════════════════════════════════════════════════════
 //  generateImage — image simple avec un seul bloc message
 // ═════════════════════════════════════════════════════════════════════
-async function generateImage(author, content, timestamp /*, parentAuthor, parentContent */) {
+async function generateImage(author, content, timestamp, options = {}) {
+  // options.scale (default 1) — multiplie la résolution finale via ctx.scale.
+  // Coords logiques inchangées, sortie sharper (utile pour rendu vidéo).
+  const scale = options.scale || 1;
   author = getDisplayName(author);
 
   const W = 740;
@@ -228,8 +231,11 @@ async function generateImage(author, content, timestamp /*, parentAuthor, parent
   const NAME_H = 20;
   const H = PADDING_V + NAME_H + (lines.length * LINE_H) + PADDING_V + 2;
 
-  const canvas = createCanvas(W, H);
+  // Canvas final scale × résolution. ctx.scale() upscale tout le rendu
+  // pour que les coords logiques (W, H, fonts) restent identiques.
+  const canvas = createCanvas(W * scale, H * scale);
   const ctx = canvas.getContext('2d');
+  if (scale !== 1) ctx.scale(scale, scale);
 
   // Background
   ctx.fillStyle = CONFIG.BG_COLOR;

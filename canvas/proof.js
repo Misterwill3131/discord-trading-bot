@@ -81,33 +81,75 @@ function wrapText(ctx, text, maxWidth) {
   return result.length ? result : [''];
 }
 
-// Segmente un texte en {text}, {emoji}, {roleMention}, ou {specialMention}.
+// Segmente un texte en {text}, {emoji}, {roleMention}, {specialMention},
+// {link}. L'italique markdown *texte* est représenté par un flag
+// `italic: true` sur chaque segment concerné (le contenu interne d'un
+// italique est re-parsé pour les liens/emojis/mentions imbriqués).
 // Reconnaît :
 //   • <:name:id>  ou  <a:name:id>   → emoji custom Discord
 //   • <@&id>                         → mention de rôle Discord
 //   • @everyone  ou  @here           → mention spéciale (pill blurple)
+//   • [label](url)                   → lien markdown (rendu : label en bleu)
+//   • *texte*                        → italique markdown (flag sur les sous-segments)
 function parseRichSegments(text) {
-  const segs = [];
-  const re = /<(a?):(\w+):(\d+)>|<@&(\d+)>|@(everyone|here)\b/g;
-  let last = 0, m;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) segs.push({ type: 'text', value: text.slice(last, m.index) });
-    if (m[4] !== undefined) {
-      segs.push({ type: 'roleMention', id: m[4] });
-    } else if (m[5] !== undefined) {
-      segs.push({ type: 'specialMention', name: m[5] });
-    } else {
-      segs.push({ type: 'emoji', animated: m[1] === 'a', name: m[2], id: m[3] });
+  const result = [];
+
+  // Parse la couche emoji + role + mention spéciale + lien sur une chaîne
+  // en propageant le flag italic à chaque segment produit.
+  function parseInner(s, italic) {
+    const re = /<(a?):(\w+):(\d+)>|<@&(\d+)>|@(everyone|here)\b|\[([^\]\n]+)\]\(([^)\s]+)\)/g;
+    let last = 0, m;
+    while ((m = re.exec(s)) !== null) {
+      if (m.index > last) {
+        const seg = { type: 'text', value: s.slice(last, m.index) };
+        if (italic) seg.italic = true;
+        result.push(seg);
+      }
+      let seg;
+      if (m[4] !== undefined) {
+        seg = { type: 'roleMention', id: m[4] };
+      } else if (m[5] !== undefined) {
+        seg = { type: 'specialMention', name: m[5] };
+      } else if (m[6] !== undefined) {
+        seg = { type: 'link', label: m[6], url: m[7] };
+      } else {
+        seg = { type: 'emoji', animated: m[1] === 'a', name: m[2], id: m[3] };
+      }
+      if (italic) seg.italic = true;
+      result.push(seg);
+      last = m.index + m[0].length;
     }
+    if (last < s.length) {
+      const seg = { type: 'text', value: s.slice(last) };
+      if (italic) seg.italic = true;
+      result.push(seg);
+    }
+  }
+
+  // Première passe : italique markdown *texte* (non-greedy, exclut les
+  // sauts de ligne et les `*` imbriqués). Le contenu interne est repassé
+  // dans parseInner avec italic=true pour gérer les liens imbriqués type
+  // `*Replying to ZZ [message](url)*`.
+  const italicRe = /\*([^*\n]+)\*/g;
+  let last = 0, m;
+  while ((m = italicRe.exec(text)) !== null) {
+    if (m.index > last) parseInner(text.slice(last, m.index), false);
+    parseInner(m[1], true);
     last = m.index + m[0].length;
   }
-  if (last < text.length) segs.push({ type: 'text', value: text.slice(last) });
-  return segs.length ? segs : [{ type: 'text', value: text }];
+  if (last < text.length) parseInner(text.slice(last), false);
+
+  return result.length ? result : [{ type: 'text', value: text }];
 }
 
 function measureRichWidth(ctx, text, emojiSize) {
   let w = 0;
   for (const seg of parseRichSegments(text)) {
+    // L'italique change légèrement la métrique — on bascule la police
+    // pour la durée de la mesure du segment.
+    const prevFont = seg.italic ? ctx.font : null;
+    if (seg.italic) ctx.font = 'italic ' + ctx.font;
+
     if (seg.type === 'text') {
       w += ctx.measureText(seg.value).width;
     } else if (seg.type === 'emoji') {
@@ -128,7 +170,12 @@ function measureRichWidth(ctx, text, emojiSize) {
       w += style
         ? ctx.measureText(style.label).width + 6
         : ctx.measureText('@' + seg.name).width;
+    } else if (seg.type === 'link') {
+      // Mesure du label uniquement (l'URL n'est pas rendue).
+      w += ctx.measureText(seg.label).width;
     }
+
+    if (prevFont !== null) ctx.font = prevFont;
   }
   return w;
 }
@@ -156,6 +203,11 @@ async function drawRichLine(ctx, text, x, y, fontSize) {
   const emojiSize = Math.round(fontSize * 1.15);
   let cx = x;
   for (const seg of parseRichSegments(text)) {
+    // L'italique se traduit en bascule de police pour la durée du segment.
+    // Les emojis ne sont pas affectés (les SVG/PNG ne s'inclinent pas).
+    const prevFont = seg.italic ? ctx.font : null;
+    if (seg.italic) ctx.font = 'italic ' + ctx.font;
+
     if (seg.type === 'text') {
       if (seg.value) {
         ctx.fillText(seg.value, cx, y);
@@ -230,7 +282,167 @@ async function drawRichLine(ctx, text, x, y, fontSize) {
         ctx.fillText(raw, cx, y);
         cx += ctx.measureText(raw).width;
       }
+    } else if (seg.type === 'link') {
+      // Lien markdown : on n'affiche que le label, en couleur lien (l'URL
+      // n'est pas exploitable dans une image fixe). Pas de soulignement —
+      // Discord lui-même ne souligne qu'au survol.
+      const prevFill = ctx.fillStyle;
+      ctx.fillStyle = CONFIG.LINK_COLOR;
+      ctx.fillText(seg.label, cx, y);
+      cx += ctx.measureText(seg.label).width;
+      ctx.fillStyle = prevFill;
     }
+
+    if (prevFont !== null) ctx.font = prevFont;
+  }
+}
+
+// Variante single-line de drawRichLine qui tronque avec "..." si la
+// largeur dépasse maxWidth. Utilisée pour la barre de référence du
+// generateProofImage. Prérequis : ctx.font et ctx.textBaseline = 'middle'
+// déjà configurés par l'appelant.
+async function drawRichLineTruncated(ctx, text, x, y, fontSize, maxWidth) {
+  const segs = parseRichSegments(text);
+  const emojiSize = Math.round(fontSize * 1.15);
+  const ellipsisW = ctx.measureText('...').width;
+  const xMax = x + maxWidth;
+  let cx = x;
+
+  // Mesure d'un segment pour le test "fits". Bascule en italique si le
+  // segment porte le flag — la métrique italique diffère légèrement.
+  function segWidth(seg) {
+    const prevFont = seg.italic ? ctx.font : null;
+    if (seg.italic) ctx.font = 'italic ' + ctx.font;
+    let w = 0;
+    if (seg.type === 'text') {
+      w = ctx.measureText(seg.value).width;
+    } else if (seg.type === 'emoji') {
+      w = emojiSize + 2;
+    } else if (seg.type === 'roleMention') {
+      const st = getRoleStyle(seg.id);
+      w = st ? ctx.measureText('@' + st.name).width + 6
+             : ctx.measureText('<@&' + seg.id + '>').width;
+    } else if (seg.type === 'specialMention') {
+      const st = SPECIAL_MENTIONS[seg.name];
+      w = st ? ctx.measureText(st.label).width + 6
+             : ctx.measureText('@' + seg.name).width;
+    } else if (seg.type === 'link') {
+      w = ctx.measureText(seg.label).width;
+    }
+    if (prevFont !== null) ctx.font = prevFont;
+    return w;
+  }
+
+  // Tronque char par char le texte d'un segment pour qu'il rentre dans
+  // l'espace restant (en réservant la place pour "...") puis dessine.
+  function truncateAndDraw(value, drawColor) {
+    let tx = value;
+    while (tx.length > 0 && cx + ctx.measureText(tx).width + ellipsisW > xMax) {
+      tx = tx.slice(0, -1);
+    }
+    if (tx.length > 0) {
+      const prevFill = ctx.fillStyle;
+      if (drawColor) ctx.fillStyle = drawColor;
+      ctx.fillText(tx, cx, y);
+      if (drawColor) ctx.fillStyle = prevFill;
+      cx += ctx.measureText(tx).width;
+    }
+    ctx.fillText('...', cx, y);
+  }
+
+  for (let i = 0; i < segs.length; i++) {
+    const seg = segs[i];
+    const isLast = i === segs.length - 1;
+    const w = segWidth(seg);
+    const reserved = isLast ? 0 : ellipsisW;
+    const fits = cx + w + reserved <= xMax;
+
+    // Bascule italique pour la durée du segment (mesure ET render utilisent
+    // déjà la police italique via segWidth/blocs ci-dessous).
+    const prevFont = seg.italic ? ctx.font : null;
+    if (seg.italic) ctx.font = 'italic ' + ctx.font;
+
+    if (!fits) {
+      // Tronque les segments à contenu textuel ; pour les autres, on
+      // pose juste l'ellipsis et on arrête.
+      if (seg.type === 'text')        truncateAndDraw(seg.value);
+      else if (seg.type === 'link')   truncateAndDraw(seg.label, CONFIG.LINK_COLOR);
+      else                            ctx.fillText('...', cx, y);
+      if (prevFont !== null) ctx.font = prevFont;
+      return;
+    }
+
+    // Le segment tient en entier — render normal.
+    if (seg.type === 'text') {
+      ctx.fillText(seg.value, cx, y);
+      cx += w;
+    } else if (seg.type === 'emoji') {
+      const localPath = CUSTOM_EMOJIS[seg.name];
+      const src = localPath || (seg.animated
+        ? 'https://cdn.discordapp.com/emojis/' + seg.id + '.webp?size=32&animated=true'
+        : 'https://cdn.discordapp.com/emojis/' + seg.id + '.png?size=32');
+      try {
+        const img = await loadImage(src);
+        ctx.drawImage(img, cx, y - emojiSize / 2, emojiSize, emojiSize);
+        cx += emojiSize + 2;
+      } catch (e) {
+        const fb = ':' + seg.name + ':';
+        ctx.fillText(fb, cx, y);
+        cx += ctx.measureText(fb).width;
+      }
+    } else if (seg.type === 'roleMention') {
+      const st = getRoleStyle(seg.id);
+      if (st) {
+        const label = '@' + st.name;
+        const lblW = ctx.measureText(label).width;
+        const pillH = fontSize + 4;
+        const pillY = y - pillH / 2;
+        const prevFill = ctx.fillStyle;
+        ctx.fillStyle = hexToRgba(st.color, 0.18);
+        ctx.beginPath();
+        if (typeof ctx.roundRect === 'function') ctx.roundRect(cx, pillY, lblW + 6, pillH, 3);
+        else                                      ctx.rect(cx, pillY, lblW + 6, pillH);
+        ctx.fill();
+        ctx.fillStyle = st.color;
+        ctx.fillText(label, cx + 3, y);
+        ctx.fillStyle = prevFill;
+        cx += lblW + 6;
+      } else {
+        const raw = '<@&' + seg.id + '>';
+        ctx.fillText(raw, cx, y);
+        cx += ctx.measureText(raw).width;
+      }
+    } else if (seg.type === 'specialMention') {
+      const st = SPECIAL_MENTIONS[seg.name];
+      if (st) {
+        const label = st.label;
+        const lblW = ctx.measureText(label).width;
+        const pillH = fontSize + 4;
+        const pillY = y - pillH / 2;
+        const prevFill = ctx.fillStyle;
+        ctx.fillStyle = hexToRgba(st.color, 0.18);
+        ctx.beginPath();
+        if (typeof ctx.roundRect === 'function') ctx.roundRect(cx, pillY, lblW + 6, pillH, 3);
+        else                                      ctx.rect(cx, pillY, lblW + 6, pillH);
+        ctx.fill();
+        ctx.fillStyle = st.color;
+        ctx.fillText(label, cx + 3, y);
+        ctx.fillStyle = prevFill;
+        cx += lblW + 6;
+      } else {
+        const raw = '@' + seg.name;
+        ctx.fillText(raw, cx, y);
+        cx += ctx.measureText(raw).width;
+      }
+    } else if (seg.type === 'link') {
+      const prevFill = ctx.fillStyle;
+      ctx.fillStyle = CONFIG.LINK_COLOR;
+      ctx.fillText(seg.label, cx, y);
+      ctx.fillStyle = prevFill;
+      cx += w;
+    }
+
+    if (prevFont !== null) ctx.font = prevFont;
   }
 }
 
@@ -669,18 +881,19 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
     refBadgeX += refLogoSize + 6;
   } catch (e) {}
 
-  // Contenu tronqué de l'alerte d'origine.
+  // Contenu tronqué de l'alerte d'origine — pipeline rich segments
+  // (markdown link [label](url), italique *texte*, emoji, mentions).
+  // Strip des markers de blockquote `> ` car la barre est elle-même la
+  // mise en forme du quote — le marker brut serait redondant.
   const refContentX = refBadgeX;
   ctx.font = '11px ' + FONT;
   ctx.fillStyle = '#ffffff';
   const truncMaxW = W - refContentX - PADDING_L;
-  let truncText = (alertContent || '').replace(/\n/g, ' ');
-  const fullTrunc = truncText;
-  while (truncText.length > 0 && ctx.measureText(truncText).width > truncMaxW) {
-    truncText = truncText.slice(0, -1);
-  }
-  if (truncText.length < fullTrunc.length) truncText += '...';
-  ctx.fillText(truncText, refContentX, refMidY);
+  const refRaw = (alertContent || '')
+    .replace(/^>\s+/, '')
+    .replace(/\n>\s*/g, ' ')
+    .replace(/\n/g, ' ');
+  await drawRichLineTruncated(ctx, refRaw, refContentX, refMidY, 11, truncMaxW);
   ctx.textBaseline = 'alphabetic';
 
   // ─── Bloc principal (message complet, en bas) ───

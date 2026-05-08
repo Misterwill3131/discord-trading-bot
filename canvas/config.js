@@ -105,6 +105,9 @@ const CONFIG = {
   MESSAGE_COLOR:        '#dcddde',     // Couleur du message
   MESSAGE_FONT_SIZE:    14,            // Taille police message (px)
 
+  // ── Liens markdown [label](url) ──────────────────────────────────────────
+  LINK_COLOR:           '#00aff4',     // Couleur du label de lien (Discord)
+
   // ── Police globale ───────────────────────────────────────────────────────
   FONT:                 'Noto Sans, sans-serif',
 };

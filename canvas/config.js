@@ -51,6 +51,13 @@ const CUSTOM_ROLES = {
   '1497256488274624565': { name: 'Swing', color: '#3498db' },
 };
 
+// Mentions spéciales Discord (@everyone, @here). Rendues comme pill avec
+// la couleur blurple Discord pour matcher l'apparence du client.
+const SPECIAL_MENTIONS = {
+  everyone: { label: '@everyone', color: '#5865f2' },
+  here:     { label: '@here',     color: '#5865f2' },
+};
+
 // Emojis personnalisés utilisés par le bot Discord (ex. greatcall).
 const CUSTOM_EMOJIS = {
   'greatcall': AV('great_call.png'),
@@ -106,4 +113,4 @@ const CONFIG = {
 // Alias de compatibilité — utilisé par les appels directs `FONT` dans le code.
 const FONT = CONFIG.FONT;
 
-module.exports = { CONFIG, FONT, CUSTOM_AVATARS, CUSTOM_ROLES, CUSTOM_EMOJIS };
+module.exports = { CONFIG, FONT, CUSTOM_AVATARS, CUSTOM_ROLES, SPECIAL_MENTIONS, CUSTOM_EMOJIS };

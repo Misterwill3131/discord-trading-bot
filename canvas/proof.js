@@ -20,7 +20,7 @@
 
 const path = require('path');
 const { createCanvas, loadImage } = require('@napi-rs/canvas');
-const { CONFIG, FONT, CUSTOM_AVATARS, CUSTOM_ROLES, CUSTOM_EMOJIS } = require('./config');
+const { CONFIG, FONT, CUSTOM_AVATARS, CUSTOM_ROLES, SPECIAL_MENTIONS, CUSTOM_EMOJIS } = require('./config');
 const { getDisplayName } = require('../utils/authors');
 
 // Chemins absolus vers les ressources — remonte d'un niveau depuis canvas/.
@@ -81,18 +81,21 @@ function wrapText(ctx, text, maxWidth) {
   return result.length ? result : [''];
 }
 
-// Segmente un texte en {text}, {emoji}, ou {roleMention}.
+// Segmente un texte en {text}, {emoji}, {roleMention}, ou {specialMention}.
 // Reconnaît :
 //   • <:name:id>  ou  <a:name:id>   → emoji custom Discord
 //   • <@&id>                         → mention de rôle Discord
+//   • @everyone  ou  @here           → mention spéciale (pill blurple)
 function parseRichSegments(text) {
   const segs = [];
-  const re = /<(a?):(\w+):(\d+)>|<@&(\d+)>/g;
+  const re = /<(a?):(\w+):(\d+)>|<@&(\d+)>|@(everyone|here)\b/g;
   let last = 0, m;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) segs.push({ type: 'text', value: text.slice(last, m.index) });
     if (m[4] !== undefined) {
       segs.push({ type: 'roleMention', id: m[4] });
+    } else if (m[5] !== undefined) {
+      segs.push({ type: 'specialMention', name: m[5] });
     } else {
       segs.push({ type: 'emoji', animated: m[1] === 'a', name: m[2], id: m[3] });
     }
@@ -118,6 +121,13 @@ function measureRichWidth(ctx, text, emojiSize) {
         // Inconnu : on tombe sur le rendu brut <@&id>.
         w += ctx.measureText('<@&' + seg.id + '>').width;
       }
+    } else if (seg.type === 'specialMention') {
+      const style = SPECIAL_MENTIONS[seg.name];
+      // Pill : label + 6px de padding total (idem rôles). Fallback brut
+      // si la clé est inconnue (ne devrait pas arriver vu le regex).
+      w += style
+        ? ctx.measureText(style.label).width + 6
+        : ctx.measureText('@' + seg.name).width;
     }
   }
   return w;
@@ -192,6 +202,31 @@ async function drawRichLine(ctx, text, x, y, fontSize) {
         cx += labelW + 6;
       } else {
         const raw = '<@&' + seg.id + '>';
+        ctx.fillText(raw, cx, y);
+        cx += ctx.measureText(raw).width;
+      }
+    } else if (seg.type === 'specialMention') {
+      const style = SPECIAL_MENTIONS[seg.name];
+      if (style) {
+        const label = style.label;
+        const labelW = ctx.measureText(label).width;
+        const pillH = fontSize + 4;
+        const pillY = y - fontSize * 0.85;
+        const prevFill = ctx.fillStyle;
+        ctx.fillStyle = hexToRgba(style.color, 0.18);
+        ctx.beginPath();
+        if (typeof ctx.roundRect === 'function') {
+          ctx.roundRect(cx, pillY, labelW + 6, pillH, 3);
+        } else {
+          ctx.rect(cx, pillY, labelW + 6, pillH);
+        }
+        ctx.fill();
+        ctx.fillStyle = style.color;
+        ctx.fillText(label, cx + 3, y);
+        ctx.fillStyle = prevFill;
+        cx += labelW + 6;
+      } else {
+        const raw = '@' + seg.name;
         ctx.fillText(raw, cx, y);
         cx += ctx.measureText(raw).width;
       }

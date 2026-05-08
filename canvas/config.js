@@ -26,7 +26,6 @@ const AV = (f) => path.join(__dirname, '..', 'avatar', f);
 const CUSTOM_AVATARS = {
   'Z':              AV('z-avatar.jpg'),
   'ZZ':             AV('z-avatar.jpg'),
-  'templeofboom':   AV('z-avatar.jpg'),
   'AR':             AV('AR_AVATAR.png'),
   'beppels':        AV('beppels_avatar.png'),
   'L':              AV('L_avatar.png'),

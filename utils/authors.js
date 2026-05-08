@@ -25,9 +25,8 @@ const BLOCKED_AUTHORS = new Set([
 const AUTHOR_ALIASES = {
   'sanibel2026':       'AR',
   'therealbora':       'Bora',
-  'traderzz1m':        'templeofboom',
-  'ZZ':                'templeofboom',
-  'Z':                 'templeofboom',
+  'traderzz1m':        'ZZ',
+  'ZZ':                'ZZ',
   'viking9496':        'Viking',
   'legacytrading506':  'Legacy Trading',
   'rf0496_76497':      'RF',

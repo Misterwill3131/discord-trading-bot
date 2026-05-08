@@ -4,6 +4,7 @@ import { zTextarea, zColor } from '@remotion/zod-types';
 import { loadFont as loadInter } from '@remotion/google-fonts/Inter';
 import { RecapDateStinger } from '../components/RecapDateStinger';
 import { RecapHeroStat } from '../components/RecapHeroStat';
+import { RecapTickerWaterfall } from '../components/RecapTickerWaterfall';
 
 const { fontFamily } = loadInter('normal', {
   weights: ['400', '600', '700', '900'],
@@ -102,9 +103,14 @@ export const BoomRecap: React.FC<BoomRecapProps> = (props) => {
         />
       </Sequence>
 
-      {/* Phase 3 : TickerWaterfall — Task 9 */}
+      {/* Phase 3: TickerWaterfall */}
       <Sequence from={waterfallStart} durationInFrames={waterfallFrames}>
-        <PhasePlaceholder label="WATERFALL" props={props} />
+        <RecapTickerWaterfall
+          tickers={props.tickers}
+          accentColor={props.accentColor}
+          successColor={props.successColor}
+          sfxEnabled={props.sfxEnabled}
+        />
       </Sequence>
 
       {/* Phase 4 : Top3Highlight — Task 10 (conditional) */}

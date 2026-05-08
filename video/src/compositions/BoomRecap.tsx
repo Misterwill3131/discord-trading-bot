@@ -6,6 +6,7 @@ import { RecapDateStinger } from '../components/RecapDateStinger';
 import { RecapHeroStat } from '../components/RecapHeroStat';
 import { RecapTickerWaterfall } from '../components/RecapTickerWaterfall';
 import { RecapTop3Highlight } from '../components/RecapTop3Highlight';
+import { RecapClosingStat } from '../components/RecapClosingStat';
 
 const { fontFamily } = loadInter('normal', {
   weights: ['400', '600', '700', '900'],
@@ -126,9 +127,17 @@ export const BoomRecap: React.FC<BoomRecapProps> = (props) => {
         </Sequence>
       )}
 
-      {/* Phase 5 : ClosingStat — Task 11 */}
+      {/* Phase 5: ClosingStat */}
       <Sequence from={closingStart} durationInFrames={RECAP_FRAMES.CLOSING}>
-        <PhasePlaceholder label="CLOSING" props={props} />
+        <RecapClosingStat
+          runnersHit={props.runnersHit}
+          runnersTotal={props.runnersTotal}
+          tagline={props.tagline}
+          ctaText={props.ctaText}
+          ctaUrl={props.ctaUrl}
+          accentColor={props.accentColor}
+          sfxEnabled={props.sfxEnabled}
+        />
       </Sequence>
 
       {/* Phase 6 : Outro — Task 12 */}

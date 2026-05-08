@@ -82,6 +82,7 @@ const SIDEBAR_LINKS = [
   { href: '/image-generator', icon: '🖼️', label: 'Image Generator' },
   { href: '/proof-generator', icon: '🔍', label: 'Proof Generator' },
   { href: '/gallery',         icon: '🖼', label: 'Galerie' },
+  { href: '/video-studio',    icon: '🎬', label: 'Video Studio' },
   { href: '/raw-messages',    icon: '📋', label: 'Raw Messages' },
   { href: '/db-viewer',       icon: '🗄️', label: 'DB Viewer' },
   { href: '/backup-log',      icon: '💾', label: 'Backup Log' },

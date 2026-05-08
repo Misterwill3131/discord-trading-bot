@@ -41,6 +41,9 @@ function jobToApiShape(row) {
     // Le worker charge templates/<name>.json pour les props par défaut.
     // null = utilise les defaultProps de Root.tsx.
     templateName: row.template_name || null,
+    // Composition Remotion à rendre ('BoomProof' default, ou 'BoomEntry'
+    // pour les renders manuels depuis /dashboard/video-studio).
+    composition: row.composition || 'BoomProof',
   };
 }
 

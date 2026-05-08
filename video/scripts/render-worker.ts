@@ -36,6 +36,9 @@ export type RenderJob = {
   // Si présent, le worker charge templates/<name>.json et merge ses props
   // comme base avant les props dynamiques du job.
   templateName?: string | null;
+  // Composition Remotion à rendre (ex: 'BoomProof', 'BoomEntry'). Default
+  // 'BoomProof' (rétro-compat).
+  composition?: string;
 };
 
 // Charge un template JSON depuis video/templates/<name>.json.
@@ -53,18 +56,22 @@ export function loadTemplateProps(name: string | null | undefined): Record<strin
   }
 }
 
-// Props passées à la composition BoomProof (sans le id côté DB).
+// Props passées à la composition (sans le id, composition, et template
+// côté DB qui ne sont pas des props Remotion).
 // Ordre du merge : template props (base) ← job props (override) ← image data URL.
-// Les valeurs dynamiques (ticker, pnl, authors, image) gagnent toujours.
 export function jobPropsToRemotion(job: RenderJob) {
-  const { id: _id, proofImageBase64, templateName, ...rest } = job;
+  const { id: _id, composition: _comp, proofImageBase64, templateName, ...rest } = job;
   const templateProps = loadTemplateProps(templateName) || {};
+  // BoomEntry utilise entryImageDataUrl au lieu de proofImageDataUrl.
+  // On expose les 2 keys pour que les 2 compositions puissent l'utiliser.
+  const dataUrl = proofImageBase64
+    ? `data:image/png;base64,${proofImageBase64}`
+    : null;
   return {
     ...templateProps,
     ...rest,
-    proofImageDataUrl: proofImageBase64
-      ? `data:image/png;base64,${proofImageBase64}`
-      : null,
+    proofImageDataUrl: dataUrl,
+    entryImageDataUrl: dataUrl,
   };
 }
 
@@ -165,7 +172,7 @@ async function processJob(
   console.log(`[worker] processing job ${job.id} (${job.ticker} ${job.pnl})`);
   const composition = await selectComposition({
     serveUrl: bundleLocation,
-    id: 'BoomProof',
+    id: job.composition || 'BoomProof',
     inputProps: jobPropsToRemotion(job),
   });
   const filename = buildLocalFilename(job);

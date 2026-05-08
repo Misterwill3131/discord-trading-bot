@@ -460,6 +460,13 @@ addColumnIfMissing('render_jobs', 'proof_image_base64', 'TEXT');
 // Optionnel : si null, le worker utilise les defaultProps de Root.tsx.
 addColumnIfMissing('render_jobs', 'template_name', 'TEXT');
 
+// ── render_jobs : composition (BoomProof | BoomEntry | etc.) ──────────
+// Nom de la composition Remotion à rendre. Default 'BoomProof' (rétro-
+// compat : tous les jobs créés avant cette migration sont des proof
+// videos). Permet maintenant de lancer des renders BoomEntry (signal
+// d'entry) depuis le dashboard /video-studio.
+addColumnIfMissing('render_jobs', 'composition', "TEXT NOT NULL DEFAULT 'BoomProof'");
+
 // ── SaaS licenses : passthrough channel séparé pour bots upstream ─────
 // Permet de router les alertes "passthrough" (ex: TrendVision) vers un
 // salon distinct du target_channel_id (signaux principaux).
@@ -1654,16 +1661,18 @@ function backupDb(destPath) {
 const stmtEnqueueRenderJob = db.prepare(`
   INSERT INTO render_jobs
     (ticker, entry_author, entry_message, entry_ts,
-     exit_author, exit_message, exit_ts, pnl, proof_image_base64, template_name)
+     exit_author, exit_message, exit_ts, pnl, proof_image_base64,
+     template_name, composition)
   VALUES
     (@ticker, @entry_author, @entry_message, @entry_ts,
-     @exit_author, @exit_message, @exit_ts, @pnl, @proof_image_base64, @template_name)
+     @exit_author, @exit_message, @exit_ts, @pnl, @proof_image_base64,
+     @template_name, @composition)
 `);
 
 const stmtGetPendingRenderJobs = db.prepare(`
   SELECT id, ticker, entry_author, entry_message, entry_ts,
          exit_author, exit_message, exit_ts, pnl, status, created_at,
-         proof_image_base64, template_name
+         proof_image_base64, template_name, composition
   FROM render_jobs
   WHERE status = 'pending'
   ORDER BY created_at ASC
@@ -1683,12 +1692,13 @@ const stmtMarkRenderJobFailed = db.prepare(`
 `);
 
 function enqueueRenderJob(payload) {
-  // proof_image_base64 + template_name sont optionnels — si absents du
-  // payload, on les défaulte à null. better-sqlite3 plante si on ne
-  // fournit pas explicitement les @-paramètres déclarés dans le SQL.
+  // proof_image_base64 + template_name + composition optionnels — si
+  // absents du payload, défaulte à null/'BoomProof'. better-sqlite3 plante
+  // si on ne fournit pas explicitement les @-paramètres du SQL.
   const result = stmtEnqueueRenderJob.run({
     proof_image_base64: null,
     template_name: null,
+    composition: 'BoomProof',
     ...payload,
   });
   return result.lastInsertRowid;

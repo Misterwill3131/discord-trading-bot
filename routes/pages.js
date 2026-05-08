@@ -24,6 +24,7 @@ const { IMAGE_GEN_HTML }     = require('../pages/image-generator');
 const { PROOF_GEN_HTML }     = require('../pages/proof-generator');
 const { RAW_MESSAGES_HTML }  = require('../pages/raw-messages');
 const { GALLERY_HTML }       = require('../pages/gallery');
+const { VIDEO_STUDIO_HTML }  = require('../pages/video-studio');
 
 // Factory : retourne un handler Express qui sert un HTML statique.
 // Centralise le Content-Type pour éviter de l'oublier sur une route.
@@ -47,6 +48,7 @@ const PAGES = [
   { path: '/proof-generator', html: PROOF_GEN_HTML },
   { path: '/raw-messages',    html: RAW_MESSAGES_HTML },
   { path: '/gallery',         html: GALLERY_HTML },
+  { path: '/video-studio',    html: VIDEO_STUDIO_HTML },
 ];
 
 function registerPageRoutes(app, requireAuth) {

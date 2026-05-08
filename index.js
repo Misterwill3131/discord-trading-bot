@@ -39,6 +39,7 @@ const newsPoller = require('./news/poller');
 const profitCounter = require('./profit/counter');
 const { registerPageRoutes } = require('./routes/pages');
 const { registerImageRoutes } = require('./routes/images');
+const { registerVideoStudioRoutes } = require('./routes/video-studio');
 const { registerNewsRoutes } = require('./routes/news');
 const { registerAnalyticsRoutes } = require('./routes/analytics');
 const { registerFilterRoutes } = require('./routes/filters');
@@ -154,6 +155,7 @@ registerImageRoutes(app, requireAuth, imageState, {
   railwayUrl: RAILWAY_URL,
   makeWebhookUrl: MAKE_WEBHOOK_URL,
 });
+registerVideoStudioRoutes(app, requireAuth, imageState);
 registerAnalyticsRoutes(app, requireAuth, messageLog);
 registerFilterRoutes(app, requireAuth);
 registerMessageRoutes(app, requireAuth);

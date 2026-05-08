@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { zTextarea, zColor } from '@remotion/zod-types';
 import { loadFont as loadInter } from '@remotion/google-fonts/Inter';
 import { RecapDateStinger } from '../components/RecapDateStinger';
+import { RecapHeroStat } from '../components/RecapHeroStat';
 
 const { fontFamily } = loadInter('normal', {
   weights: ['400', '600', '700', '900'],
@@ -92,9 +93,13 @@ export const BoomRecap: React.FC<BoomRecapProps> = (props) => {
         />
       </Sequence>
 
-      {/* Phase 2 : HeroStat — Task 8 */}
+      {/* Phase 2: HeroStat */}
       <Sequence from={heroStart} durationInFrames={RECAP_FRAMES.HERO_STAT}>
-        <PhasePlaceholder label="HERO STAT" props={props} />
+        <RecapHeroStat
+          totalGainPct={props.totalGainPct}
+          accentColor={props.accentColor}
+          sfxEnabled={props.sfxEnabled}
+        />
       </Sequence>
 
       {/* Phase 3 : TickerWaterfall — Task 9 */}

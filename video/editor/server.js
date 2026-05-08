@@ -18,11 +18,42 @@ const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const crypto = require('crypto');
+const { generateImage, generateProofImage } = require('../../canvas/proof');
 
 const VIDEO_DIR = path.join(__dirname, '..');
 const TEMPLATES_DIR = path.join(VIDEO_DIR, 'templates');
 const OUT_DIR = path.join(VIDEO_DIR, 'out');
 const PORT = process.env.EDITOR_PORT || 3001;
+
+// ─────────────────────────────────────────────────────────────────────
+// enrichPropsWithCanvasImage — génère l'image canvas Discord depuis les
+// props author/message/timestamp et l'injecte comme data URL.
+// Évite que le preview/render utilise le static fallback (TSLA default).
+// ─────────────────────────────────────────────────────────────────────
+async function enrichPropsWithCanvasImage(composition, props) {
+  const enriched = { ...props };
+  try {
+    if (composition === 'BoomEntry' && !enriched.entryImageDataUrl) {
+      if (enriched.author && enriched.message && enriched.timestamp) {
+        const buf = await generateImage(enriched.author, enriched.message, enriched.timestamp, { scale: 2 });
+        enriched.entryImageDataUrl = `data:image/png;base64,${buf.toString('base64')}`;
+      }
+    } else if (composition === 'BoomProof' && !enriched.proofImageDataUrl) {
+      if (enriched.entryAuthor && enriched.entryMessage && enriched.entryTimestamp
+          && enriched.exitAuthor && enriched.exitMessage && enriched.exitTimestamp) {
+        const buf = await generateProofImage(
+          enriched.entryAuthor, enriched.entryMessage, enriched.entryTimestamp,
+          enriched.exitAuthor, enriched.exitMessage, enriched.exitTimestamp,
+          { scale: 2 }
+        );
+        enriched.proofImageDataUrl = `data:image/png;base64,${buf.toString('base64')}`;
+      }
+    }
+  } catch (err) {
+    console.warn('[editor] canvas image generation failed:', err.message);
+  }
+  return enriched;
+}
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -87,7 +118,7 @@ app.post('/api/template/:id', (req, res) => {
 // Retourne un job id immédiatement, le stream de logs est sur /api/render-stream/:jobId
 const renderJobs = new Map(); // jobId → { logs: [], done: bool, exitCode, outPath }
 
-app.post('/api/render', (req, res) => {
+app.post('/api/render', async (req, res) => {
   const { composition, props, outFilename } = req.body;
   if (!composition) return res.status(400).json({ error: 'Missing composition' });
 
@@ -95,10 +126,14 @@ app.post('/api/render', (req, res) => {
   const filename = outFilename || `editor-${jobId}.mp4`;
   const outPath = path.join(OUT_DIR, filename);
 
+  // Génère l'image canvas Discord à partir du message/author/timestamp
+  // si pas déjà fournie via entryImageDataUrl/proofImageDataUrl.
+  const enriched = await enrichPropsWithCanvasImage(composition, props || {});
+
   // Écrit les props dans un fichier temp (plus robuste que CLI string).
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const tmpPropsPath = path.join(OUT_DIR, `.tmp-editor-${jobId}.json`);
-  fs.writeFileSync(tmpPropsPath, JSON.stringify(props || {}));
+  fs.writeFileSync(tmpPropsPath, JSON.stringify(enriched));
 
   const job = { logs: [], done: false, exitCode: null, outPath, filename };
   renderJobs.set(jobId, job);
@@ -157,7 +192,7 @@ app.get('/api/render-stream/:jobId', (req, res) => {
 // ── GET /api/still ───────────────────────────────────────────────────
 // Query: composition, frame, props (JSON string in query)
 // Retourne le PNG en base64 data URL (rapide vs full render).
-app.get('/api/still', (req, res) => {
+app.get('/api/still', async (req, res) => {
   const { composition, frame } = req.query;
   if (!composition) return res.status(400).json({ error: 'Missing composition' });
 
@@ -166,11 +201,14 @@ app.get('/api/still', (req, res) => {
   try { props = JSON.parse(propsRaw); }
   catch (e) { return res.status(400).json({ error: 'Invalid props JSON: ' + e.message }); }
 
+  // Génère l'image canvas Discord à partir des props (auteur/message/timestamp).
+  const enriched = await enrichPropsWithCanvasImage(composition, props);
+
   const jobId = crypto.randomBytes(8).toString('hex');
   fs.mkdirSync(OUT_DIR, { recursive: true });
   const tmpPropsPath = path.join(OUT_DIR, `.tmp-still-${jobId}.json`);
   const outPath = path.join(OUT_DIR, `.tmp-still-${jobId}.png`);
-  fs.writeFileSync(tmpPropsPath, JSON.stringify(props));
+  fs.writeFileSync(tmpPropsPath, JSON.stringify(enriched));
 
   const args = ['remotion', 'still', composition, outPath, `--frame=${frame || 0}`, `--props=${tmpPropsPath}`];
   const result = spawnSync('npx', args, { cwd: VIDEO_DIR, shell: true });

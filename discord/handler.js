@@ -25,7 +25,7 @@
 const fetch = require('node-fetch');
 
 const { BLOCKED_AUTHORS, getDisplayName } = require('../utils/authors');
-const { extractPrices, extractTicker, stripDiscordMeta, extractPnl } = require('../utils/prices');
+const { extractPrices, extractTicker, stripDiscordMeta, extractPnl, computePnlString } = require('../utils/prices');
 const { classifySignal } = require('../filters/signal');
 const { getMessagesByTicker, enqueueRenderJob } = require('../db/sqlite');
 const { pickTemplate } = require('../utils/template-dispatcher');
@@ -462,10 +462,13 @@ function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhoo
         messageCreatedAt: message.createdAt,
         isReply, parentContent, parentAuthor,
       });
+      // computePnlString : multi-fallback (explicite +X%, "up X%",
+      // "locked in X%", range "X-Y" calculé). Permet d'auto-render des
+      // exits comme "MNTS 4.7-5.59 so far" qui n'ont pas de "+X%" explicite.
       await maybeEnqueueProofRender({
         filterType,
         signalTicker,
-        pnl: extractPnl(content),
+        pnl: computePnlString(content),
         originalAlert: exitOriginalAlert,
         authorName: message.author.username,
         content,

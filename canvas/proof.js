@@ -864,8 +864,32 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
   }
   ctx.fillText(alertAuthor || '?', refNameX, refMidY);
 
+  // Badge "APP" — uniquement dans la barre de référence (les messages
+  // d'alerte d'origine sont relayés par un webhook/bot, donc Discord
+  // affiche ce tag dans son rendu natif). Pill blurple plein, texte
+  // blanc bold, sandwiché entre le nom et le tag BOOM.
+  const APP_TAG_H   = 13;
+  const APP_TAG_PAD = 4;
+  ctx.font = 'bold 9px ' + FONT;
+  const appTextW = ctx.measureText('APP').width;
+  const appTagW  = appTextW + APP_TAG_PAD * 2;
+  const appTagX  = refNameX + refNameW + 5;
+  const appTagY  = refMidY - APP_TAG_H / 2;
+  const prevFill = ctx.fillStyle;
+  ctx.fillStyle = '#5865f2';
+  ctx.beginPath();
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(appTagX, appTagY, appTagW, APP_TAG_H, 3);
+  } else {
+    ctx.rect(appTagX, appTagY, appTagW, APP_TAG_H);
+  }
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText('APP', appTagX + APP_TAG_PAD, refMidY);
+  ctx.fillStyle = prevFill;
+
   // Badge + logo dans la barre de référence.
-  let   refBadgeX = refNameX + refNameW + 6;
+  let   refBadgeX = appTagX + appTagW + 5;
   const refTagH   = 14;
   let   refTagW   = 0;
   try {

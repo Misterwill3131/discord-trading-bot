@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Boom Editor</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="logo">🎬</span>
+      <h1>Boom Editor</h1>
+    </div>
+    <div class="header-actions">
+      <button id="btn-new" class="btn-secondary">+ New Template</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <!-- ── Sidebar: list of templates ── -->
+    <aside class="sidebar">
+      <h2>Templates</h2>
+      <ul id="templates-list"></ul>
+    </aside>
+
+    <!-- ── Center: form to edit props ── -->
+    <main class="form-panel">
+      <div class="form-header">
+        <input type="text" id="template-id" placeholder="template-id (slug)" />
+        <select id="template-composition">
+          <option value="BoomEntry">BoomEntry</option>
+          <option value="BoomProof">BoomProof</option>
+          <option value="SignalAlert">SignalAlert</option>
+          <option value="BrandPromo">BrandPromo</option>
+        </select>
+      </div>
+
+      <input type="text" id="template-name" placeholder="Nom lisible" />
+      <input type="text" id="template-description" placeholder="Description courte (optionnelle)" />
+
+      <div class="props-form" id="props-form">
+        <p class="hint">Sélectionne ou crée un template à gauche.</p>
+      </div>
+
+      <div class="form-actions">
+        <button id="btn-preview" class="btn-secondary" disabled>👁 Preview frame</button>
+        <button id="btn-save" class="btn-secondary" disabled>💾 Save template</button>
+        <button id="btn-render" class="btn-primary" disabled>🎬 Render MP4</button>
+      </div>
+    </main>
+
+    <!-- ── Right panel: preview + render output ── -->
+    <aside class="preview-panel">
+      <h2>Preview</h2>
+      <div class="preview-frame" id="preview-frame">
+        <div class="preview-placeholder">
+          <span>Click "Preview frame" to see the rendered still</span>
+        </div>
+      </div>
+
+      <h2>Render output</h2>
+      <div class="render-output" id="render-output">
+        <p class="hint">Click "Render MP4" to start a full render.</p>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Toast for notifications -->
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

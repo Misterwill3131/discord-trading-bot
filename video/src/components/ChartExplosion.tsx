@@ -12,21 +12,91 @@ type Candle = {
   low: number;
 };
 
-// Pattern hardcodé : ~+11% sur 12 candles avec mini pullback.
-const CANDLES: Candle[] = [
-  { open: 0.181, close: 0.180, high: 0.182, low: 0.179 }, // small red
-  { open: 0.180, close: 0.182, high: 0.183, low: 0.179 }, // small green
-  { open: 0.182, close: 0.181, high: 0.183, low: 0.180 }, // small red (consolidation)
-  { open: 0.181, close: 0.184, high: 0.185, low: 0.181 }, // green breakout
-  { open: 0.184, close: 0.187, high: 0.188, low: 0.183 }, // medium green
-  { open: 0.187, close: 0.190, high: 0.191, low: 0.187 }, // medium green
-  { open: 0.190, close: 0.193, high: 0.194, low: 0.189 }, // medium green
-  { open: 0.193, close: 0.195, high: 0.196, low: 0.193 }, // small green
-  { open: 0.195, close: 0.197, high: 0.198, low: 0.194 }, // small green
-  { open: 0.197, close: 0.200, high: 0.201, low: 0.197 }, // big green (impulse)
-  { open: 0.200, close: 0.199, high: 0.201, low: 0.198 }, // tiny red (pullback)
-  { open: 0.199, close: 0.202, high: 0.203, low: 0.199 }, // final push
-];
+// PRNG simple seedé pour générer des candles déterministes mais naturelles.
+function makeRng(seedStr: string) {
+  let h = 0;
+  for (let i = 0; i < seedStr.length; i++) {
+    h = ((h << 5) - h) + seedStr.charCodeAt(i);
+    h |= 0;
+  }
+  let state = Math.abs(h) || 1;
+  return () => {
+    state = (state * 9301 + 49297) % 233280;
+    return state / 233280;
+  };
+}
+
+// Génère N candles d'une trade qui va de startPrice à endPrice avec des
+// caractéristiques réalistes : drift up (avec noise), wicks asymétriques,
+// quelques pullbacks rouges, doji-like en consolidation, gros candles
+// d'impulse sur les phases de breakout.
+function generateCandles(
+  seed: string,
+  count: number,
+  startPrice: number,
+  endPrice: number
+): Candle[] {
+  const rng = makeRng(seed);
+  const candles: Candle[] = [];
+  let lastClose = startPrice;
+  const totalMove = endPrice - startPrice;
+  const avgStep = totalMove / count;
+  // Volatility (en absolu) — sert à dimensionner les wicks et le noise.
+  const vol = Math.abs(totalMove) * 0.18;
+
+  for (let i = 0; i < count; i++) {
+    // Petit gap entre la close précédente et l'open courant (réaliste).
+    const gap = (rng() - 0.5) * vol * 0.3;
+    const open = lastClose + gap;
+
+    // Phase visuelle : début (consolidation), milieu (breakout), fin (rally).
+    const progress = i / (count - 1);
+    const phase = progress < 0.25 ? 'consolidation'
+                : progress < 0.6  ? 'breakout'
+                : progress < 0.85 ? 'rally'
+                : 'final';
+
+    // Drift cible vers endPrice — accentué en breakout/rally, neutre en consolidation.
+    let driftMult = 1.0;
+    if (phase === 'consolidation') driftMult = 0.3 + rng() * 0.6;
+    if (phase === 'breakout')      driftMult = 0.9 + rng() * 1.2;
+    if (phase === 'rally')         driftMult = 1.1 + rng() * 1.0;
+    if (phase === 'final')         driftMult = 1.4 + rng() * 1.5;
+
+    const drift = avgStep * driftMult;
+    // Noise local — peut faire devenir une candle rouge même en uptrend.
+    const noise = (rng() - 0.5) * vol * 1.2;
+    const close = open + drift + noise;
+
+    // Wicks asymétriques : longueur 0.3-1.5x du body. Sometimes 0 (bald candle).
+    const bodyAbs = Math.abs(close - open);
+    const upperWickLen = rng() < 0.15 ? 0 : (0.2 + rng() * 1.4) * Math.max(bodyAbs, vol * 0.3);
+    const lowerWickLen = rng() < 0.15 ? 0 : (0.2 + rng() * 1.4) * Math.max(bodyAbs, vol * 0.3);
+    const high = Math.max(open, close) + upperWickLen;
+    const low  = Math.min(open, close) - lowerWickLen;
+
+    candles.push({ open, close, high, low });
+    lastClose = close;
+  }
+
+  // Force la dernière candle à être un GREEN impulse qui clôt à endPrice
+  // (le "money shot" — le trade se termine au target avec une bougie marquée).
+  const last = candles[candles.length - 1];
+  // Body size : ~1.5x la moyenne pour effet d'impulse final.
+  const finalBodySize = Math.abs(avgStep) * 1.8;
+  last.close = endPrice;
+  last.open = endPrice - finalBodySize;
+  // Wicks réduits pour un look "bald candle" qui inspire confiance.
+  last.high = endPrice + Math.abs(avgStep) * 0.3;
+  last.low  = last.open - Math.abs(avgStep) * 0.4;
+
+  return candles;
+}
+
+// 15 candles d'une trade +12% (0.180 → 0.202) avec seed fixe.
+// Pour rendre déterministe : seed fixe, mais on peut le varier par job
+// via un prop seed plus tard si besoin.
+const CANDLES: Candle[] = generateCandles('boom-trade-default', 15, 0.180, 0.202);
 
 // Layout SVG.
 const VW = 600;
@@ -38,9 +108,13 @@ const PADDING_BOTTOM = 30;
 const PLOT_W = VW - PADDING_LEFT - PADDING_RIGHT;
 const PLOT_H = VH - PADDING_TOP - PADDING_BOTTOM;
 
-// Min/max prices pour normaliser. Légère marge au-dessus/dessous pour respirer.
-const PRICE_MIN = 0.178;
-const PRICE_MAX = 0.205;
+// Min/max prices calculés depuis les candles (avec marge 5% au-dessus/dessous
+// pour respirer). Adaptatif si on régénère les candles.
+const RAW_MIN = Math.min(...CANDLES.map(c => c.low));
+const RAW_MAX = Math.max(...CANDLES.map(c => c.high));
+const PRICE_PADDING = (RAW_MAX - RAW_MIN) * 0.08;
+const PRICE_MIN = RAW_MIN - PRICE_PADDING;
+const PRICE_MAX = RAW_MAX + PRICE_PADDING;
 const PRICE_RANGE = PRICE_MAX - PRICE_MIN;
 
 // Convertit un prix en y SVG (inversé : prix haut = y bas).

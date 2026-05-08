@@ -99,14 +99,20 @@ function createTrendStore(db) {
        ticker, daily_state_date,
        pdh_alerts_today, pdh_below_since,
        pdl_alerts_today, pdl_above_since,
+       pmh_alerts_today, pmh_below_since,
+       pml_alerts_today, pml_above_since,
        gap_alerted_today, volume_above_alerted_today
-     ) VALUES (?, ?, 0, NULL, 0, NULL, 0, 0)
+     ) VALUES (?, ?, 0, NULL, 0, NULL, 0, NULL, 0, NULL, 0, 0)
      ON CONFLICT(ticker) DO UPDATE SET
        daily_state_date           = excluded.daily_state_date,
        pdh_alerts_today           = 0,
        pdh_below_since            = NULL,
        pdl_alerts_today           = 0,
        pdl_above_since            = NULL,
+       pmh_alerts_today           = 0,
+       pmh_below_since            = NULL,
+       pml_alerts_today           = 0,
+       pml_above_since            = NULL,
        gap_alerted_today          = 0,
        volume_above_alerted_today = 0`
   );
@@ -118,6 +124,8 @@ function createTrendStore(db) {
     'daily_state_date',
     'pdh_alerts_today', 'pdh_below_since',
     'pdl_alerts_today', 'pdl_above_since',
+    'pmh_alerts_today', 'pmh_below_since',
+    'pml_alerts_today', 'pml_above_since',
     'gap_alerted_today', 'volume_above_alerted_today',
   ]);
 

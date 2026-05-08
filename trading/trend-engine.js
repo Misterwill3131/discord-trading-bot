@@ -187,6 +187,14 @@ function detectAll(candles, dailyContext = null, state = null, opts = {}) {
       () => detectGap(candles, gapPrevClose, gapThresholdPct, state),
       () => detectVolumeAbovePrevDay(candles, y.volume, volumeMultiplier, state),
     ];
+    // PMH/PML break — calculé à partir de l'intraday lui-même (pas du daily
+    // context). Si pas de bougie premarket exploitable (ticker peu liquide,
+    // ou fixtures de test), on skip silencieusement les 2 détecteurs.
+    const pmRange = getPremarketRange(candles);
+    if (pmRange) {
+      detectors.push(() => detectPMHBreak(candles, pmRange.pmh, state, reentryMs, now));
+      detectors.push(() => detectPMLBreak(candles, pmRange.pml, state, reentryMs, now));
+    }
     for (const run of detectors) {
       const { event, stateUpdate } = run();
       if (event) events.push(event);
@@ -302,6 +310,153 @@ function detectPDLBreak(intraday, pdl, state, reentryMs, now = Date.now()) {
   return { event: null, stateUpdate: null };
 }
 
+// Helper : minutes ET (0-1439) depuis 00:00 ET pour un bar. Retourne null si
+// le timestamp n'est pas exploitable (cas des fixtures de tests qui utilisent
+// t = 0,1,2... sans timestamps réels).
+function _etMinutes(bar) {
+  if (!bar || !Number.isFinite(bar.t)) return null;
+  const date = new Date(bar.t);
+  if (isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(date);
+  let hour = 0, minute = 0;
+  for (const p of parts) {
+    if (p.type === 'hour') hour = parseInt(p.value, 10);
+    else if (p.type === 'minute') minute = parseInt(p.value, 10);
+  }
+  if (hour === 24) hour = 0;
+  return hour * 60 + minute;
+}
+
+// Premarket = 4:00 ET (inclusif) à 9:30 ET (exclusif). Bars sans timestamp
+// exploitable retournent false (= ignorées).
+function isPremarketBar(bar) {
+  const m = _etMinutes(bar);
+  return m != null && m >= 4 * 60 && m < 9 * 60 + 30;
+}
+
+// RTH = 9:30 ET (inclusif) à 16:00 ET (exclusif).
+function isRTHBar(bar) {
+  const m = _etMinutes(bar);
+  return m != null && m >= 9 * 60 + 30 && m < 16 * 60;
+}
+
+// Calcule PMH (premarket high) / PML (premarket low) du jour à partir de
+// l'intraday (qui inclut les bougies premarket grâce à includePrePost=true).
+// Retourne null si aucune bougie premarket exploitable (ticker peu liquide
+// ou fixtures de test sans timestamps). Le bar count importe peu — on prend
+// max(h) et min(l) sur toutes les bougies premarket trouvées.
+function getPremarketRange(intraday) {
+  if (!Array.isArray(intraday)) return null;
+  let high = -Infinity, low = Infinity, found = false;
+  for (const bar of intraday) {
+    if (!isPremarketBar(bar)) continue;
+    if (Number.isFinite(bar.h) && bar.h > high) high = bar.h;
+    if (Number.isFinite(bar.l) && bar.l < low)  low  = bar.l;
+    found = true;
+  }
+  if (!found || !Number.isFinite(high) || !Number.isFinite(low)) return null;
+  return { pmh: high, pml: low };
+}
+
+// PMH break — close intraday RTH > premarket high d'aujourd'hui.
+// Mirror de detectPDHBreak avec colonnes pmh_*. Le check isRTHBar(last) évite
+// de fire pendant le premarket lui-même (où PMH se forme encore) et après
+// 16:00 ET (irrelevant après la cloche).
+function detectPMHBreak(intraday, pmh, state, reentryMs, now = Date.now()) {
+  if (!Array.isArray(intraday) || intraday.length === 0) {
+    return { event: null, stateUpdate: null };
+  }
+  if (!Number.isFinite(pmh)) {
+    return { event: null, stateUpdate: null };
+  }
+  const last = intraday[intraday.length - 1];
+  // Skip si on est encore en premarket (PMH pas encore figé) ou hors RTH.
+  // Si timestamps non exploitables (fixtures), on accepte (le caller décide).
+  if (Number.isFinite(last.t) && !isRTHBar(last)) {
+    return { event: null, stateUpdate: null };
+  }
+  const close = last.c;
+  if (!Number.isFinite(close)) {
+    return { event: null, stateUpdate: null };
+  }
+
+  const alertsToday = (state && state.pmh_alerts_today) || 0;
+  const belowSince  = state && state.pmh_below_since;
+
+  if (close > pmh) {
+    if (alertsToday === 0) {
+      return {
+        event: { type: 'pmh_break', pmh, price: close, volume: last.v },
+        stateUpdate: { pmh_alerts_today: 1, pmh_below_since: null },
+      };
+    }
+    if (belowSince == null) {
+      return { event: null, stateUpdate: null };
+    }
+    if ((now - belowSince) >= reentryMs) {
+      return {
+        event: { type: 'pmh_break', pmh, price: close, volume: last.v },
+        stateUpdate: { pmh_alerts_today: alertsToday + 1, pmh_below_since: null },
+      };
+    }
+    return { event: null, stateUpdate: { pmh_below_since: null } };
+  }
+
+  if (alertsToday > 0 && belowSince == null) {
+    return { event: null, stateUpdate: { pmh_below_since: now } };
+  }
+  return { event: null, stateUpdate: null };
+}
+
+// PML break — close intraday RTH < premarket low d'aujourd'hui.
+// Symétrique de detectPMHBreak.
+function detectPMLBreak(intraday, pml, state, reentryMs, now = Date.now()) {
+  if (!Array.isArray(intraday) || intraday.length === 0) {
+    return { event: null, stateUpdate: null };
+  }
+  if (!Number.isFinite(pml)) {
+    return { event: null, stateUpdate: null };
+  }
+  const last = intraday[intraday.length - 1];
+  if (Number.isFinite(last.t) && !isRTHBar(last)) {
+    return { event: null, stateUpdate: null };
+  }
+  const close = last.c;
+  if (!Number.isFinite(close)) {
+    return { event: null, stateUpdate: null };
+  }
+
+  const alertsToday = (state && state.pml_alerts_today) || 0;
+  const aboveSince  = state && state.pml_above_since;
+
+  if (close < pml) {
+    if (alertsToday === 0) {
+      return {
+        event: { type: 'pml_break', pml, price: close, volume: last.v },
+        stateUpdate: { pml_alerts_today: 1, pml_above_since: null },
+      };
+    }
+    if (aboveSince == null) {
+      return { event: null, stateUpdate: null };
+    }
+    if ((now - aboveSince) >= reentryMs) {
+      return {
+        event: { type: 'pml_break', pml, price: close, volume: last.v },
+        stateUpdate: { pml_alerts_today: alertsToday + 1, pml_above_since: null },
+      };
+    }
+    return { event: null, stateUpdate: { pml_above_since: null } };
+  }
+
+  if (alertsToday > 0 && aboveSince == null) {
+    return { event: null, stateUpdate: { pml_above_since: now } };
+  }
+  return { event: null, stateUpdate: null };
+}
+
 // Gap up/down overnight. Mesure l'écart entre l'open premarket d'aujourd'hui
 // (~4:00 ET, 1re bougie de l'intraday qui inclut le premarket grâce à
 // includePrePost=true) et la close after-hours d'hier (~20:00 ET, fournie
@@ -382,4 +537,9 @@ function detectVolumeAbovePrevDay(intraday, prevDayVolume, multiplier, state) {
   return { event: null, stateUpdate: null };
 }
 
-module.exports = { detectDirection, detectBreakout, detectReversal, detectAll, detectPDHBreak, detectPDLBreak, detectGap, detectVolumeAbovePrevDay, filterToRTH };
+module.exports = {
+  detectDirection, detectBreakout, detectReversal, detectAll,
+  detectPDHBreak, detectPDLBreak, detectPMHBreak, detectPMLBreak,
+  detectGap, detectVolumeAbovePrevDay,
+  filterToRTH, isPremarketBar, isRTHBar, getPremarketRange,
+};

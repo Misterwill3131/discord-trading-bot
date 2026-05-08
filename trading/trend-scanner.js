@@ -218,6 +218,22 @@ function formatPDLBreakAlert(ticker, ev, snap, dailyContext) {
   ].join('\n');
 }
 
+function formatPMHBreakAlert(ticker, ev, snap, dailyContext) {
+  return [
+    `🟩 **$${ticker}** — PMH break`,
+    `Closed above premarket high ${fmtPrice(ev.pmh)}`,
+    `Price: ${fmtPrice(ev.price)} · Today vol: ${fmtTodayVolume(dailyContext)}`,
+  ].join('\n');
+}
+
+function formatPMLBreakAlert(ticker, ev, snap, dailyContext) {
+  return [
+    `🟥 **$${ticker}** — PML break`,
+    `Closed below premarket low ${fmtPrice(ev.pml)}`,
+    `Price: ${fmtPrice(ev.price)} · Today vol: ${fmtTodayVolume(dailyContext)}`,
+  ].join('\n');
+}
+
 function formatGapAlert(ticker, ev, snap) {
   const arrow = ev.type === 'gap_up' ? '⬆️' : '⬇️';
   const label = ev.type === 'gap_up' ? 'overnight gap up' : 'overnight gap down';
@@ -377,6 +393,10 @@ async function runScanCycle({
           content = formatPDHBreakAlert(ticker, ev, verdict.snapshot, dailyContext);
         } else if (ev.type === 'pdl_break') {
           content = formatPDLBreakAlert(ticker, ev, verdict.snapshot, dailyContext);
+        } else if (ev.type === 'pmh_break') {
+          content = formatPMHBreakAlert(ticker, ev, verdict.snapshot, dailyContext);
+        } else if (ev.type === 'pml_break') {
+          content = formatPMLBreakAlert(ticker, ev, verdict.snapshot, dailyContext);
         } else if (ev.type === 'gap_up' || ev.type === 'gap_down') {
           content = formatGapAlert(ticker, ev, verdict.snapshot);
         } else if (ev.type === 'volume_above_prev_day') {

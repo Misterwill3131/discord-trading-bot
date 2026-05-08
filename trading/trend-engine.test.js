@@ -470,3 +470,106 @@ test('detectVolumeAbovePrevDay: sums only RTH bars, ignoring premarket volume', 
   // Should be 11000 (RTH only), not 16000 (with premarket)
   assert.strictEqual(result.event.todayVolume, 11000);
 });
+
+// ── PMH / PML break ────────────────────────────────────────────────────
+
+test('isPremarketBar: 4:00-9:30 ET inclusive/exclusive boundaries', () => {
+  const { isPremarketBar } = require('./trend-engine');
+  assert.strictEqual(isPremarketBar({ t: nyMs(2026, 5, 1, 3, 59) }), false);  // before
+  assert.strictEqual(isPremarketBar({ t: nyMs(2026, 5, 1, 4, 0)  }), true);   // start
+  assert.strictEqual(isPremarketBar({ t: nyMs(2026, 5, 1, 7, 0)  }), true);   // mid
+  assert.strictEqual(isPremarketBar({ t: nyMs(2026, 5, 1, 9, 29) }), true);   // last
+  assert.strictEqual(isPremarketBar({ t: nyMs(2026, 5, 1, 9, 30) }), false);  // RTH starts
+  assert.strictEqual(isPremarketBar({ t: nyMs(2026, 5, 1, 12, 0) }), false);  // RTH
+});
+
+test('getPremarketRange: extracts max(h) and min(l) over premarket bars only', () => {
+  const { getPremarketRange } = require('./trend-engine');
+  const intraday = [
+    { t: nyMs(2026, 5, 1, 4, 0),  o: 100, h: 102, l: 99,   c: 101, v: 50 },   // pre
+    { t: nyMs(2026, 5, 1, 8, 0),  o: 101, h: 105, l: 100,  c: 104, v: 100 },  // pre
+    { t: nyMs(2026, 5, 1, 9, 25), o: 104, h: 106, l: 103,  c: 105, v: 200 },  // pre
+    { t: nyMs(2026, 5, 1, 9, 30), o: 105, h: 110, l: 95,   c: 108, v: 5000 }, // RTH (excluded)
+    { t: nyMs(2026, 5, 1, 9, 35), o: 108, h: 112, l: 107,  c: 110, v: 4000 }, // RTH (excluded)
+  ];
+  const range = getPremarketRange(intraday);
+  assert.ok(range);
+  assert.strictEqual(range.pmh, 106);  // max of premarket highs (102, 105, 106)
+  assert.strictEqual(range.pml, 99);   // min of premarket lows  (99, 100, 103)
+});
+
+test('getPremarketRange: returns null with no premarket bars', () => {
+  const { getPremarketRange } = require('./trend-engine');
+  const intraday = [
+    { t: nyMs(2026, 5, 1, 9, 30), o: 100, h: 110, l: 90, c: 105, v: 1000 },
+    { t: nyMs(2026, 5, 1, 10, 0), o: 105, h: 115, l: 100, c: 112, v: 2000 },
+  ];
+  assert.strictEqual(getPremarketRange(intraday), null);
+});
+
+test('detectPMHBreak: first break of the day (close > PMH during RTH) fires alert', () => {
+  const { detectPMHBreak } = require('./trend-engine');
+  const candles = [
+    { t: nyMs(2026, 5, 1, 9, 35), o: 105, h: 107, l: 104, c: 106.5, v: 1000 },
+  ];
+  const result = detectPMHBreak(candles, 106, { pmh_alerts_today: 0, pmh_below_since: null }, 15 * 60_000, 1_000_000);
+  assert.ok(result.event);
+  assert.strictEqual(result.event.type, 'pmh_break');
+  assert.strictEqual(result.event.pmh, 106);
+  assert.strictEqual(result.event.price, 106.5);
+  assert.deepStrictEqual(result.stateUpdate, { pmh_alerts_today: 1, pmh_below_since: null });
+});
+
+test('detectPMHBreak: skip if last bar is premarket (PMH still forming)', () => {
+  const { detectPMHBreak } = require('./trend-engine');
+  const candles = [
+    { t: nyMs(2026, 5, 1, 9, 25), o: 105, h: 107, l: 104, c: 106.5, v: 1000 },  // premarket
+  ];
+  const result = detectPMHBreak(candles, 106, { pmh_alerts_today: 0, pmh_below_since: null }, 15 * 60_000, 1_000_000);
+  assert.deepStrictEqual(result, { event: null, stateUpdate: null });
+});
+
+test('detectPMHBreak: drops below PMH sets pmh_below_since', () => {
+  const { detectPMHBreak } = require('./trend-engine');
+  const candles = [
+    { t: nyMs(2026, 5, 1, 10, 0), o: 105, h: 105.5, l: 104, c: 105.5, v: 1000 },
+  ];
+  const state = { pmh_alerts_today: 1, pmh_below_since: null };
+  const result = detectPMHBreak(candles, 106, state, 15 * 60_000, 1_000_000);
+  assert.strictEqual(result.event, null);
+  assert.deepStrictEqual(result.stateUpdate, { pmh_below_since: 1_000_000 });
+});
+
+test('detectPMHBreak: clean re-entry after >= reentryMs fires alert', () => {
+  const { detectPMHBreak } = require('./trend-engine');
+  const candles = [
+    { t: nyMs(2026, 5, 1, 11, 0), o: 105, h: 107, l: 104, c: 106.5, v: 1000 },
+  ];
+  const reentryMs = 15 * 60_000;
+  const state = { pmh_alerts_today: 1, pmh_below_since: 1_000_000 };
+  const now = 1_000_000 + reentryMs;
+  const result = detectPMHBreak(candles, 106, state, reentryMs, now);
+  assert.ok(result.event);
+  assert.deepStrictEqual(result.stateUpdate, { pmh_alerts_today: 2, pmh_below_since: null });
+});
+
+test('detectPMLBreak: first break of the day fires alert', () => {
+  const { detectPMLBreak } = require('./trend-engine');
+  const candles = [
+    { t: nyMs(2026, 5, 1, 9, 35), o: 100, h: 100, l: 98.5, c: 98.8, v: 1000 },
+  ];
+  const result = detectPMLBreak(candles, 99, { pml_alerts_today: 0, pml_above_since: null }, 15 * 60_000, 1_000_000);
+  assert.ok(result.event);
+  assert.strictEqual(result.event.type, 'pml_break');
+  assert.strictEqual(result.event.pml, 99);
+  assert.strictEqual(result.event.price, 98.8);
+});
+
+test('detectPMLBreak: skip if last bar is premarket', () => {
+  const { detectPMLBreak } = require('./trend-engine');
+  const candles = [
+    { t: nyMs(2026, 5, 1, 8, 0), o: 100, h: 100, l: 98.5, c: 98.8, v: 1000 },  // premarket
+  ];
+  const result = detectPMLBreak(candles, 99, { pml_alerts_today: 0, pml_above_since: null }, 15 * 60_000, 1_000_000);
+  assert.deepStrictEqual(result, { event: null, stateUpdate: null });
+});

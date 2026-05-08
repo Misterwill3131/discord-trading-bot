@@ -428,6 +428,13 @@ addColumnIfMissing('trend_state', 'pdl_alerts_today',           'INTEGER DEFAULT
 addColumnIfMissing('trend_state', 'pdl_above_since',            'INTEGER');
 addColumnIfMissing('trend_state', 'gap_alerted_today',          'INTEGER DEFAULT 0');
 addColumnIfMissing('trend_state', 'volume_above_alerted_today', 'INTEGER DEFAULT 0');
+// Premarket high/low break tracking. PMH = plus haut atteint en premarket
+// (4:00-9:30 ET) ; PML = plus bas. Break = close intraday RTH > PMH (ou < PML).
+// Mirror du pattern PDH/PDL : 1× par jour avec ré-entrée propre 15 min.
+addColumnIfMissing('trend_state', 'pmh_alerts_today', 'INTEGER DEFAULT 0');
+addColumnIfMissing('trend_state', 'pmh_below_since', 'INTEGER');
+addColumnIfMissing('trend_state', 'pml_alerts_today', 'INTEGER DEFAULT 0');
+addColumnIfMissing('trend_state', 'pml_above_since', 'INTEGER');
 // Salon dédié pour les alertes gap_up / gap_down. NULL = utilise le
 // channel principal (rétrocompat). Permet de séparer les alertes overnight
 // du flux trend principal (direction, breakout, reversal, PDH/PDL, volume).

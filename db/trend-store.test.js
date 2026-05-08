@@ -29,6 +29,10 @@ function makeDb() {
       pdh_below_since INTEGER,
       pdl_alerts_today INTEGER DEFAULT 0,
       pdl_above_since INTEGER,
+      pmh_alerts_today INTEGER DEFAULT 0,
+      pmh_below_since INTEGER,
+      pml_alerts_today INTEGER DEFAULT 0,
+      pml_above_since INTEGER,
       gap_alerted_today INTEGER DEFAULT 0,
       volume_above_alerted_today INTEGER DEFAULT 0
     );

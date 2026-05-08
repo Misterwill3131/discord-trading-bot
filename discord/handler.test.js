@@ -220,3 +220,53 @@ test('maybeEnqueueRecap link render_job_id dans daily_recaps row', async () => {
   assert.strictEqual(row.message_id, 'msg-recap-5');
   assert.strictEqual(row.tickers_count, 3);
 });
+
+// ─── E2E : registerTradingHandler avec un message recap ─────────────
+test('registerTradingHandler enqueue un BoomRecap quand ZZ post un RECAP:', async () => {
+  // Mock minimal d'un Discord client + message
+  const handlers = {};
+  const fakeClient = {
+    on: (event, fn) => { handlers[event] = fn; },
+  };
+  const fakeMessage = {
+    content: ZZ_RECAP,
+    author: { username: 'ZZ', bot: false },
+    webhookId: null,
+    channel: {
+      name: 'trading-floor',
+      messages: { fetch: async () => null },
+      send: async () => ({ id: 'sent-123' }),
+    },
+    createdAt: new Date('2026-07-01T19:44:00Z'),
+    id: 'e2e-msg-1',
+    reference: null,
+    reply: async () => {},
+  };
+
+  const { registerTradingHandler } = require('./handler');
+  registerTradingHandler(fakeClient, {
+    tradingChannel: 'trading-floor',
+    railwayUrl: 'https://test.example',
+    makeWebhookUrl: 'https://test.example/webhook',
+    tradingEngine: null,
+    sendEmailAlert: null,
+  });
+
+  // Set whitelist via env (note : process.env modifs entre tests OK ici)
+  const prevWhitelist = process.env.RECAP_AUTHOR_WHITELIST;
+  process.env.RECAP_AUTHOR_WHITELIST = 'ZZ';
+
+  const before = getPendingRenderJobs().length;
+  await handlers.messageCreate(fakeMessage);
+  const after = getPendingRenderJobs();
+
+  // Restore env
+  if (prevWhitelist === undefined) delete process.env.RECAP_AUTHOR_WHITELIST;
+  else process.env.RECAP_AUTHOR_WHITELIST = prevWhitelist;
+
+  // Devrait avoir enqueued exactement 1 job BoomRecap
+  const newJobs = after.slice(before);
+  const recapJobs = newJobs.filter(j => j.composition === 'BoomRecap');
+  assert.strictEqual(recapJobs.length, 1, 'should enqueue exactly one BoomRecap job');
+  assert.ok(recapJobs[0].recap_data, 'recap_data should be populated');
+});

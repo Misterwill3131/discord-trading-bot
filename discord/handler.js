@@ -151,10 +151,11 @@ async function maybeEnqueueProofRender({
   // même (le worker fallback sur les Discord cards Remotion natives).
   let proofImageBase64 = null;
   try {
-    // Layout vertical (1080 wide, entry + chrono divider + exit empilés)
-    // sharp 2x pour rendu vidéo. Pas la même fonction que generateProofImage
-    // (qui sert encore au post #profits Discord avec layout horizontal).
-    const proofBuf = await generateProofImageVertical(
+    // Layout horizontal compact (reference bar + reply arrow + main message),
+    // sharp 2x pour la vidéo (1480×~260 natif). Affiché comme une "receipt"
+    // band centrée dans la vidéo. generateProofImageVertical existe aussi
+    // pour un layout portrait empilé mais on préfère cette version compacte.
+    const proofBuf = await generateProofImage(
       originalAlert.author, originalAlert.content, originalAlert.ts,
       authorName, content, messageCreatedAt.toISOString(),
       { scale: 2 }

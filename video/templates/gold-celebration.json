@@ -1,0 +1,19 @@
+{
+  "composition": "BoomProof",
+  "name": "Gold Celebration",
+  "description": "Pour les gros wins (>50%). Accent doré au lieu du vert standard, glow plus intense.",
+  "props": {
+    "ticker": "GDC",
+    "entryAuthor": "AR",
+    "entryMessage": "$GDC .19 entry long",
+    "entryTimestamp": "2026-05-07T17:53:00-04:00",
+    "exitAuthor": "Z",
+    "exitMessage": "$GDC out +85% 🚀",
+    "exitTimestamp": "2026-05-07T18:24:00-04:00",
+    "pnl": "+85%",
+    "ctaUrl": "discord.gg/boom",
+    "accentColor": "#fbbf24",
+    "musicVolume": 0.65,
+    "sfxEnabled": true
+  }
+}

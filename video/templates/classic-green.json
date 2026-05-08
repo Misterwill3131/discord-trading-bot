@@ -1,0 +1,19 @@
+{
+  "composition": "BoomProof",
+  "name": "Classic Green Win",
+  "description": "Look standard de proof video pour exit gagnant. Vert + transitions fade + music modérée.",
+  "props": {
+    "ticker": "TSLA",
+    "entryAuthor": "Z",
+    "entryMessage": "$TSLA 150 entry long",
+    "entryTimestamp": "2026-04-25T13:32:00-04:00",
+    "exitAuthor": "Z",
+    "exitMessage": "$TSLA out +20%",
+    "exitTimestamp": "2026-04-25T16:30:00-04:00",
+    "pnl": "+20%",
+    "ctaUrl": "discord.gg/boom",
+    "accentColor": "#10b981",
+    "musicVolume": 0.55,
+    "sfxEnabled": true
+  }
+}

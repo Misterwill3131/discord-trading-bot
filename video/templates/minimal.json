@@ -1,0 +1,25 @@
+{
+  "composition": "BoomEntry",
+  "name": "Minimal",
+  "description": "Design épuré : pas de SFX, fonts standards, transitions flip clean. Pour posts qui veulent un look pro discret.",
+  "props": {
+    "ticker": "NVDA",
+    "author": "Bora",
+    "message": "$NVDA 920 long swing",
+    "timestamp": "2026-04-25T11:02:00-04:00",
+    "stingerText": "SIGNAL",
+    "teaseAction": "called this.",
+    "teaseSubtext": "View details →",
+    "cardLabel": "ENTRY",
+    "ctaTitle": "FOLLOW",
+    "ctaUrl": "discord.gg/boom",
+    "ctaSubtitle": "Trade alongside us",
+    "accentColor": "#06b6d4",
+    "musicVolume": 0.3,
+    "sfxEnabled": false,
+    "stingerFontSize": 180,
+    "tickerFontSize": 220,
+    "ctaTitleFontSize": 160,
+    "transitionType": "flip"
+  }
+}

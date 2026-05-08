@@ -1,0 +1,25 @@
+{
+  "composition": "BoomEntry",
+  "name": "Calm Gold",
+  "description": "Doré/jaune luxueux + transitions fade smooth + music réduite. Pour audience plus mature.",
+  "props": {
+    "ticker": "AAPL",
+    "author": "AR",
+    "message": "$AAPL 200 swing long",
+    "timestamp": "2026-04-25T10:15:00-04:00",
+    "stingerText": "ALPHA",
+    "teaseAction": "spotted this one.",
+    "teaseSubtext": "Premium signal →",
+    "cardLabel": "ALPHA CALL",
+    "ctaTitle": "ACCESS",
+    "ctaUrl": "discord.gg/boom",
+    "ctaSubtitle": "Curated alpha for serious traders",
+    "accentColor": "#fbbf24",
+    "musicVolume": 0.4,
+    "sfxEnabled": true,
+    "stingerFontSize": 200,
+    "tickerFontSize": 260,
+    "ctaTitleFontSize": 180,
+    "transitionType": "fade"
+  }
+}

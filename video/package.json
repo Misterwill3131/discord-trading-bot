@@ -9,6 +9,8 @@
     "render:signal": "remotion render SignalAlert out/signal-alert.mp4",
     "render:proof": "remotion render BoomProof out/boom-proof.mp4",
     "render:entry": "remotion render BoomEntry out/boom-entry.mp4",
+    "templates:list": "node scripts/list-templates.js",
+    "template:render": "node scripts/render-template.js",
     "regen:brand-promo-cards": "node scripts/generate-brand-promo-cards.js",
     "worker": "tsx scripts/render-worker.ts",
     "typecheck": "tsc --noEmit",

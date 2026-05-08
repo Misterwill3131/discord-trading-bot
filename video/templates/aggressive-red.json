@@ -1,0 +1,25 @@
+{
+  "composition": "BoomEntry",
+  "name": "Aggressive Red",
+  "description": "Rouge intense + transitions slide + gros fonts pour annonce de signal high-conviction",
+  "props": {
+    "ticker": "TSLA",
+    "author": "Z",
+    "message": "$TSLA 150-155 entry long",
+    "timestamp": "2026-04-25T13:32:00-04:00",
+    "stingerText": "🚨 LIVE",
+    "teaseAction": "is going long.",
+    "teaseSubtext": "Don't miss this →",
+    "cardLabel": "🚨 LIVE SIGNAL",
+    "ctaTitle": "JOIN",
+    "ctaUrl": "discord.gg/boom",
+    "ctaSubtitle": "Get every signal live",
+    "accentColor": "#ef4444",
+    "musicVolume": 0.65,
+    "sfxEnabled": true,
+    "stingerFontSize": 260,
+    "tickerFontSize": 320,
+    "ctaTitleFontSize": 220,
+    "transitionType": "slide"
+  }
+}

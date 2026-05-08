@@ -20,6 +20,18 @@ const { spawn, spawnSync } = require('child_process');
 const crypto = require('crypto');
 const { generateImage, generateProofImage } = require('../../canvas/proof');
 
+// Anthropic SDK : optionnel — on charge à la demande pour ne pas crasher
+// le serveur si la clé n'est pas configurée.
+let _anthropicClient = null;
+function getAnthropicClient() {
+  if (_anthropicClient) return _anthropicClient;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+  const Anthropic = require('@anthropic-ai/sdk');
+  _anthropicClient = new Anthropic.default({ apiKey });
+  return _anthropicClient;
+}
+
 const VIDEO_DIR = path.join(__dirname, '..');
 const TEMPLATES_DIR = path.join(VIDEO_DIR, 'templates');
 const OUT_DIR = path.join(VIDEO_DIR, 'out');
@@ -229,6 +241,94 @@ app.get('/api/still', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// ── POST /api/ai/suggest ──────────────────────────────────────────────
+// Body: { field: 'stingerText', currentValue: '🚨 LIVE', context: { ... },
+//         count?: 5 }
+// Retourne : { suggestions: ['...', '...', '...'] }
+// Utilise Claude Haiku pour rapidité + coût bas (~$0.001 par appel).
+app.post('/api/ai/suggest', async (req, res) => {
+  const client = getAnthropicClient();
+  if (!client) {
+    return res.status(503).json({
+      error: 'ANTHROPIC_API_KEY non configurée. Set la variable d\'env et restart le server.',
+    });
+  }
+
+  const { field, currentValue, context, count } = req.body;
+  if (!field) return res.status(400).json({ error: 'Missing field name' });
+
+  const N = Math.min(Math.max(count || 5, 1), 8);
+  const ctx = context || {};
+
+  // Description du champ pour orienter l'IA.
+  const FIELD_DESCRIPTIONS = {
+    stingerText: 'le flash d\'ouverture (très court, 1-2 mots, accrocheur, type "🚨 LIVE", "BREAKING", "ALPHA")',
+    teaseAction: 'le verbe d\'action après le pseudo de l\'analyste, format court genre "just called this.", "is going long.", "spotted alpha." (3-5 mots max, avec point final)',
+    teaseSubtext: 'le sous-texte du tease, format CTA mini-court genre "Watch live →", "Don\'t miss this →", "Premium signal →" (3-5 mots max)',
+    cardLabel: 'le label rouge au-dessus de la card Discord, format ALL CAPS court genre "🚨 LIVE SIGNAL", "ENTRY", "ALPHA CALL" (1-3 mots max)',
+    ctaTitle: 'le titre énorme du CTA final, format ALL CAPS punchy 1 mot genre "JOIN", "FOLLOW", "ENTER", "JUMP IN", "CLAIM"',
+    ctaUrl: 'l\'URL ou handle, format domaine genre "discord.gg/boom", "x.com/boomtrade" (NE PAS suggérer de variations, garder vide)',
+    ctaSubtitle: 'le sous-titre du CTA, format short call-to-action genre "Get every signal live", "Trade alongside us", "Curated alpha for serious traders" (4-7 mots)',
+  };
+
+  const fieldDesc = FIELD_DESCRIPTIONS[field] || 'un champ texte de la vidéo marketing';
+
+  // Si ctaUrl, refuse — on ne veut pas que l'IA invente des URLs.
+  if (field === 'ctaUrl') {
+    return res.json({ suggestions: ['discord.gg/boom', 'discord.gg/templeofboom'] });
+  }
+
+  const systemPrompt = `Tu aides à générer du texte court pour une vidéo de marketing trading qui annonce un signal live ou une exit gagnante. Le brand est "Boom" / "Temple of Boom" (Discord trading signals). Le style : punchy, direct, énergie urgence (signaux live) ou célébration (exits). Cible audience traders TikTok/Reels.
+
+Tu vas suggérer ${N} variations courtes pour ${fieldDesc}.
+
+Tu DOIS répondre en JSON pur (sans markdown fence, sans préambule), format :
+{"suggestions":["v1","v2","v3"]}
+
+Chaque suggestion doit être PRÊTE À UTILISER (pas de quotes externes, pas de descriptions). Sois créatif mais reste cohérent avec le contexte.`;
+
+  const userPrompt = `Contexte du template :
+- Composition : ${ctx.composition || 'BoomEntry'}
+- Ticker : ${ctx.ticker || '?'}
+- Auteur signal : ${ctx.author || ctx.entryAuthor || '?'}
+- Couleur d'accent : ${ctx.accentColor || '#ef4444'} (${getColorMood(ctx.accentColor)})
+- Valeur actuelle du champ "${field}" : ${currentValue ? `"${currentValue}"` : 'vide'}
+
+Suggère ${N} variations courtes pour le champ "${field}".`;
+
+  try {
+    const msg = await client.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 400,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+    });
+    const text = msg.content.map(c => c.type === 'text' ? c.text : '').join('').trim();
+    let parsed;
+    try { parsed = JSON.parse(text); }
+    catch (e) { return res.status(500).json({ error: 'AI response not valid JSON', raw: text.slice(0, 500) }); }
+    if (!Array.isArray(parsed.suggestions)) {
+      return res.status(500).json({ error: 'AI response missing suggestions array', raw: text.slice(0, 500) });
+    }
+    res.json({ suggestions: parsed.suggestions.slice(0, N) });
+  } catch (err) {
+    console.error('[ai] error:', err.message);
+    res.status(500).json({ error: 'AI call failed: ' + err.message });
+  }
+});
+
+// Helper: décrit le mood d'une couleur hex (rouge → urgence, vert → win, etc.)
+function getColorMood(hex) {
+  if (!hex) return 'neutre';
+  const h = hex.toLowerCase();
+  if (h.includes('ef4444') || h.startsWith('#e') || h.startsWith('#f')) return 'rouge intense / urgence / alarme';
+  if (h.includes('10b981') || h.includes('22c55e')) return 'vert / win / gain';
+  if (h.includes('fbbf24') || h.includes('eab308')) return 'doré / prestige / luxe';
+  if (h.includes('3498db') || h.includes('06b6d4')) return 'bleu / calme / institutional';
+  if (h.includes('a855f7') || h.includes('8b5cf6')) return 'violet / hype / Y2K';
+  return 'neutre';
+}
 
 // ── Helper ─────────────────────────────────────────────────────────────
 function sanitizeId(id) {

@@ -105,6 +105,12 @@ function buildForm(props) {
   });
 }
 
+// Champs texte qui supportent l'AI suggest (les champs marketing-y).
+const AI_ELIGIBLE_FIELDS = new Set([
+  'stingerText', 'teaseAction', 'teaseSubtext',
+  'cardLabel', 'ctaTitle', 'ctaUrl', 'ctaSubtitle',
+]);
+
 function buildField(key, value) {
   const wrap = document.createElement('div');
   wrap.className = 'field';
@@ -124,11 +130,109 @@ function buildField(key, value) {
   } else if (typeof value === 'string' && (key.toLowerCase().includes('message') || (typeof value === 'string' && value.length > 50))) {
     wrap.appendChild(buildTextarea(key, value));
   } else if (value === null || value === undefined) {
-    wrap.appendChild(buildTextInput(key, ''));
+    wrap.appendChild(buildTextInputWithAi(key, ''));
   } else {
-    wrap.appendChild(buildTextInput(key, String(value)));
+    wrap.appendChild(buildTextInputWithAi(key, String(value)));
   }
   return wrap;
+}
+
+// Text input + bouton ✨ AI (uniquement pour les champs eligible).
+function buildTextInputWithAi(key, val) {
+  if (!AI_ELIGIBLE_FIELDS.has(key)) {
+    return buildTextInput(key, val);
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'field-with-ai';
+  const i = document.createElement('input');
+  i.type = 'text';
+  i.value = val;
+  i.dataset.key = key;
+  i.className = 'prop-input';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn-ai';
+  btn.title = 'Suggérer des variations via IA';
+  btn.innerHTML = '<span class="icon">✨</span>';
+  btn.onclick = (e) => onAiSuggest(e, key, i, btn);
+  wrap.appendChild(i);
+  wrap.appendChild(btn);
+  return wrap;
+}
+
+async function onAiSuggest(e, key, inputEl, btnEl) {
+  e.preventDefault();
+  const composition = document.getElementById('template-composition').value;
+  const props = collectProps();
+  const currentValue = inputEl.value;
+
+  // UI : spinner + disable
+  btnEl.disabled = true;
+  const icon = btnEl.querySelector('.icon');
+  icon.classList.add('spinning');
+  icon.textContent = '⟳';
+
+  try {
+    const res = await fetch('/api/ai/suggest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        field: key,
+        currentValue,
+        context: { composition, ...props },
+        count: 5,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      toast(data.error || 'AI failed', 'error');
+      return;
+    }
+    showSuggestions(inputEl, data.suggestions || []);
+  } catch (err) {
+    toast('AI error: ' + err.message, 'error');
+  } finally {
+    btnEl.disabled = false;
+    icon.classList.remove('spinning');
+    icon.textContent = '✨';
+  }
+}
+
+function showSuggestions(inputEl, suggestions) {
+  // Retire un popup existant.
+  const existing = inputEl.parentElement.parentElement.querySelector('.suggestions-popup');
+  if (existing) existing.remove();
+
+  if (!suggestions.length) {
+    toast('No suggestions returned', 'error');
+    return;
+  }
+
+  const popup = document.createElement('div');
+  popup.className = 'suggestions-popup';
+
+  const close = document.createElement('button');
+  close.className = 'close';
+  close.textContent = '×';
+  close.onclick = () => popup.remove();
+  popup.appendChild(close);
+
+  suggestions.forEach(s => {
+    const opt = document.createElement('div');
+    opt.className = 'suggestion';
+    opt.textContent = s;
+    opt.onclick = () => {
+      inputEl.value = s;
+      // Trigger 'input' event for any listeners
+      inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+      popup.remove();
+      toast('Applied', 'success');
+    };
+    popup.appendChild(opt);
+  });
+
+  // Insert after the field-with-ai
+  inputEl.parentElement.parentElement.appendChild(popup);
 }
 
 function buildTextInput(key, val) {

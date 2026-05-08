@@ -279,6 +279,68 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .hint { color: var(--muted); font-size: 12px; }
 
+/* ── AI Suggest button + popup ── */
+.field-with-ai {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+.field-with-ai .prop-input {
+  flex: 1;
+  margin-bottom: 0;
+}
+.btn-ai {
+  background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+  color: white;
+  border: none;
+  padding: 0 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  white-space: nowrap;
+  transition: transform 0.15s, opacity 0.15s;
+}
+.btn-ai:hover:not(:disabled) { transform: scale(1.05); }
+.btn-ai:disabled { opacity: 0.5; cursor: wait; }
+.btn-ai .icon { display: inline-block; }
+.btn-ai .icon.spinning { animation: spin 1s linear infinite; }
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.suggestions-popup {
+  background: var(--bg-3);
+  border: 1px solid #6366f1;
+  border-radius: 6px;
+  padding: 6px;
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.suggestions-popup .suggestion {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.1s;
+  font-size: 13px;
+  border: 1px solid transparent;
+}
+.suggestions-popup .suggestion:hover {
+  background: var(--bg-2);
+  border-color: #6366f1;
+}
+.suggestions-popup .close {
+  align-self: flex-end;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 6px;
+}
+
 /* ── Toast ── */
 .toast {
   position: fixed;

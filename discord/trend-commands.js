@@ -89,6 +89,12 @@ async function handleAnalyze(message, ticker, { yahoo, store }) {
     const priorLow = dailyContext.priorLow != null ? dailyContext.priorLow : dailyContext.yesterday.low;
     dailyLines.push(`• 🔴 PDL break (2-day low ${formatPrice(priorLow)})`);
   }
+  if (state.pmh_alerts_today > 0) {
+    dailyLines.push('• 🟩 PMH break (premarket high)');
+  }
+  if (state.pml_alerts_today > 0) {
+    dailyLines.push('• 🟥 PML break (premarket low)');
+  }
   if (state.gap_alerted_today && dailyContext) {
     const gapPct = ((dailyContext.todayOpen - dailyContext.yesterday.close) / dailyContext.yesterday.close) * 100;
     const arrow = gapPct >= 0 ? '⬆️' : '⬇️';

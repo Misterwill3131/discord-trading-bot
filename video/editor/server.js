@@ -13,6 +13,17 @@
 //   GET  /out/<filename>       → sert les MP4 rendus
 // ─────────────────────────────────────────────────────────────────────
 
+// Load env vars depuis video/.env.local (gitignored) si présent.
+// Permet au user de stocker ANTHROPIC_API_KEY persistent sans avoir à
+// l'exporter à chaque session PowerShell.
+// override: true car dotenv 17.x ne remplace pas par défaut les vars
+// déjà en process.env (même si vides).
+require('dotenv').config({
+  path: require('path').join(__dirname, '..', '.env.local'),
+  override: true,
+  quiet: true,
+});
+
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -304,7 +315,9 @@ Suggère ${N} variations courtes pour le champ "${field}".`;
       system: systemPrompt,
       messages: [{ role: 'user', content: userPrompt }],
     });
-    const text = msg.content.map(c => c.type === 'text' ? c.text : '').join('').trim();
+    let text = msg.content.map(c => c.type === 'text' ? c.text : '').join('').trim();
+    // Strip markdown fence si Claude en a ajouté un (```json ... ```).
+    text = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
     let parsed;
     try { parsed = JSON.parse(text); }
     catch (e) { return res.status(500).json({ error: 'AI response not valid JSON', raw: text.slice(0, 500) }); }

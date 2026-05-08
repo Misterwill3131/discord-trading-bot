@@ -678,10 +678,135 @@ async function generateProofImage(alertAuthor, alertContent, alertTimestamp, rec
   return canvas.toBuffer('image/png');
 }
 
+// ═════════════════════════════════════════════════════════════════════
+//  generateProofImageVertical — Layout portrait pour intégration vidéo
+// ═════════════════════════════════════════════════════════════════════
+// Empile entry (haut) + divider chrono (milieu) + exit (bas) dans un
+// canvas plus large/carré que generateProofImage. Conçu pour être affiché
+// fullwidth dans une proof video 9:16 (Remotion).
+//
+// Layout :
+//   ┌─────────────────────────────────────┐
+//   │ [avatar] author  BOOM  17:53        │  ← bloc entry (drawMessageBlock)
+//   │          message content (wrapped)  │
+//   │                                     │
+//   │         ↓  31 minutes later         │  ← divider (chrono)
+//   │                                     │
+//   │ [avatar] author  BOOM  18:24        │  ← bloc exit
+//   │          message content            │
+//   └─────────────────────────────────────┘
+//
+// Options :
+//   - scale : multiplie la résolution (ctx.scale, default 1)
+//   - width : largeur native (default 1080 pour viewport TikTok/Reels)
+async function generateProofImageVertical(
+  entryAuthor, entryContent, entryTs,
+  exitAuthor, exitContent, exitTs,
+  options = {}
+) {
+  const scale = options.scale || 1;
+  const W = options.width || 1080;
+  // layoutScale multiplie toutes les dimensions logiques (fonts via
+  // ctx.scale, paddings, divider). Effet : message blocks 2x plus gros
+  // visuellement → image natural plus carrée pour video portrait 9:16.
+  const ls = options.layoutScale || 2;
+
+  entryAuthor  = getDisplayName(entryAuthor);
+  exitAuthor   = getDisplayName(exitAuthor);
+  entryContent = resolveUserMentions(entryContent);
+  exitContent  = resolveUserMentions(exitContent);
+
+  const { PADDING_L, PADDING_V, AVATAR_D, NAME_H, LINE_H, EMOJI_SIZE } = PROOF_LAYOUT;
+  // Width logique pour drawMessageBlock (sera scaled via ctx.scale).
+  const W_LOGICAL = W / ls;
+  const CONTENT_X_LOGICAL = PADDING_L + AVATAR_D + PADDING_L;
+  const MAX_TW_LOGICAL    = W_LOGICAL - CONTENT_X_LOGICAL - PADDING_L;
+
+  // Pré-wrap en coords logiques (avant scale).
+  const tmpC = createCanvas(W_LOGICAL, 400);
+  const tmpCtx = tmpC.getContext('2d');
+  tmpCtx.font = '16px ' + FONT;
+  const entryLines = wrapRichText(tmpCtx, entryContent, MAX_TW_LOGICAL, EMOJI_SIZE);
+  const exitLines  = wrapRichText(tmpCtx, exitContent,  MAX_TW_LOGICAL, EMOJI_SIZE);
+  const entryH_LOG = PADDING_V + NAME_H + entryLines.length * LINE_H + PADDING_V;
+  const exitH_LOG  = PADDING_V + NAME_H + exitLines.length  * LINE_H + PADDING_V;
+
+  // Divider chrono et padding en pixels finaux (non scaled).
+  const DIVIDER_H = 90 * ls;
+  const TOP_PAD   = 30 * ls;
+  const BOT_PAD   = 30 * ls;
+
+  // Hauteur totale en pixels finaux (les blocs sont scaled par ls).
+  const entryH = entryH_LOG * ls;
+  const exitH  = exitH_LOG  * ls;
+  const H = TOP_PAD + entryH + DIVIDER_H + exitH + BOT_PAD;
+
+  // Canvas final (W déjà en pixels finaux, H aussi).
+  const canvas = createCanvas(W * scale, H * scale);
+  const ctx = canvas.getContext('2d');
+  if (scale !== 1) ctx.scale(scale, scale);
+  ctx.fillStyle = '#1e1f22';
+  ctx.fillRect(0, 0, W, H);
+
+  // ── Bloc entry (haut) — scaled by ls ──
+  ctx.save();
+  ctx.translate(0, TOP_PAD);
+  ctx.scale(ls, ls);
+  await drawMessageBlock(ctx, entryAuthor, entryContent, entryTs, 0, W_LOGICAL);
+  ctx.restore();
+
+  // ── Divider chrono (en pixels finaux, pas scaled) ──
+  const dividerY = TOP_PAD + entryH;
+
+  ctx.save();
+  ctx.strokeStyle = '#3a3d44';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(60 * ls, dividerY + DIVIDER_H / 2);
+  ctx.lineTo(W / 2 - 180, dividerY + DIVIDER_H / 2);
+  ctx.moveTo(W / 2 + 180, dividerY + DIVIDER_H / 2);
+  ctx.lineTo(W - 60 * ls, dividerY + DIVIDER_H / 2);
+  ctx.stroke();
+  ctx.restore();
+
+  // Texte chrono "↓ X minutes later" centré
+  let elapsedStr = '↓';
+  if (entryTs && exitTs) {
+    const diffMs = new Date(exitTs).getTime() - new Date(entryTs).getTime();
+    const diffMin = Math.round(diffMs / 60000);
+    if (diffMin > 0 && diffMin < 60 * 24) {
+      elapsedStr = '↓  ' + diffMin + (diffMin === 1 ? ' minute later' : ' minutes later');
+    } else if (diffMin >= 60 * 24) {
+      const diffDays = Math.round(diffMin / (60 * 24));
+      elapsedStr = '↓  ' + diffDays + (diffDays === 1 ? ' day later' : ' days later');
+    }
+  }
+
+  ctx.save();
+  ctx.fillStyle = '#80848e';
+  ctx.font = 'bold ' + Math.round(20 * ls) + 'px ' + FONT;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(elapsedStr, W / 2, dividerY + DIVIDER_H / 2);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.restore();
+
+  // ── Bloc exit (bas) — scaled by ls ──
+  ctx.save();
+  ctx.translate(0, dividerY + DIVIDER_H);
+  ctx.scale(ls, ls);
+  await drawMessageBlock(ctx, exitAuthor, exitContent, exitTs, 0, W_LOGICAL);
+  ctx.restore();
+
+  return canvas.toBuffer('image/png');
+}
+
 module.exports = {
   generateImage,
   drawMessageBlock,
   generateProofImage,
+  generateProofImageVertical,
   setDiscordClient,
   parseRichSegments,
   getRoleStyle,

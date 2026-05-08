@@ -52,10 +52,10 @@ export const ProofImageAct = ({ src, caption }: Props) => {
         padding: 80,
       }}
     >
-      {/* Image proof — 1080×1920 viewport, image canvas est ~740×130 native
-          (5.7:1 landscape). On l'affiche à 100% width avec border + glow
-          pour qu'elle ressemble à une "receipt" flottante. Centrée par le
-          flex parent. */}
+      {/* Image proof — affichée à width 100% (pas de CSS scale qui clippe).
+          Le canvas est natif 1080 wide avec layout vertical bulk (~800 tall
+          minimum) → l'image remplit naturellement le viewport en mode
+          portrait sans débordement horizontal. */}
       {src ? (
         <Img
           src={src}

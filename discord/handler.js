@@ -30,7 +30,7 @@ const { classifySignal } = require('../filters/signal');
 const { getMessagesByTicker, enqueueRenderJob } = require('../db/sqlite');
 const { customFilters } = require('../state/custom-filters');
 const { messageLog, logEvent } = require('../state/messages');
-const { generateImage, generateProofImage } = require('../canvas/proof');
+const { generateImage, generateProofImage, generateProofImageVertical } = require('../canvas/proof');
 const { generatePromoImage } = require('../canvas/promo');
 const imageState = require('../state/images');
 
@@ -151,8 +151,10 @@ async function maybeEnqueueProofRender({
   // même (le worker fallback sur les Discord cards Remotion natives).
   let proofImageBase64 = null;
   try {
-    // scale=2 pour rendu vidéo sharp (1480×~260 natif vs 740×~130 Discord)
-    const proofBuf = await generateProofImage(
+    // Layout vertical (1080 wide, entry + chrono divider + exit empilés)
+    // sharp 2x pour rendu vidéo. Pas la même fonction que generateProofImage
+    // (qui sert encore au post #profits Discord avec layout horizontal).
+    const proofBuf = await generateProofImageVertical(
       originalAlert.author, originalAlert.content, originalAlert.ts,
       authorName, content, messageCreatedAt.toISOString(),
       { scale: 2 }

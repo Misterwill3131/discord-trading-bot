@@ -3,6 +3,7 @@ import { BrandPromo } from './compositions/BrandPromo';
 import { SignalAlert, SignalAlertProps } from './compositions/SignalAlert';
 import { BoomProof, boomProofSchema } from './compositions/BoomProof';
 import { BoomEntry, boomEntrySchema } from './compositions/BoomEntry';
+import { BoomRecap, boomRecapSchema, computeTotalFrames } from './compositions/BoomRecap';
 
 const signalAlertDefaults: SignalAlertProps = {
   ticker: 'TSLA',
@@ -32,6 +33,31 @@ const boomProofDefaults = {
   musicVolume: 0.55,
   sfxEnabled: true,
   lifestyleSeedOverride: undefined,
+};
+
+const boomRecapDefaults = {
+  date: '2026-05-08',
+  dateLabel: 'RECAP',
+  tickers: [
+    { ticker: 'RXT',  gainPct: 380, swing: true,  isHero: true  },
+    { ticker: 'REPL', gainPct: 133, swing: true,  isHero: true  },
+    { ticker: 'AIIO', gainPct: 71,  swing: false, isHero: false },
+    { ticker: 'TDIC', gainPct: 63,  swing: true,  isHero: false },
+    { ticker: 'INOD', gainPct: 53,  swing: false, isHero: false },
+  ],
+  runnersHit:    5,
+  runnersTotal:  6,
+  totalGainPct:  700,
+  tagline:       "Plenty of chances to bank today.",
+  ctaText:       "Join the channel",
+  ctaUrl:        "https://templeofboom.com/join",
+  accentColor:   "#fbbf24",
+  successColor:  "#10b981",
+  bgColor:       "#0a0a0f",
+  musicVolume:   0.6,
+  sfxEnabled:    true,
+  showTop3Phase: true,
+  lifestyleSeed: 0,
 };
 
 export const Root = () => {
@@ -94,6 +120,18 @@ export const Root = () => {
           ctaTitleFontSize: 200,
           transitionType: 'fade' as const,
         }}
+      />
+      <Composition
+        id="BoomRecap"
+        component={BoomRecap}
+        fps={30}
+        width={1080}
+        height={1920}
+        schema={boomRecapSchema}
+        defaultProps={boomRecapDefaults}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: computeTotalFrames(props as any),
+        })}
       />
     </>
   );

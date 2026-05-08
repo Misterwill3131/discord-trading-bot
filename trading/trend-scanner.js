@@ -409,6 +409,13 @@ async function runScanCycle({
       if (messages.length === 0) continue;
 
       const guilds = store.getGuildsWatching(ticker);
+      // Dédup par-(channelId, msg.type) au sein de ce ticker : si plusieurs
+      // serveurs partagent un même salon Discord (cas typique : un user a le
+      // bot dans 4 serveurs perso pointant tous vers son #trends), on évite
+      // le post 4× du même alert. La dédup est scoped au scan-cycle de ce
+      // ticker, donc cross-scan le state-based dedup (pdh_alerts_today, etc.)
+      // continue à fonctionner indépendamment.
+      const sentKeys = new Set();
       for (const guildId of guilds) {
         const mainChannelId = store.getChannel(guildId);
         if (!mainChannelId) continue;
@@ -426,6 +433,9 @@ async function runScanCycle({
           const useGap = isGap && gapChannelId;
           const channelId = useGap ? gapChannelId : mainChannelId;
           const channelType = useGap ? 'gap' : 'main';
+          const dedupKey = `${channelId}:${msg.type}`;
+          if (sentKeys.has(dedupKey)) continue;  // déjà envoyé sur ce salon par un autre guild
+          sentKeys.add(dedupKey);
           const result = await postToChannel({ discord, store, guildId, channelId, content: msg.content, channelType });
           if (result.ok) alerts += 1;
           if (result.reason === 'unknown_channel') {

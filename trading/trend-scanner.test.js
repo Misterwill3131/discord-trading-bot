@@ -194,6 +194,30 @@ test('runScanCycle: direction transition → alerts dispatched to all watching g
   assert.strictEqual(store.getState('AAPL').direction, 'uptrend');
 });
 
+test('runScanCycle: deduplicates alerts when multiple guilds share the same channel', async () => {
+  const { store } = makeStoreDb();
+  // Same ticker watched by 4 guilds, all routing to 'shared-c' (same Discord channel).
+  store.addToWatchlist('g1', 'AAPL', 1);
+  store.addToWatchlist('g2', 'AAPL', 1);
+  store.addToWatchlist('g3', 'AAPL', 1);
+  store.addToWatchlist('g4', 'AAPL', 1);
+  store.setChannel('g1', 'shared-c', 1);
+  store.setChannel('g2', 'shared-c', 1);
+  store.setChannel('g3', 'shared-c', 1);
+  store.setChannel('g4', 'shared-c', 1);
+  const yahoo = fakeYahoo({ AAPL: uptrendCandles() });
+  const discord = fakeDiscordClient();
+  await runScanCycle({ store, yahoo, discord, now: () => 1_000_000 });
+  // Each unique (channel, msg.type) sent exactly once, regardless of guild count.
+  // We expect at most 1 direction alert + 1 breakout alert (uptrendCandles fires both).
+  const directionMsgs = discord.sent.filter(s => /Now: uptrend/.test(s.content));
+  assert.strictEqual(directionMsgs.length, 1, 'direction alert should fire only once on shared channel');
+  // All sent messages should target the shared channel.
+  for (const msg of discord.sent) {
+    assert.strictEqual(msg.channelId, 'shared-c');
+  }
+});
+
 test('runScanCycle: re-running same state → no re-alert', async () => {
   const { store } = makeStoreDb();
   store.addToWatchlist('g1', 'AAPL', 1);

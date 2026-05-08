@@ -3,7 +3,7 @@ import { TransitionSeries, linearTiming } from '@remotion/transitions';
 import { fade } from '@remotion/transitions/fade';
 import { slide } from '@remotion/transitions/slide';
 import { z } from 'zod';
-import { zTextarea } from '@remotion/zod-types';
+import { zTextarea, zColor } from '@remotion/zod-types';
 import { loadFont as loadInter } from '@remotion/google-fonts/Inter';
 import { LifestyleHook } from '../components/LifestyleHook';
 import { MoneyRain } from '../components/MoneyRain';
@@ -42,6 +42,16 @@ export const boomEntrySchema = z.object({
   ctaTitle: z.string().default('JOIN').describe('Titre du CTA final (ex: "JOIN", "GO LIVE")'),
   ctaUrl: z.string().default('discord.gg/boom').describe('URL ou handle (ex: "discord.gg/boom")'),
   ctaSubtitle: z.string().default('Get every signal live').describe('Sous-titre du CTA (ex: "Get every signal live")'),
+  // ─── Couleurs ───
+  accentColor: zColor().default('#ef4444').describe('Couleur d\'accent (rouge pour entry, glows + texte CTA + label)'),
+  // ─── Audio ───
+  musicVolume: z.number().min(0).max(1).default(0.55).describe('Volume music background (0 = mute, 1 = max)'),
+  sfxEnabled: z.boolean().default(true).describe('Active les SFX (whoosh + cha-ching)'),
+  // ─── Lifestyle ───
+  lifestyleSeedOverride: z
+    .string()
+    .optional()
+    .describe('Override du seed lifestyle hook. Vide = auto depuis ticker+timestamp.'),
 });
 
 export type BoomEntryProps = z.infer<typeof boomEntrySchema>;
@@ -50,7 +60,7 @@ const FADE_FRAMES = 6;
 const SLIDE_FRAMES = 8;
 
 // ── Sub-component: Stinger LIVE rouge ──
-const StingerLive = ({ text }: { text: string }) => {
+const StingerLive = ({ text, color }: { text: string; color: string }) => {
   const frame = useCurrentFrame();
   const opacity = interpolate(frame, [0, 2, 6, 9], [0, 1, 1, 0], {
     extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic),
@@ -65,7 +75,7 @@ const StingerLive = ({ text }: { text: string }) => {
     <AbsoluteFill style={{ backgroundColor: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{
         fontSize: 220, fontWeight: 900, fontFamily, letterSpacing: -6,
-        color: '#ef4444', textShadow: '0 0 40px #ef4444aa, 0 0 80px #ef444466',
+        color, textShadow: `0 0 40px ${color}aa, 0 0 80px ${color}66`,
         opacity, transform: `scale(${scale})`,
       }}>
         {text}
@@ -77,8 +87,8 @@ const StingerLive = ({ text }: { text: string }) => {
 
 // ── Sub-component: Tease "X just called this" ──
 const TeaseAct = ({
-  ticker, author, action, subtext,
-}: { ticker: string; author: string; action: string; subtext: string }) => {
+  ticker, author, action, subtext, color,
+}: { ticker: string; author: string; action: string; subtext: string; color: string }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const tickerEntry = spring({ frame, fps, config: { damping: 10, stiffness: 100 }, durationInFrames: 25 });
@@ -91,8 +101,8 @@ const TeaseAct = ({
       fontFamily, padding: 60,
     }}>
       <div style={{
-        color: '#ef4444', fontSize: 280, fontWeight: 900, letterSpacing: -6,
-        transform: `scale(${tickerScale})`, textShadow: '0 0 80px #ef4444aa',
+        color, fontSize: 280, fontWeight: 900, letterSpacing: -6,
+        transform: `scale(${tickerScale})`, textShadow: `0 0 80px ${color}aa`,
       }}>
         ${ticker}
       </div>
@@ -112,7 +122,9 @@ const TeaseAct = ({
 };
 
 // ── Sub-component: EntryCard avec image canvas Discord ──
-const EntryCardAct = ({ src, label }: { src: string; label: string }) => {
+const EntryCardAct = ({
+  src, label, color,
+}: { src: string; label: string; color: string }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const entry = spring({ frame, fps, config: { damping: 12 }, durationInFrames: 25 });
@@ -129,12 +141,12 @@ const EntryCardAct = ({ src, label }: { src: string; label: string }) => {
         width: '100%', height: 'auto', opacity,
         transform: `translateY(${translateY}px) scale(${scale})`,
         borderRadius: 24,
-        boxShadow: `0 24px 100px rgba(0,0,0,0.85), 0 0 ${40 + glowPulse * 60}px rgba(239,68,68,${glowPulse})`,
+        boxShadow: `0 24px 100px rgba(0,0,0,0.85), 0 0 ${40 + glowPulse * 60}px ${color}${Math.round(glowPulse * 255).toString(16).padStart(2, '0')}`,
       }} />
       <div style={{
         position: 'absolute', top: 80, left: 0, right: 0, textAlign: 'center',
-        color: '#ef4444', fontSize: 40, fontWeight: 900, fontFamily, letterSpacing: 4,
-        textShadow: '0 0 20px #ef4444aa',
+        color, fontSize: 40, fontWeight: 900, fontFamily, letterSpacing: 4,
+        textShadow: `0 0 20px ${color}aa`,
       }}>
         {label}
       </div>
@@ -144,8 +156,8 @@ const EntryCardAct = ({ src, label }: { src: string; label: string }) => {
 
 // ── Sub-component: CTA discord.gg/boom + money rain ──
 const CtaJoin = ({
-  title, url, subtitle,
-}: { title: string; url: string; subtitle: string }) => {
+  title, url, subtitle, color,
+}: { title: string; url: string; subtitle: string; color: string }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const titleEntry = spring({ frame, fps, config: { damping: 10, stiffness: 100 }, durationInFrames: 22 });

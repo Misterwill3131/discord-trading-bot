@@ -27,7 +27,8 @@ const fetch = require('node-fetch');
 const { BLOCKED_AUTHORS, getDisplayName } = require('../utils/authors');
 const { extractPrices, extractTicker, stripDiscordMeta, extractPnl, computePnlString } = require('../utils/prices');
 const { classifySignal } = require('../filters/signal');
-const { getMessagesByTicker, enqueueRenderJob } = require('../db/sqlite');
+const { getMessagesByTicker, enqueueRenderJob, tryClaimRecapDate, setRecapRenderJobId } = require('../db/sqlite');
+const { parseRecap } = require('../utils/parse-recap');
 const { pickTemplate } = require('../utils/template-dispatcher');
 const { customFilters } = require('../state/custom-filters');
 const { messageLog, logEvent } = require('../state/messages');
@@ -197,6 +198,61 @@ async function maybeEnqueueProofRender({
   }
 }
 
+// Phase Recap — quand un message "RECAP:" arrive d'un auteur whitelisté,
+// parse les tickers + enqueue un BoomRecap render job. Idempotent :
+// max 1 recap par jour (TZ NY) via daily_recaps.date PRIMARY KEY.
+//
+// Retourne { enqueued: bool, reason?: string, jobId?: number }
+async function maybeEnqueueRecap({
+  authorName, content, messageCreatedAt, messageId,
+  authorWhitelist,
+}) {
+  // 1. Auteur whitelist
+  const whitelistLower = (authorWhitelist || []).map(s => s.toLowerCase());
+  if (!whitelistLower.includes((authorName || '').toLowerCase())) {
+    return { enqueued: false, reason: 'author_not_whitelisted' };
+  }
+
+  // 2. Parse le contenu
+  const parsed = parseRecap(content, messageCreatedAt);
+  if (!parsed) {
+    return { enqueued: false, reason: 'parse_failed' };
+  }
+
+  // 3. Idempotence par date — INSERT OR IGNORE retourne false si déjà claim
+  const claimed = tryClaimRecapDate(parsed.date, messageId, parsed.tickers.length);
+  if (!claimed) {
+    return { enqueued: false, reason: 'already_claimed' };
+  }
+
+  // 4. Enqueue render job. ticker='RECAP' (placeholder pas significatif),
+  //    entry_*/exit_* dupliqués vers le top ticker (le worker ignore tout
+  //    ça pour BoomRecap, il lit recap_data à la place).
+  const topTicker = parsed.tickers[0].ticker;
+  const tsIso = messageCreatedAt.toISOString();
+  try {
+    const jobId = enqueueRenderJob({
+      ticker: 'RECAP',
+      entry_author: authorName,
+      entry_message: `RECAP for ${parsed.date}`,
+      entry_ts: tsIso,
+      exit_author: authorName,
+      exit_message: `${parsed.tickers.length} wins, ${parsed.runnersHit ?? '?'}/${parsed.runnersTotal ?? '?'} runners`,
+      exit_ts: tsIso,
+      pnl: `+${Math.round(parsed.totalGainPct)}%`,
+      composition: 'BoomRecap',
+      template_name: 'recap-default',
+      recap_data: JSON.stringify(parsed),
+    });
+    setRecapRenderJobId(parsed.date, jobId);
+    console.log(`[recap] detected for ${parsed.date}, enqueued render_job #${jobId} (${parsed.tickers.length} tickers, top=$${topTicker} +${parsed.tickers[0].gainPct}%)`);
+    return { enqueued: true, jobId };
+  } catch (err) {
+    console.error('[recap] enqueue failed:', err.message);
+    return { enqueued: false, reason: 'enqueue_error' };
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Email formatting pour les alertes d'analystes
 // ─────────────────────────────────────────────────────────────────────
@@ -235,6 +291,27 @@ function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhoo
       const ticker = statsMatch[1].replace('$', '').toUpperCase();
       await handleStatsCommand(message, ticker);
       return;
+    }
+
+    // ── Recap auto : si "RECAP:" + auteur whitelisted, render auto ────
+    // Idempotent par date NY (max 1×/jour). Ne consume pas le message,
+    // on continue le flow normal après si pas matché.
+    const recapWhitelist = (process.env.RECAP_AUTHOR_WHITELIST || 'ZZ')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+    const recapResult = await maybeEnqueueRecap({
+      authorName,
+      content,
+      messageCreatedAt: message.createdAt,
+      messageId: message.id,
+      authorWhitelist: recapWhitelist,
+    });
+    if (recapResult.enqueued) {
+      // Recap matché et enqueued — log déjà fait dans maybeEnqueueRecap.
+      // On ne return PAS car le recap n'est pas un signal trading mais le
+      // message n'a pas non plus de signification trading (pas un signal
+      // ni un exit). Le flow classifySignal va run et probablement skip.
     }
 
     // ── Filtre par auteur ─────────────────────────────────────────────
@@ -518,4 +595,5 @@ module.exports = {
   findOriginalAlert,
   formatAnalystEntryEmail,
   maybeEnqueueProofRender,
+  maybeEnqueueRecap,
 };

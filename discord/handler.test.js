@@ -130,3 +130,93 @@ test('maybeEnqueueProofRender skips entry signals (filterType=entry)', async () 
   });
   assert.strictEqual(getPendingRenderJobs().length, before);
 });
+
+const { maybeEnqueueRecap } = require('./handler');
+const { getRecapByDate } = require('../db/sqlite');
+
+const ZZ_RECAP = `RECAP:
+
+$RXT 380% swing
+$REPL 133% swing
+$AIIO 71%
+
+Plenty of chances to bank today. Our WL gave us 2 out of 3 runners.`;
+
+test('maybeEnqueueRecap enqueue un job pour RECAP valide de ZZ', async () => {
+  const before = getPendingRenderJobs().length;
+  const result = await maybeEnqueueRecap({
+    authorName: 'ZZ',
+    content: ZZ_RECAP,
+    messageCreatedAt: new Date('2026-06-01T19:44:00Z'),
+    messageId: 'msg-recap-1',
+    authorWhitelist: ['ZZ'],
+  });
+  assert.strictEqual(result.enqueued, true);
+  const after = getPendingRenderJobs();
+  assert.strictEqual(after.length, before + 1);
+  const job = after[after.length - 1];
+  assert.strictEqual(job.composition, 'BoomRecap');
+  assert.ok(job.recap_data);
+  const data = JSON.parse(job.recap_data);
+  assert.strictEqual(data.tickers.length, 3);
+});
+
+test('maybeEnqueueRecap retourne enqueued=false si auteur hors whitelist', async () => {
+  const result = await maybeEnqueueRecap({
+    authorName: 'Random',
+    content: ZZ_RECAP,
+    messageCreatedAt: new Date('2026-06-02T19:44:00Z'),
+    messageId: 'msg-recap-2',
+    authorWhitelist: ['ZZ'],
+  });
+  assert.strictEqual(result.enqueued, false);
+  assert.strictEqual(result.reason, 'author_not_whitelisted');
+});
+
+test('maybeEnqueueRecap retourne enqueued=false si pas de RECAP: en début', async () => {
+  const result = await maybeEnqueueRecap({
+    authorName: 'ZZ',
+    content: '$RXT 380% swing\n$REPL 133% swing\n$AIIO 71%',
+    messageCreatedAt: new Date('2026-06-03T19:44:00Z'),
+    messageId: 'msg-recap-3',
+    authorWhitelist: ['ZZ'],
+  });
+  assert.strictEqual(result.enqueued, false);
+  assert.strictEqual(result.reason, 'parse_failed');
+});
+
+test('maybeEnqueueRecap retourne enqueued=false si recap déjà fait aujourdhui', async () => {
+  // First call : claims the date
+  await maybeEnqueueRecap({
+    authorName: 'ZZ',
+    content: ZZ_RECAP,
+    messageCreatedAt: new Date('2026-06-04T19:44:00Z'),
+    messageId: 'msg-recap-4a',
+    authorWhitelist: ['ZZ'],
+  });
+  // Second call same date : should skip
+  const result = await maybeEnqueueRecap({
+    authorName: 'ZZ',
+    content: ZZ_RECAP,
+    messageCreatedAt: new Date('2026-06-04T20:00:00Z'),
+    messageId: 'msg-recap-4b',
+    authorWhitelist: ['ZZ'],
+  });
+  assert.strictEqual(result.enqueued, false);
+  assert.strictEqual(result.reason, 'already_claimed');
+});
+
+test('maybeEnqueueRecap link render_job_id dans daily_recaps row', async () => {
+  await maybeEnqueueRecap({
+    authorName: 'ZZ',
+    content: ZZ_RECAP,
+    messageCreatedAt: new Date('2026-06-05T19:44:00Z'),
+    messageId: 'msg-recap-5',
+    authorWhitelist: ['ZZ'],
+  });
+  const row = getRecapByDate('2026-06-05');
+  assert.ok(row);
+  assert.ok(row.render_job_id > 0);
+  assert.strictEqual(row.message_id, 'msg-recap-5');
+  assert.strictEqual(row.tickers_count, 3);
+});

@@ -5,7 +5,7 @@ type Props = {
   pnl: string;
 };
 
-// Phase 6 du SignalAlertProof : 90 frames (3s) — final.
+// Phase 6 du BoomProof : 90 frames (3s) — final.
 // Gros pnl confirmé qui pulse + URL slide-up + flash blanc final.
 export const ResultCta = ({ pnl }: Props) => {
   const frame = useCurrentFrame();

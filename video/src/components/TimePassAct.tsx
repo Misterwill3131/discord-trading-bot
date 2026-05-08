@@ -18,7 +18,7 @@ function timeDiffLabel(entry: string, exit: string): string {
   return `${days} day${days > 1 ? 's' : ''} later`;
 }
 
-// Phase 4 du SignalAlertProof : 90 frames (3s).
+// Phase 4 du BoomProof : 90 frames (3s).
 // Background gradient + texte "X hours later" + ChartExplosion centré.
 //
 // Note layout : ChartExplosion retourne un AbsoluteFill (position: absolute)

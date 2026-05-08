@@ -34,7 +34,7 @@ export type RenderJob = {
   proofImageBase64?: string | null;
 };
 
-// Props passées à la composition SignalAlertProof (sans le id côté DB).
+// Props passées à la composition BoomProof (sans le id côté DB).
 // Convertit proofImageBase64 (string) en data URL utilisable par <img src=...>.
 export function jobPropsToRemotion(job: RenderJob) {
   const { id: _id, proofImageBase64, ...rest } = job;
@@ -67,7 +67,7 @@ export function buildCaption(job: RenderJob): string {
   ].join('\n');
 }
 
-// Filename : YYYY-MM-DD_HHMM_TICKER_proof.mp4 (NY tz).
+// Filename : YYYY-MM-DD_HHMM_TICKER_boomproof.mp4 (NY tz).
 function buildLocalFilename(job: RenderJob): string {
   const d = new Date(job.exitTimestamp);
   const fmt = d.toLocaleString('en-CA', {
@@ -77,7 +77,7 @@ function buildLocalFilename(job: RenderJob): string {
   });
   const [datePart, timePart] = fmt.split(', ');
   const timeNoColon = timePart.replace(':', '');
-  return `${datePart}_${timeNoColon}_${job.ticker.toUpperCase()}_proof.mp4`;
+  return `${datePart}_${timeNoColon}_${job.ticker.toUpperCase()}_boomproof.mp4`;
 }
 
 // ─── Fonctions HTTP côté bot ─────────────────────────────────────────
@@ -139,7 +139,7 @@ async function processJob(
   console.log(`[worker] processing job ${job.id} (${job.ticker} ${job.pnl})`);
   const composition = await selectComposition({
     serveUrl: bundleLocation,
-    id: 'SignalAlertProof',
+    id: 'BoomProof',
     inputProps: jobPropsToRemotion(job),
   });
   const filename = buildLocalFilename(job);

@@ -6,7 +6,7 @@ type Props = {
   author: string;
 };
 
-// Phase 2 du SignalAlertProof : 60 frames (2s).
+// Phase 2 du BoomProof : 60 frames (2s).
 // Gros pnl qui zoom + ticker dessous + sous-texte tease.
 export const ResultTease = ({ ticker, pnl, author }: Props) => {
   const frame = useCurrentFrame();

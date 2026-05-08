@@ -30,13 +30,13 @@ test('jobToApiShape converts snake_case DB row to camelCase API payload', () => 
   assert.strictEqual(api.status, undefined);
 });
 
-test('buildVideoFilename produces YYYY-MM-DD_HHMM_TICKER_proof.mp4', () => {
+test('buildVideoFilename produces YYYY-MM-DD_HHMM_TICKER_boomproof.mp4', () => {
   const filename = buildVideoFilename('TSLA', '2026-04-25T16:30:00-04:00');
   // exit_ts is in NY tz (-04:00). 16:30 NY = 20:30 UTC. The function uses NY tz formatting.
-  assert.match(filename, /^2026-04-25_\d{4}_TSLA_proof\.mp4$/);
+  assert.match(filename, /^2026-04-25_\d{4}_TSLA_boomproof\.mp4$/);
 });
 
 test('buildVideoFilename uppercases ticker', () => {
   const filename = buildVideoFilename('tsla', '2026-04-25T16:30:00-04:00');
-  assert.match(filename, /TSLA_proof\.mp4$/);
+  assert.match(filename, /TSLA_boomproof\.mp4$/);
 });

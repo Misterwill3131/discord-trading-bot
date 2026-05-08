@@ -72,11 +72,11 @@ describe('SignalAlert composition', () => {
   });
 });
 
-describe('SignalAlertProof composition', () => {
+describe('BoomProof composition', () => {
   test('is registered with correct dimensions and duration', async () => {
     const comp = await selectComposition({
       serveUrl: bundleLocation,
-      id: 'SignalAlertProof',
+      id: 'BoomProof',
     });
     expect(comp.width).toBe(1080);
     expect(comp.height).toBe(1920);
@@ -87,7 +87,7 @@ describe('SignalAlertProof composition', () => {
   test('has default props with expected fields', async () => {
     const comp = await selectComposition({
       serveUrl: bundleLocation,
-      id: 'SignalAlertProof',
+      id: 'BoomProof',
     });
     expect(comp.defaultProps).toMatchObject({
       ticker: 'TSLA',
@@ -102,7 +102,7 @@ describe('SignalAlertProof composition', () => {
   test('accepts inputProps override without throwing', async () => {
     const comp = await selectComposition({
       serveUrl: bundleLocation,
-      id: 'SignalAlertProof',
+      id: 'BoomProof',
       inputProps: {
         ticker: 'NVDA',
         entryAuthor: 'Bora',
@@ -114,6 +114,6 @@ describe('SignalAlertProof composition', () => {
         pnl: '+15%',
       },
     });
-    expect(comp.id).toBe('SignalAlertProof');
+    expect(comp.id).toBe('BoomProof');
   });
 });

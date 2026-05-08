@@ -40,7 +40,7 @@ function jobToApiShape(row) {
   };
 }
 
-// Nom de fichier du MP4 sortant : YYYY-MM-DD_HHMM_TICKER_proof.mp4
+// Nom de fichier du MP4 sortant : YYYY-MM-DD_HHMM_TICKER_boomproof.mp4
 // Date dérivée du exit_ts en timezone America/New_York pour cohérence
 // avec ce que le canvas affiche.
 function buildVideoFilename(ticker, exitTs) {
@@ -54,7 +54,7 @@ function buildVideoFilename(ticker, exitTs) {
   // fmt is like "2026-04-25, 16:30" → normalize to "2026-04-25_1630"
   const [datePart, timePart] = fmt.split(', ');
   const timeNoColon = timePart.replace(':', '');
-  return `${datePart}_${timeNoColon}_${ticker.toUpperCase()}_proof.mp4`;
+  return `${datePart}_${timeNoColon}_${ticker.toUpperCase()}_boomproof.mp4`;
 }
 
 // Middleware d'auth via Bearer token.

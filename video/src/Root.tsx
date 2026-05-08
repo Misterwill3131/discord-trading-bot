@@ -1,7 +1,7 @@
 import { Composition } from 'remotion';
 import { BrandPromo } from './compositions/BrandPromo';
 import { SignalAlert, SignalAlertProps } from './compositions/SignalAlert';
-import { SignalAlertProof, SignalAlertProofProps } from './compositions/SignalAlertProof';
+import { BoomProof, BoomProofProps } from './compositions/BoomProof';
 
 const signalAlertDefaults: SignalAlertProps = {
   ticker: 'TSLA',
@@ -15,7 +15,7 @@ const signalAlertDefaults: SignalAlertProps = {
   timestamp: '2026-04-25T13:32:00-04:00',
 };
 
-const signalAlertProofDefaults: SignalAlertProofProps = {
+const boomProofDefaults: BoomProofProps = {
   ticker: 'TSLA',
   entryAuthor: 'Z',
   entryMessage: '$TSLA 150 entry long',
@@ -47,13 +47,13 @@ export const Root = () => {
         defaultProps={signalAlertDefaults}
       />
       <Composition
-        id="SignalAlertProof"
-        component={SignalAlertProof}
+        id="BoomProof"
+        component={BoomProof}
         durationInFrames={518}
         fps={30}
         width={1080}
         height={1920}
-        defaultProps={signalAlertProofDefaults}
+        defaultProps={boomProofDefaults}
       />
     </>
   );

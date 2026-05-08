@@ -9,7 +9,7 @@ import { TimePassAct } from '../components/TimePassAct';
 import { ProofImageAct } from '../components/ProofImageAct';
 import { ResultCta } from '../components/ResultCta';
 
-export type SignalAlertProofProps = {
+export type BoomProofProps = {
   ticker: string;
   entryAuthor: string;
   entryMessage: string;
@@ -40,11 +40,11 @@ const SFX_TRANS_2 = 108;        // Whoosh lifestyle → tease (~3.6s)
 const SFX_IMPACT = 222;         // Impact bass au climax du chart (~7.4s)
 const SFX_REVEAL = 460;         // Cha-ching sur le résultat final (~15.3s)
 
-export const SignalAlertProof = ({
+export const BoomProof = ({
   ticker, entryAuthor, entryMessage: _entryMessage, entryTimestamp,
   exitAuthor, exitMessage: _exitMessage, exitTimestamp, pnl,
   proofImageDataUrl,
-}: SignalAlertProofProps) => {
+}: BoomProofProps) => {
   // Caption pour la phase ProofImage : ticker + auteurs + pnl.
   // Format : "$TICKER · ENTRY_AUTHOR → EXIT_AUTHOR · +X%"
   // Si entry et exit même auteur, on simplifie en un seul nom.

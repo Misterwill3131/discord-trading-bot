@@ -60,9 +60,13 @@ export function formatTimeNY(isoTimestamp: string): string {
 // Caption Discord (multi-line). Exemple :
 //   📈 $TSLA · Z · +20% — proof video
 //   Entry 13:32 · Exit 16:30
+//
+// Utilise exitAuthor (l'analyste qui clôt le trade) plutôt que entryAuthor
+// car ce dernier peut être un raw Discord username (ex "traderzz1m") moins
+// joli que le display name relayé sur l'exit.
 export function buildCaption(job: RenderJob): string {
   return [
-    `📈 $${job.ticker} · ${job.entryAuthor} · ${job.pnl} — proof video`,
+    `📈 $${job.ticker} · ${job.exitAuthor} · ${job.pnl} — proof video`,
     `Entry ${formatTimeNY(job.entryTimestamp)} · Exit ${formatTimeNY(job.exitTimestamp)}`,
   ].join('\n');
 }

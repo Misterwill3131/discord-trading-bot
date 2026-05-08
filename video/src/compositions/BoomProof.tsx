@@ -45,9 +45,10 @@ export const BoomProof = ({
   exitAuthor, exitMessage: _exitMessage, exitTimestamp, pnl,
   proofImageDataUrl,
 }: BoomProofProps) => {
-  // Caption pour la phase ProofImage : ticker + auteurs + pnl.
-  // Format : "$TICKER · ENTRY_AUTHOR → EXIT_AUTHOR · +X%"
-  // Si entry et exit même auteur, on simplifie en un seul nom.
+  // Caption pour la phase ProofImage : ticker + auteur(s) + pnl.
+  // Si entry et exit même auteur (cas le + fréquent), simplifie en un seul nom.
+  // entryAuthor / exitAuthor sont assumed déjà resolved en display name côté
+  // bot via getDisplayName (canvas/utils/authors.js) avant l'enqueue.
   const proofCaption = entryAuthor === exitAuthor
     ? `$${ticker} · ${entryAuthor} · ${pnl}`
     : `$${ticker} · ${entryAuthor} → ${exitAuthor} · ${pnl}`;

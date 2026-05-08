@@ -35,6 +35,12 @@ export const boomProofSchema = z.object({
     .nullable()
     .optional()
     .describe('Data URL PNG (image canvas entry+exit). Vide = placeholder.'),
+  // ─── Text overrides éditables dans Studio ───
+  teaseSubtext: z
+    .string()
+    .optional()
+    .describe('Sous-titre tease (default "watch how {author} did it"). Vide = utilise le default avec entryAuthor.'),
+  ctaUrl: z.string().default('discord.gg/boom').describe('URL ou handle dans le CTA final'),
 });
 
 // Inferred TypeScript type — cohérent avec le schema, plus de duplication.
@@ -59,7 +65,7 @@ const SFX_REVEAL = 460;         // Cha-ching sur le résultat final (~15.3s)
 export const BoomProof = ({
   ticker, entryAuthor, entryMessage: _entryMessage, entryTimestamp,
   exitAuthor, exitMessage: _exitMessage, exitTimestamp, pnl,
-  proofImageDataUrl,
+  proofImageDataUrl, teaseSubtext, ctaUrl,
 }: BoomProofProps) => {
   // Caption pour la phase ProofImage : ticker + auteur(s) + pnl.
   // Si entry et exit même auteur (cas le + fréquent), simplifie en un seul nom.
@@ -114,7 +120,7 @@ export const BoomProof = ({
 
         {/* Phase 2 — Result tease (~2s) */}
         <TransitionSeries.Sequence durationInFrames={66}>
-          <ResultTease ticker={ticker} pnl={pnl} author={entryAuthor} />
+          <ResultTease ticker={ticker} pnl={pnl} author={entryAuthor} subtext={teaseSubtext} />
         </TransitionSeries.Sequence>
 
         <TransitionSeries.Transition
@@ -148,7 +154,7 @@ export const BoomProof = ({
 
         {/* Phase 5 — Result CTA + money rain (~3s) */}
         <TransitionSeries.Sequence durationInFrames={90}>
-          <ResultCta pnl={pnl} />
+          <ResultCta pnl={pnl} url={ctaUrl} />
         </TransitionSeries.Sequence>
       </TransitionSeries>
     </AbsoluteFill>

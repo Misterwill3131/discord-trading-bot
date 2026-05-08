@@ -4,11 +4,15 @@ type Props = {
   ticker: string;
   pnl: string;     // ex: "+20%"
   author: string;
+  // Texte éditable du sous-titre — par défaut "watch how {author} did it".
+  // Si fourni, remplace entièrement (le {author} interpolé doit être inclus
+  // dans le texte par l'appelant si désiré).
+  subtext?: string;
 };
 
 // Phase 2 du BoomProof : 60 frames (2s).
 // Gros pnl qui zoom + ticker dessous + sous-texte tease.
-export const ResultTease = ({ ticker, pnl, author }: Props) => {
+export const ResultTease = ({ ticker, pnl, author, subtext }: Props) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -75,7 +79,7 @@ export const ResultTease = ({ ticker, pnl, author }: Props) => {
           opacity: subOpacity,
         }}
       >
-        watch how {author} did it
+        {subtext || `watch how ${author} did it`}
       </div>
     </AbsoluteFill>
   );

@@ -26,6 +26,8 @@ const boomProofDefaults = {
   exitTimestamp: '2026-04-25T16:30:00-04:00',
   pnl: '+20%',
   proofImageDataUrl: null,
+  teaseSubtext: undefined,
+  ctaUrl: 'discord.gg/boom',
 };
 
 export const Root = () => {
@@ -72,6 +74,13 @@ export const Root = () => {
           message: '$TSLA 150-155 entry long',
           timestamp: '2026-04-25T13:32:00-04:00',
           entryImageDataUrl: null,
+          stingerText: '🚨 LIVE',
+          teaseAction: 'just called this.',
+          teaseSubtext: 'Watch live →',
+          cardLabel: '🚨 LIVE SIGNAL',
+          ctaTitle: 'JOIN',
+          ctaUrl: 'discord.gg/boom',
+          ctaSubtitle: 'Get every signal live',
         }}
       />
     </>

@@ -27,13 +27,21 @@ const { fontFamily } = loadInter('normal', { weights: ['400', '600', '700', '900
 export const boomEntrySchema = z.object({
   ticker: z.string().min(1).max(10).describe('Ticker stock (ex: TSLA, GDC)'),
   author: z.string().min(1).describe("Pseudo Discord de l'analyste"),
-  message: zTextarea().describe('Texte du message entry'),
+  message: zTextarea().describe('Texte du message entry (legacy, non affiché)'),
   timestamp: z.string().describe('Timestamp ISO 8601 (ex: 2026-04-25T13:32:00-04:00)'),
   entryImageDataUrl: z
     .string()
     .nullable()
     .optional()
     .describe('Data URL PNG (image canvas du signal entry). Vide = fallback static.'),
+  // ─── Text overrides (tous éditables dans Studio) ───
+  stingerText: z.string().default('🚨 LIVE').describe('Texte stinger d\'ouverture (default "🚨 LIVE")'),
+  teaseAction: z.string().default('just called this.').describe('Action après le pseudo dans le tease (ex: "is going long")'),
+  teaseSubtext: z.string().default('Watch live →').describe('Sous-texte du tease (ex: "Watch live →")'),
+  cardLabel: z.string().default('🚨 LIVE SIGNAL').describe('Label rouge au-dessus de l\'image canvas'),
+  ctaTitle: z.string().default('JOIN').describe('Titre du CTA final (ex: "JOIN", "GO LIVE")'),
+  ctaUrl: z.string().default('discord.gg/boom').describe('URL ou handle (ex: "discord.gg/boom")'),
+  ctaSubtitle: z.string().default('Get every signal live').describe('Sous-titre du CTA (ex: "Get every signal live")'),
 });
 
 export type BoomEntryProps = z.infer<typeof boomEntrySchema>;
@@ -42,7 +50,7 @@ const FADE_FRAMES = 6;
 const SLIDE_FRAMES = 8;
 
 // ── Sub-component: Stinger LIVE rouge ──
-const StingerLive = () => {
+const StingerLive = ({ text }: { text: string }) => {
   const frame = useCurrentFrame();
   const opacity = interpolate(frame, [0, 2, 6, 9], [0, 1, 1, 0], {
     extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic),
@@ -60,7 +68,7 @@ const StingerLive = () => {
         color: '#ef4444', textShadow: '0 0 40px #ef4444aa, 0 0 80px #ef444466',
         opacity, transform: `scale(${scale})`,
       }}>
-        🚨 LIVE
+        {text}
       </div>
       <AbsoluteFill style={{ background: '#fff', opacity: flashOpacity, pointerEvents: 'none' }} />
     </AbsoluteFill>
@@ -68,7 +76,9 @@ const StingerLive = () => {
 };
 
 // ── Sub-component: Tease "X just called this" ──
-const TeaseAct = ({ ticker, author }: { ticker: string; author: string }) => {
+const TeaseAct = ({
+  ticker, author, action, subtext,
+}: { ticker: string; author: string; action: string; subtext: string }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const tickerEntry = spring({ frame, fps, config: { damping: 10, stiffness: 100 }, durationInFrames: 25 });
@@ -88,28 +98,27 @@ const TeaseAct = ({ ticker, author }: { ticker: string; author: string }) => {
       </div>
       <div style={{
         marginTop: 40, color: '#fff', fontSize: 56, fontWeight: 700, opacity: captionOpacity,
+        textAlign: 'center',
       }}>
-        {author} just called this.
+        {author} {action}
       </div>
       <div style={{
         marginTop: 16, color: 'rgba(255,255,255,0.5)', fontSize: 38, opacity: captionOpacity,
       }}>
-        Watch live →
+        {subtext}
       </div>
     </AbsoluteFill>
   );
 };
 
 // ── Sub-component: EntryCard avec image canvas Discord ──
-const EntryCardAct = ({ src }: { src: string }) => {
+const EntryCardAct = ({ src, label }: { src: string; label: string }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const entry = spring({ frame, fps, config: { damping: 12 }, durationInFrames: 25 });
   const translateY = interpolate(entry, [0, 1], [80, 0]);
   const opacity = interpolate(frame, [0, 12], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
-  // Ken Burns subtle zoom-in
   const scale = interpolate(frame, [0, 150], [1.0, 1.04], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
-  // Pulse glow border
   const glowPulse = 0.3 + Math.abs(Math.sin(frame * 0.06)) * 0.5;
   return (
     <AbsoluteFill style={{
@@ -127,14 +136,16 @@ const EntryCardAct = ({ src }: { src: string }) => {
         color: '#ef4444', fontSize: 40, fontWeight: 900, fontFamily, letterSpacing: 4,
         textShadow: '0 0 20px #ef4444aa',
       }}>
-        🚨 LIVE SIGNAL
+        {label}
       </div>
     </AbsoluteFill>
   );
 };
 
 // ── Sub-component: CTA discord.gg/boom + money rain ──
-const CtaJoin = () => {
+const CtaJoin = ({
+  title, url, subtitle,
+}: { title: string; url: string; subtitle: string }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const titleEntry = spring({ frame, fps, config: { damping: 10, stiffness: 100 }, durationInFrames: 22 });
@@ -151,26 +162,33 @@ const CtaJoin = () => {
       <div style={{
         color: '#ef4444', fontSize: 200, fontWeight: 900, letterSpacing: -4,
         transform: `scale(${titleScale})`, textShadow: '0 0 80px #ef4444aa', zIndex: 2,
+        textAlign: 'center',
       }}>
-        JOIN
+        {title}
       </div>
       <div style={{
         marginTop: 30, color: '#fff', fontSize: 64, fontWeight: 800,
         transform: `translateY(${urlY}px)`, opacity: urlEntry, zIndex: 2,
+        textAlign: 'center',
       }}>
-        discord.gg/boom
+        {url}
       </div>
       <div style={{
         marginTop: 16, color: 'rgba(255,255,255,0.6)', fontSize: 36, opacity: urlEntry, zIndex: 2,
+        textAlign: 'center',
       }}>
-        Get every signal live
+        {subtitle}
       </div>
     </AbsoluteFill>
   );
 };
 
 // ── Main composition ──
-export const BoomEntry = ({ ticker, author, timestamp, entryImageDataUrl }: BoomEntryProps) => {
+export const BoomEntry = ({
+  ticker, author, timestamp, entryImageDataUrl,
+  stingerText, teaseAction, teaseSubtext, cardLabel,
+  ctaTitle, ctaUrl, ctaSubtitle,
+}: BoomEntryProps) => {
   const fallbackSrc = staticFile('signal-alert/card-default.png');
   const cardSrc = entryImageDataUrl || fallbackSrc;
   return (
@@ -190,7 +208,7 @@ export const BoomEntry = ({ ticker, author, timestamp, entryImageDataUrl }: Boom
       <TransitionSeries>
         {/* Phase 0 — Stinger LIVE */}
         <TransitionSeries.Sequence durationInFrames={12}>
-          <StingerLive />
+          <StingerLive text={stingerText} />
         </TransitionSeries.Sequence>
         <TransitionSeries.Transition presentation={fade()} timing={linearTiming({ durationInFrames: 4 })} />
 
@@ -202,19 +220,19 @@ export const BoomEntry = ({ ticker, author, timestamp, entryImageDataUrl }: Boom
 
         {/* Phase 2 — Tease */}
         <TransitionSeries.Sequence durationInFrames={66}>
-          <TeaseAct ticker={ticker} author={author} />
+          <TeaseAct ticker={ticker} author={author} action={teaseAction} subtext={teaseSubtext} />
         </TransitionSeries.Sequence>
         <TransitionSeries.Transition presentation={slide({ direction: 'from-right' })} timing={linearTiming({ durationInFrames: SLIDE_FRAMES })} />
 
         {/* Phase 3 — Entry card canvas (5s) */}
         <TransitionSeries.Sequence durationInFrames={156}>
-          <EntryCardAct src={cardSrc} />
+          <EntryCardAct src={cardSrc} label={cardLabel} />
         </TransitionSeries.Sequence>
         <TransitionSeries.Transition presentation={fade()} timing={linearTiming({ durationInFrames: FADE_FRAMES })} />
 
         {/* Phase 4 — CTA */}
         <TransitionSeries.Sequence durationInFrames={100}>
-          <CtaJoin />
+          <CtaJoin title={ctaTitle} url={ctaUrl} subtitle={ctaSubtitle} />
         </TransitionSeries.Sequence>
       </TransitionSeries>
     </AbsoluteFill>

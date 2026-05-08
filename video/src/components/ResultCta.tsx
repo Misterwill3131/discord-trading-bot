@@ -3,11 +3,13 @@ import { MoneyRain } from './MoneyRain';
 
 type Props = {
   pnl: string;
+  // URL ou handle affiché sous le pnl. Default "discord.gg/boom".
+  url?: string;
 };
 
 // Phase 6 du BoomProof : 90 frames (3s) — final.
 // Gros pnl confirmé qui pulse + URL slide-up + flash blanc final.
-export const ResultCta = ({ pnl }: Props) => {
+export const ResultCta = ({ pnl, url = 'discord.gg/boom' }: Props) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -81,7 +83,7 @@ export const ResultCta = ({ pnl }: Props) => {
           opacity: urlEntry,
         }}
       >
-        discord.gg/boom
+        {url}
       </div>
       {/* Flash blanc final */}
       <AbsoluteFill style={{ background: 'white', opacity: flashOpacity }} />

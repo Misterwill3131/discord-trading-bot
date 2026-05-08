@@ -89,6 +89,10 @@ export const Root = () => {
           musicVolume: 0.55,
           sfxEnabled: true,
           lifestyleSeedOverride: undefined,
+          stingerFontSize: 220,
+          tickerFontSize: 280,
+          ctaTitleFontSize: 200,
+          transitionType: 'fade' as const,
         }}
       />
     </>

@@ -1,7 +1,9 @@
 import { AbsoluteFill, Audio, Sequence, staticFile, Img, useCurrentFrame, useVideoConfig, spring, interpolate, Easing } from 'remotion';
-import { TransitionSeries, linearTiming } from '@remotion/transitions';
+import { TransitionSeries, linearTiming, TransitionPresentation } from '@remotion/transitions';
 import { fade } from '@remotion/transitions/fade';
 import { slide } from '@remotion/transitions/slide';
+import { wipe } from '@remotion/transitions/wipe';
+import { flip } from '@remotion/transitions/flip';
 import { z } from 'zod';
 import { zTextarea, zColor } from '@remotion/zod-types';
 import { loadFont as loadInter } from '@remotion/google-fonts/Inter';
@@ -52,6 +54,15 @@ export const boomEntrySchema = z.object({
     .string()
     .optional()
     .describe('Override du seed lifestyle hook. Vide = auto depuis ticker+timestamp.'),
+  // ─── Tailles de font (pour ajuster le visuel sans toucher au code) ───
+  stingerFontSize: z.number().min(80).max(400).default(220).describe('Taille font stinger d\'ouverture (px)'),
+  tickerFontSize: z.number().min(120).max(400).default(280).describe('Taille font $TICKER dans le tease (px)'),
+  ctaTitleFontSize: z.number().min(80).max(400).default(200).describe('Taille font titre CTA "JOIN" (px)'),
+  // ─── Transition entre phases ───
+  transitionType: z
+    .enum(['fade', 'slide', 'wipe', 'flip'])
+    .default('fade')
+    .describe('Type de transition entre les phases (fade, slide, wipe, flip)'),
 });
 
 export type BoomEntryProps = z.infer<typeof boomEntrySchema>;
@@ -59,8 +70,23 @@ export type BoomEntryProps = z.infer<typeof boomEntrySchema>;
 const FADE_FRAMES = 6;
 const SLIDE_FRAMES = 8;
 
+// Helper : renvoie la TransitionPresentation correspondant au type choisi.
+// Wipe + flip n'acceptent pas de direction obligatoire ; slide en a une.
+// Type erased en `any` car les TransitionPresentation<T> ont des
+// generic params différents (FadeProps, SlideProps, etc.) impossibles
+// à unifier proprement sans complexifier le typing.
+function pickTransition(type: 'fade' | 'slide' | 'wipe' | 'flip'): TransitionPresentation<any> {
+  switch (type) {
+    case 'slide': return slide({ direction: 'from-right' });
+    case 'wipe':  return wipe();
+    case 'flip':  return flip();
+    case 'fade':
+    default:      return fade();
+  }
+}
+
 // ── Sub-component: Stinger LIVE rouge ──
-const StingerLive = ({ text, color }: { text: string; color: string }) => {
+const StingerLive = ({ text, color, fontSize }: { text: string; color: string; fontSize: number }) => {
   const frame = useCurrentFrame();
   const opacity = interpolate(frame, [0, 2, 6, 9], [0, 1, 1, 0], {
     extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic),
@@ -74,9 +100,9 @@ const StingerLive = ({ text, color }: { text: string; color: string }) => {
   return (
     <AbsoluteFill style={{ backgroundColor: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{
-        fontSize: 220, fontWeight: 900, fontFamily, letterSpacing: -6,
+        fontSize, fontWeight: 900, fontFamily, letterSpacing: -6,
         color, textShadow: `0 0 40px ${color}aa, 0 0 80px ${color}66`,
-        opacity, transform: `scale(${scale})`,
+        opacity, transform: `scale(${scale})`, textAlign: 'center',
       }}>
         {text}
       </div>
@@ -87,8 +113,8 @@ const StingerLive = ({ text, color }: { text: string; color: string }) => {
 
 // ── Sub-component: Tease "X just called this" ──
 const TeaseAct = ({
-  ticker, author, action, subtext, color,
-}: { ticker: string; author: string; action: string; subtext: string; color: string }) => {
+  ticker, author, action, subtext, color, tickerFontSize,
+}: { ticker: string; author: string; action: string; subtext: string; color: string; tickerFontSize: number }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const tickerEntry = spring({ frame, fps, config: { damping: 10, stiffness: 100 }, durationInFrames: 25 });
@@ -101,7 +127,7 @@ const TeaseAct = ({
       fontFamily, padding: 60,
     }}>
       <div style={{
-        color, fontSize: 280, fontWeight: 900, letterSpacing: -6,
+        color, fontSize: tickerFontSize, fontWeight: 900, letterSpacing: -6,
         transform: `scale(${tickerScale})`, textShadow: `0 0 80px ${color}aa`,
       }}>
         ${ticker}
@@ -156,8 +182,8 @@ const EntryCardAct = ({
 
 // ── Sub-component: CTA discord.gg/boom + money rain ──
 const CtaJoin = ({
-  title, url, subtitle, color,
-}: { title: string; url: string; subtitle: string; color: string }) => {
+  title, url, subtitle, color, titleFontSize,
+}: { title: string; url: string; subtitle: string; color: string; titleFontSize: number }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const titleEntry = spring({ frame, fps, config: { damping: 10, stiffness: 100 }, durationInFrames: 22 });
@@ -172,7 +198,7 @@ const CtaJoin = ({
     }}>
       <MoneyRain count={40} seed="entry-cta" />
       <div style={{
-        color, fontSize: 200, fontWeight: 900, letterSpacing: -4,
+        color, fontSize: titleFontSize, fontWeight: 900, letterSpacing: -4,
         transform: `scale(${titleScale})`, textShadow: `0 0 80px ${color}aa`, zIndex: 2,
         textAlign: 'center',
       }}>
@@ -201,10 +227,12 @@ export const BoomEntry = ({
   stingerText, teaseAction, teaseSubtext, cardLabel,
   ctaTitle, ctaUrl, ctaSubtitle,
   accentColor, musicVolume, sfxEnabled, lifestyleSeedOverride,
+  stingerFontSize, tickerFontSize, ctaTitleFontSize, transitionType,
 }: BoomEntryProps) => {
   const fallbackSrc = staticFile('signal-alert/card-default.png');
   const cardSrc = entryImageDataUrl || fallbackSrc;
   const lifestyleSeed = lifestyleSeedOverride || `entry-${ticker}-${timestamp}`;
+  const transitionPresentation = pickTransition(transitionType);
   return (
     <AbsoluteFill style={{ backgroundColor: 'black', fontFamily }}>
       {/* === AUDIO === */}
@@ -226,31 +254,31 @@ export const BoomEntry = ({
       <TransitionSeries>
         {/* Phase 0 — Stinger LIVE */}
         <TransitionSeries.Sequence durationInFrames={12}>
-          <StingerLive text={stingerText} color={accentColor} />
+          <StingerLive text={stingerText} color={accentColor} fontSize={stingerFontSize} />
         </TransitionSeries.Sequence>
-        <TransitionSeries.Transition presentation={fade()} timing={linearTiming({ durationInFrames: 4 })} />
+        <TransitionSeries.Transition presentation={transitionPresentation} timing={linearTiming({ durationInFrames: 4 })} />
 
         {/* Phase 1 — Lifestyle hook bref (2s) */}
         <TransitionSeries.Sequence durationInFrames={66}>
           <LifestyleHook overlayText={`$${ticker}`} seed={lifestyleSeed} />
         </TransitionSeries.Sequence>
-        <TransitionSeries.Transition presentation={fade()} timing={linearTiming({ durationInFrames: FADE_FRAMES })} />
+        <TransitionSeries.Transition presentation={transitionPresentation} timing={linearTiming({ durationInFrames: FADE_FRAMES })} />
 
         {/* Phase 2 — Tease */}
         <TransitionSeries.Sequence durationInFrames={66}>
-          <TeaseAct ticker={ticker} author={author} action={teaseAction} subtext={teaseSubtext} color={accentColor} />
+          <TeaseAct ticker={ticker} author={author} action={teaseAction} subtext={teaseSubtext} color={accentColor} tickerFontSize={tickerFontSize} />
         </TransitionSeries.Sequence>
-        <TransitionSeries.Transition presentation={slide({ direction: 'from-right' })} timing={linearTiming({ durationInFrames: SLIDE_FRAMES })} />
+        <TransitionSeries.Transition presentation={transitionPresentation} timing={linearTiming({ durationInFrames: SLIDE_FRAMES })} />
 
         {/* Phase 3 — Entry card canvas (5s) */}
         <TransitionSeries.Sequence durationInFrames={156}>
           <EntryCardAct src={cardSrc} label={cardLabel} color={accentColor} />
         </TransitionSeries.Sequence>
-        <TransitionSeries.Transition presentation={fade()} timing={linearTiming({ durationInFrames: FADE_FRAMES })} />
+        <TransitionSeries.Transition presentation={transitionPresentation} timing={linearTiming({ durationInFrames: FADE_FRAMES })} />
 
         {/* Phase 4 — CTA */}
         <TransitionSeries.Sequence durationInFrames={100}>
-          <CtaJoin title={ctaTitle} url={ctaUrl} subtitle={ctaSubtitle} color={accentColor} />
+          <CtaJoin title={ctaTitle} url={ctaUrl} subtitle={ctaSubtitle} color={accentColor} titleFontSize={ctaTitleFontSize} />
         </TransitionSeries.Sequence>
       </TransitionSeries>
     </AbsoluteFill>

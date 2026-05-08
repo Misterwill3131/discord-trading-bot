@@ -7,6 +7,8 @@ type Props = {
   src?: string | null;
   // Optionnel : caption en bas (ex: "$TSLA · ZZ → ZZ · +34%")
   caption?: string;
+  // Couleur du glow autour de l'image (default cyan #3498db).
+  glowColor?: string;
 };
 
 // Phase ProofImage : affiche l'image proof canvas (entry+exit Discord
@@ -16,7 +18,7 @@ type Props = {
 //  - caption optionnelle en bas (overlay glow)
 //  - fond gradient sombre derrière (l'image canvas est ~740px wide,
 //    on la centre + cover en gardant aspect ratio)
-export const ProofImageAct = ({ src, caption }: Props) => {
+export const ProofImageAct = ({ src, caption, glowColor = '#3498db' }: Props) => {
   const frame = useCurrentFrame();
 
   const opacity = interpolate(
@@ -67,7 +69,7 @@ export const ProofImageAct = ({ src, caption }: Props) => {
             transformOrigin: 'center center',
             borderRadius: 24,
             boxShadow:
-              '0 24px 100px rgba(0,0,0,0.85), 0 0 80px rgba(52,152,219,0.25), inset 0 0 0 2px rgba(255,255,255,0.05)',
+              `0 24px 100px rgba(0,0,0,0.85), 0 0 80px ${glowColor}40, inset 0 0 0 2px rgba(255,255,255,0.05)`,
           }}
         />
       ) : (

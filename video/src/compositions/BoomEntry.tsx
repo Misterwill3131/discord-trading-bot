@@ -172,8 +172,8 @@ const CtaJoin = ({
     }}>
       <MoneyRain count={40} seed="entry-cta" />
       <div style={{
-        color: '#ef4444', fontSize: 200, fontWeight: 900, letterSpacing: -4,
-        transform: `scale(${titleScale})`, textShadow: '0 0 80px #ef4444aa', zIndex: 2,
+        color, fontSize: 200, fontWeight: 900, letterSpacing: -4,
+        transform: `scale(${titleScale})`, textShadow: `0 0 80px ${color}aa`, zIndex: 2,
         textAlign: 'center',
       }}>
         {title}
@@ -200,51 +200,57 @@ export const BoomEntry = ({
   ticker, author, timestamp, entryImageDataUrl,
   stingerText, teaseAction, teaseSubtext, cardLabel,
   ctaTitle, ctaUrl, ctaSubtitle,
+  accentColor, musicVolume, sfxEnabled, lifestyleSeedOverride,
 }: BoomEntryProps) => {
   const fallbackSrc = staticFile('signal-alert/card-default.png');
   const cardSrc = entryImageDataUrl || fallbackSrc;
+  const lifestyleSeed = lifestyleSeedOverride || `entry-${ticker}-${timestamp}`;
   return (
     <AbsoluteFill style={{ backgroundColor: 'black', fontFamily }}>
-      {/* Audio (optionnel — décommente quand tu auras un MP3 spécifique) */}
-      <Audio src={staticFile('audio/proof-track.mp3')} volume={0.55} />
-      <Sequence from={0} durationInFrames={45}>
-        <Audio src={staticFile('audio/whoosh-3.mp3')} volume={0.85} />
-      </Sequence>
-      <Sequence from={70} durationInFrames={20}>
-        <Audio src={staticFile('audio/whoosh-1.mp3')} volume={0.75} />
-      </Sequence>
-      <Sequence from={290} durationInFrames={60}>
-        <Audio src={staticFile('audio/chaching.mp3')} volume={0.95} />
-      </Sequence>
+      {/* === AUDIO === */}
+      <Audio src={staticFile('audio/proof-track.mp3')} volume={musicVolume} />
+      {sfxEnabled && (
+        <>
+          <Sequence from={0} durationInFrames={45}>
+            <Audio src={staticFile('audio/whoosh-3.mp3')} volume={0.85} />
+          </Sequence>
+          <Sequence from={70} durationInFrames={20}>
+            <Audio src={staticFile('audio/whoosh-1.mp3')} volume={0.75} />
+          </Sequence>
+          <Sequence from={290} durationInFrames={60}>
+            <Audio src={staticFile('audio/chaching.mp3')} volume={0.95} />
+          </Sequence>
+        </>
+      )}
 
       <TransitionSeries>
         {/* Phase 0 — Stinger LIVE */}
         <TransitionSeries.Sequence durationInFrames={12}>
-          <StingerLive text={stingerText} />
+          <StingerLive text={stingerText} color={accentColor} />
         </TransitionSeries.Sequence>
         <TransitionSeries.Transition presentation={fade()} timing={linearTiming({ durationInFrames: 4 })} />
 
         {/* Phase 1 — Lifestyle hook bref (2s) */}
         <TransitionSeries.Sequence durationInFrames={66}>
-          <LifestyleHook overlayText={`$${ticker}`} seed={`entry-${ticker}-${timestamp}`} />
+          <LifestyleHook overlayText={`$${ticker}`} seed={lifestyleSeed} />
         </TransitionSeries.Sequence>
         <TransitionSeries.Transition presentation={fade()} timing={linearTiming({ durationInFrames: FADE_FRAMES })} />
 
         {/* Phase 2 — Tease */}
         <TransitionSeries.Sequence durationInFrames={66}>
-          <TeaseAct ticker={ticker} author={author} action={teaseAction} subtext={teaseSubtext} />
+          <TeaseAct ticker={ticker} author={author} action={teaseAction} subtext={teaseSubtext} color={accentColor} />
         </TransitionSeries.Sequence>
         <TransitionSeries.Transition presentation={slide({ direction: 'from-right' })} timing={linearTiming({ durationInFrames: SLIDE_FRAMES })} />
 
         {/* Phase 3 — Entry card canvas (5s) */}
         <TransitionSeries.Sequence durationInFrames={156}>
-          <EntryCardAct src={cardSrc} label={cardLabel} />
+          <EntryCardAct src={cardSrc} label={cardLabel} color={accentColor} />
         </TransitionSeries.Sequence>
         <TransitionSeries.Transition presentation={fade()} timing={linearTiming({ durationInFrames: FADE_FRAMES })} />
 
         {/* Phase 4 — CTA */}
         <TransitionSeries.Sequence durationInFrames={100}>
-          <CtaJoin title={ctaTitle} url={ctaUrl} subtitle={ctaSubtitle} />
+          <CtaJoin title={ctaTitle} url={ctaUrl} subtitle={ctaSubtitle} color={accentColor} />
         </TransitionSeries.Sequence>
       </TransitionSeries>
     </AbsoluteFill>

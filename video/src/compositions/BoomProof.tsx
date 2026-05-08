@@ -3,7 +3,7 @@ import { TransitionSeries, linearTiming } from '@remotion/transitions';
 import { fade } from '@remotion/transitions/fade';
 import { slide } from '@remotion/transitions/slide';
 import { z } from 'zod';
-import { zTextarea } from '@remotion/zod-types';
+import { zTextarea, zColor } from '@remotion/zod-types';
 import { loadFont as loadInter } from '@remotion/google-fonts/Inter';
 
 // Charge Inter (poids 700 + 900 pour les gros titres + corps).
@@ -41,6 +41,16 @@ export const boomProofSchema = z.object({
     .optional()
     .describe('Sous-titre tease (default "watch how {author} did it"). Vide = utilise le default avec entryAuthor.'),
   ctaUrl: z.string().default('discord.gg/boom').describe('URL ou handle dans le CTA final'),
+  // ─── Couleurs ───
+  accentColor: zColor().default('#10b981').describe('Couleur d\'accent (vert pour proof, ticker pnl + glows)'),
+  // ─── Audio ───
+  musicVolume: z.number().min(0).max(1).default(0.55).describe('Volume music background (0 = mute, 1 = max)'),
+  sfxEnabled: z.boolean().default(true).describe('Active les SFX (whoosh, impact, cha-ching)'),
+  // ─── Lifestyle ───
+  lifestyleSeedOverride: z
+    .string()
+    .optional()
+    .describe('Override du seed lifestyle hook. Vide = auto depuis ticker+entryTimestamp.'),
 });
 
 // Inferred TypeScript type — cohérent avec le schema, plus de duplication.
@@ -66,7 +76,9 @@ export const BoomProof = ({
   ticker, entryAuthor, entryMessage: _entryMessage, entryTimestamp,
   exitAuthor, exitMessage: _exitMessage, exitTimestamp, pnl,
   proofImageDataUrl, teaseSubtext, ctaUrl,
+  accentColor, musicVolume, sfxEnabled, lifestyleSeedOverride,
 }: BoomProofProps) => {
+  const lifestyleSeed = lifestyleSeedOverride || `${ticker}-${entryTimestamp}`;
   // Caption pour la phase ProofImage : ticker + auteur(s) + pnl.
   // Si entry et exit même auteur (cas le + fréquent), simplifie en un seul nom.
   // entryAuthor / exitAuthor sont assumed déjà resolved en display name côté
@@ -78,23 +90,27 @@ export const BoomProof = ({
   return (
     <AbsoluteFill style={{ backgroundColor: 'black', fontFamily }}>
       {/* === AUDIO === */}
-      <Audio src={staticFile('audio/proof-track.mp3')} volume={0.55} />
+      <Audio src={staticFile('audio/proof-track.mp3')} volume={musicVolume} />
 
-      <Sequence from={SFX_STINGER} durationInFrames={45}>
-        <Audio src={staticFile('audio/chaching.mp3')} volume={0.85} />
-      </Sequence>
-      <Sequence from={SFX_TRANS_1} durationInFrames={20}>
-        <Audio src={staticFile('audio/whoosh-1.mp3')} volume={0.75} />
-      </Sequence>
-      <Sequence from={SFX_TRANS_2} durationInFrames={20}>
-        <Audio src={staticFile('audio/whoosh-2.mp3')} volume={0.75} />
-      </Sequence>
-      <Sequence from={SFX_IMPACT} durationInFrames={60}>
-        <Audio src={staticFile('audio/impact-bass.mp3')} volume={0.9} />
-      </Sequence>
-      <Sequence from={SFX_REVEAL} durationInFrames={60}>
-        <Audio src={staticFile('audio/chaching.mp3')} volume={0.95} />
-      </Sequence>
+      {sfxEnabled && (
+        <>
+          <Sequence from={SFX_STINGER} durationInFrames={45}>
+            <Audio src={staticFile('audio/chaching.mp3')} volume={0.85} />
+          </Sequence>
+          <Sequence from={SFX_TRANS_1} durationInFrames={20}>
+            <Audio src={staticFile('audio/whoosh-1.mp3')} volume={0.75} />
+          </Sequence>
+          <Sequence from={SFX_TRANS_2} durationInFrames={20}>
+            <Audio src={staticFile('audio/whoosh-2.mp3')} volume={0.75} />
+          </Sequence>
+          <Sequence from={SFX_IMPACT} durationInFrames={60}>
+            <Audio src={staticFile('audio/impact-bass.mp3')} volume={0.9} />
+          </Sequence>
+          <Sequence from={SFX_REVEAL} durationInFrames={60}>
+            <Audio src={staticFile('audio/chaching.mp3')} volume={0.95} />
+          </Sequence>
+        </>
+      )}
 
       {/* === VIDEO === */}
       <TransitionSeries>
@@ -110,7 +126,7 @@ export const BoomProof = ({
 
         {/* Phase 1 — Lifestyle hook (~3s, 5 cuts rapides) */}
         <TransitionSeries.Sequence durationInFrames={96}>
-          <LifestyleHook overlayText={pnl} seed={`${ticker}-${entryTimestamp}`} />
+          <LifestyleHook overlayText={pnl} seed={lifestyleSeed} />
         </TransitionSeries.Sequence>
 
         <TransitionSeries.Transition
@@ -144,6 +160,7 @@ export const BoomProof = ({
           <ProofImageAct
             src={proofImageDataUrl || undefined}
             caption={proofCaption}
+            glowColor={accentColor}
           />
         </TransitionSeries.Sequence>
 

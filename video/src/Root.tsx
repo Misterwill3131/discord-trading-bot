@@ -28,6 +28,10 @@ const boomProofDefaults = {
   proofImageDataUrl: null,
   teaseSubtext: undefined,
   ctaUrl: 'discord.gg/boom',
+  accentColor: '#10b981',
+  musicVolume: 0.55,
+  sfxEnabled: true,
+  lifestyleSeedOverride: undefined,
 };
 
 export const Root = () => {
@@ -81,6 +85,10 @@ export const Root = () => {
           ctaTitle: 'JOIN',
           ctaUrl: 'discord.gg/boom',
           ctaSubtitle: 'Get every signal live',
+          accentColor: '#ef4444',
+          musicVolume: 0.55,
+          sfxEnabled: true,
+          lifestyleSeedOverride: undefined,
         }}
       />
     </>

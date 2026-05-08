@@ -1,0 +1,26 @@
+# Skip files non nécessaires au worker pour réduire le build context.
+node_modules
+out
+*.log
+.env
+.env.local
+.env.*.local
+
+# Boom Editor local (n'est pas utilisé par le worker)
+editor
+
+# Tests + docs
+**/*.test.ts
+**/*.test.js
+**/*.test.tsx
+*.md
+
+# Build artifacts éventuels
+dist
+build
+.next
+.cache
+
+# Files binaires de preview (au cas où on a oublié de les delete avant commit)
+*-preview.png
+boom-recap-full.mp4

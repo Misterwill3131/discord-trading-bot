@@ -2,6 +2,7 @@ import { AbsoluteFill, Audio, Sequence, staticFile } from 'remotion';
 import { z } from 'zod';
 import { zTextarea, zColor } from '@remotion/zod-types';
 import { loadFont as loadInter } from '@remotion/google-fonts/Inter';
+import { RecapDateStinger } from '../components/RecapDateStinger';
 
 const { fontFamily } = loadInter('normal', {
   weights: ['400', '600', '700', '900'],
@@ -81,9 +82,14 @@ export const BoomRecap: React.FC<BoomRecapProps> = (props) => {
 
   return (
     <AbsoluteFill style={{ backgroundColor: bgColor, fontFamily }}>
-      {/* Phase 1 : DateStinger — Task 7 le remplit */}
+      {/* Phase 1: DateStinger */}
       <Sequence from={stingerStart} durationInFrames={RECAP_FRAMES.STINGER}>
-        <PhasePlaceholder label="DATE STINGER" props={props} />
+        <RecapDateStinger
+          date={props.date}
+          dateLabel={props.dateLabel}
+          accentColor={props.accentColor}
+          sfxEnabled={props.sfxEnabled}
+        />
       </Sequence>
 
       {/* Phase 2 : HeroStat — Task 8 */}

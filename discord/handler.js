@@ -28,6 +28,7 @@ const { BLOCKED_AUTHORS, getDisplayName } = require('../utils/authors');
 const { extractPrices, extractTicker, stripDiscordMeta, extractPnl } = require('../utils/prices');
 const { classifySignal } = require('../filters/signal');
 const { getMessagesByTicker, enqueueRenderJob } = require('../db/sqlite');
+const { pickTemplate } = require('../utils/template-dispatcher');
 const { customFilters } = require('../state/custom-filters');
 const { messageLog, logEvent } = require('../state/messages');
 const { generateImage, generateProofImage, generateProofImageVertical } = require('../canvas/proof');
@@ -165,13 +166,21 @@ async function maybeEnqueueProofRender({
     console.warn('[render-queue] proof image generation failed (fallback cards):', err.message);
   }
 
+  // Choisit le template Remotion selon le PnL (gold-celebration pour
+  // gros wins, classic-green sinon). Le worker chargera templates/<name>
+  // et mergera ses props + props dynamiques du job.
+  const templateName = pickTemplate({
+    pnl,
+    ticker: signalTicker,
+    entryAuthor: originalAlert.author,
+  });
+
   try {
     enqueueRenderJob({
       ticker: signalTicker,
       // Resolve les usernames Discord raw vers les display names canoniques
-      // (ex: 'traderzz1m' → 'templeofboom') AVANT le storage. Ainsi le
-      // worker, le canvas, les captions et le proof video utilisent tous
-      // le même nom propre.
+      // (ex: 'traderzz1m' → 'ZZ') AVANT le storage. Ainsi le worker, le
+      // canvas, les captions et le proof video utilisent tous le même nom propre.
       entry_author: getDisplayName(originalAlert.author),
       entry_message: originalAlert.content,
       entry_ts: originalAlert.ts,
@@ -180,7 +189,9 @@ async function maybeEnqueueProofRender({
       exit_ts: messageCreatedAt.toISOString(),
       pnl,
       proof_image_base64: proofImageBase64,
+      template_name: templateName,
     });
+    console.log(`[render-queue] enqueued ${signalTicker} ${pnl} → template '${templateName}'`);
   } catch (err) {
     console.error('[render-queue] enqueue failed:', err.message);
   }

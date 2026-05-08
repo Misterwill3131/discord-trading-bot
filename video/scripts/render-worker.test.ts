@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { jobPropsToRemotion, buildCaption, formatTimeNY } from './render-worker';
+import { jobPropsToRemotion, buildCaption, formatTimeNY, loadTemplateProps } from './render-worker';
 
 const sampleJob = {
   id: 42,
@@ -64,5 +64,59 @@ describe('formatTimeNY', () => {
     // 2026-04-25T13:32:00-04:00 = 13:32 NY
     const t = formatTimeNY('2026-04-25T13:32:00-04:00');
     expect(t).toBe('13:32');
+  });
+});
+
+describe('loadTemplateProps', () => {
+  test('null/undefined name → null', () => {
+    expect(loadTemplateProps(null)).toBeNull();
+    expect(loadTemplateProps(undefined)).toBeNull();
+    expect(loadTemplateProps('')).toBeNull();
+  });
+
+  test('charge classic-green template', () => {
+    const props = loadTemplateProps('classic-green');
+    expect(props).not.toBeNull();
+    expect(props?.accentColor).toBe('#10b981');
+    expect(props?.musicVolume).toBe(0.55);
+  });
+
+  test('charge gold-celebration template', () => {
+    const props = loadTemplateProps('gold-celebration');
+    expect(props).not.toBeNull();
+    expect(props?.accentColor).toBe('#fbbf24');
+  });
+
+  test('template inexistant → null + warn', () => {
+    expect(loadTemplateProps('nonexistent-template')).toBeNull();
+  });
+});
+
+describe('jobPropsToRemotion template merging', () => {
+  test('templateName=null → comportement comme avant', () => {
+    const props = jobPropsToRemotion({ ...sampleJob, templateName: null });
+    expect(props.ticker).toBe('TSLA');
+    expect((props as Record<string, unknown>).accentColor).toBeUndefined();
+  });
+
+  test('templateName=classic-green → merge avec template props', () => {
+    const props = jobPropsToRemotion({ ...sampleJob, templateName: 'classic-green' });
+    // Job props (override)
+    expect(props.ticker).toBe('TSLA');
+    expect(props.pnl).toBe('+20%');
+    // Template props (base)
+    expect((props as Record<string, unknown>).accentColor).toBe('#10b981');
+    expect((props as Record<string, unknown>).musicVolume).toBe(0.55);
+  });
+
+  test('job props override template props pour les champs partagés', () => {
+    // ticker dans le template (TSLA) et job (TSLA) — même valeur, OK.
+    // Mais entryAuthor dans le template ('Z') vs job ('Z') — job gagne quoi qu'il en soit.
+    const props = jobPropsToRemotion({
+      ...sampleJob,
+      ticker: 'NVDA',
+      templateName: 'classic-green',
+    });
+    expect(props.ticker).toBe('NVDA'); // job wins over template's TSLA
   });
 });

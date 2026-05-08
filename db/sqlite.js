@@ -452,6 +452,14 @@ addColumnIfMissing('trend_channel', 'direction_disabled', 'INTEGER DEFAULT 0');
 // Optionnel : si null, le worker fallback sur le rendu Discord cards.
 addColumnIfMissing('render_jobs', 'proof_image_base64', 'TEXT');
 
+// ── render_jobs : template_name pour dispatch automatique ─────────────
+// Nom du template Remotion utilisé pour ce job (ex: "classic-green",
+// "gold-celebration"). Choisi côté bot via utils/template-dispatcher.js
+// au moment de l'enqueue (selon le pnl notamment). Le worker charge
+// templates/<name>.json et merge les props par défaut + props du job.
+// Optionnel : si null, le worker utilise les defaultProps de Root.tsx.
+addColumnIfMissing('render_jobs', 'template_name', 'TEXT');
+
 // ── SaaS licenses : passthrough channel séparé pour bots upstream ─────
 // Permet de router les alertes "passthrough" (ex: TrendVision) vers un
 // salon distinct du target_channel_id (signaux principaux).
@@ -1646,16 +1654,16 @@ function backupDb(destPath) {
 const stmtEnqueueRenderJob = db.prepare(`
   INSERT INTO render_jobs
     (ticker, entry_author, entry_message, entry_ts,
-     exit_author, exit_message, exit_ts, pnl, proof_image_base64)
+     exit_author, exit_message, exit_ts, pnl, proof_image_base64, template_name)
   VALUES
     (@ticker, @entry_author, @entry_message, @entry_ts,
-     @exit_author, @exit_message, @exit_ts, @pnl, @proof_image_base64)
+     @exit_author, @exit_message, @exit_ts, @pnl, @proof_image_base64, @template_name)
 `);
 
 const stmtGetPendingRenderJobs = db.prepare(`
   SELECT id, ticker, entry_author, entry_message, entry_ts,
          exit_author, exit_message, exit_ts, pnl, status, created_at,
-         proof_image_base64
+         proof_image_base64, template_name
   FROM render_jobs
   WHERE status = 'pending'
   ORDER BY created_at ASC
@@ -1675,9 +1683,12 @@ const stmtMarkRenderJobFailed = db.prepare(`
 `);
 
 function enqueueRenderJob(payload) {
-  // proof_image_base64 est optionnel : null si pas dispo (fallback Discord cards)
+  // proof_image_base64 + template_name sont optionnels — si absents du
+  // payload, on les défaulte à null. better-sqlite3 plante si on ne
+  // fournit pas explicitement les @-paramètres déclarés dans le SQL.
   const result = stmtEnqueueRenderJob.run({
     proof_image_base64: null,
+    template_name: null,
     ...payload,
   });
   return result.lastInsertRowid;

@@ -37,6 +37,10 @@ function jobToApiShape(row) {
     // avec role pills / emojis custom). null si la génération a échoué côté
     // bot — le worker fallback sur les Discord cards Remotion natives.
     proofImageBase64: row.proof_image_base64 || null,
+    // Nom du template Remotion choisi par le dispatcher (utils/template-dispatcher).
+    // Le worker charge templates/<name>.json pour les props par défaut.
+    // null = utilise les defaultProps de Root.tsx.
+    templateName: row.template_name || null,
   };
 }
 

@@ -32,13 +32,35 @@ export type RenderJob = {
   // Discord conversation). Si null, la composition fallback sur les
   // Discord cards Remotion natives.
   proofImageBase64?: string | null;
+  // Optionnel : nom du template Remotion à utiliser (ex: "gold-celebration").
+  // Si présent, le worker charge templates/<name>.json et merge ses props
+  // comme base avant les props dynamiques du job.
+  templateName?: string | null;
 };
 
+// Charge un template JSON depuis video/templates/<name>.json.
+// Retourne les props (objet) ou null si le template n'existe pas / invalide.
+export function loadTemplateProps(name: string | null | undefined): Record<string, unknown> | null {
+  if (!name) return null;
+  const tplPath = path.join(__dirname, '..', 'templates', `${name}.json`);
+  try {
+    const raw = fs.readFileSync(tplPath, 'utf-8');
+    const json = JSON.parse(raw);
+    return (json && typeof json === 'object' && json.props) ? json.props : null;
+  } catch (err) {
+    console.warn(`[worker] template '${name}' load failed: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+}
+
 // Props passées à la composition BoomProof (sans le id côté DB).
-// Convertit proofImageBase64 (string) en data URL utilisable par <img src=...>.
+// Ordre du merge : template props (base) ← job props (override) ← image data URL.
+// Les valeurs dynamiques (ticker, pnl, authors, image) gagnent toujours.
 export function jobPropsToRemotion(job: RenderJob) {
-  const { id: _id, proofImageBase64, ...rest } = job;
+  const { id: _id, proofImageBase64, templateName, ...rest } = job;
+  const templateProps = loadTemplateProps(templateName) || {};
   return {
+    ...templateProps,
     ...rest,
     proofImageDataUrl: proofImageBase64
       ? `data:image/png;base64,${proofImageBase64}`

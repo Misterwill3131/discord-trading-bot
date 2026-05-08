@@ -1,0 +1,6 @@
+{
+  "composition": "BrandPromo",
+  "name": "Brand Promo Default",
+  "description": "Template par défaut pour BrandPromo (intro 18s : lifestyle hook → STOP GUESSING → 3 cards canvas → CTA discord). Pas de props variables — c'est un asset marketing fixe.",
+  "props": {}
+}

@@ -11,6 +11,7 @@
     "render:entry": "remotion render BoomEntry out/boom-entry.mp4",
     "templates:list": "node scripts/list-templates.js",
     "template:render": "node scripts/render-template.js",
+    "template:create": "node scripts/create-template.js",
     "regen:brand-promo-cards": "node scripts/generate-brand-promo-cards.js",
     "worker": "tsx scripts/render-worker.ts",
     "typecheck": "tsc --noEmit",

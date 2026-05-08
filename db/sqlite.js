@@ -136,6 +136,20 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_gallery_items_ts ON gallery_items(ts);
 
+  -- Recap quotidien : 1×/jour max, idempotence par date NY-timezone.
+  -- Chaque ligne = un message "RECAP:" qui a déclenché un render.
+  -- date = clé naturelle (PRIMARY KEY) garantit l'unicité.
+  CREATE TABLE IF NOT EXISTS daily_recaps (
+    date          TEXT PRIMARY KEY,
+    message_id    TEXT NOT NULL,
+    render_job_id INTEGER,
+    tickers_count INTEGER NOT NULL,
+    runners_hit   INTEGER,
+    runners_total INTEGER,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_daily_recaps_date ON daily_recaps(date);
+
   -- Positions ouvertes par le trading engine. Une ligne = un signal
   -- transformé en ordre. Lifecycle :
   --   pending   → bracket envoyé à IBKR, pas encore fillé
@@ -466,6 +480,13 @@ addColumnIfMissing('render_jobs', 'template_name', 'TEXT');
 // videos). Permet maintenant de lancer des renders BoomEntry (signal
 // d'entry) depuis le dashboard /video-studio.
 addColumnIfMissing('render_jobs', 'composition', "TEXT NOT NULL DEFAULT 'BoomProof'");
+
+// ── render_jobs : recap_data pour BoomRecap composition ───────────────
+// JSON stringified de { tickers, runnersHit, runnersTotal, tagline, ... }
+// Utilisé uniquement pour composition='BoomRecap'. Le worker parse
+// uniquement si non-null. Nullable pour rétrocompat avec les jobs
+// BoomProof/BoomEntry existants.
+addColumnIfMissing('render_jobs', 'recap_data', 'TEXT');
 
 // ── SaaS licenses : passthrough channel séparé pour bots upstream ─────
 // Permet de router les alertes "passthrough" (ex: TrendVision) vers un
@@ -1662,17 +1683,17 @@ const stmtEnqueueRenderJob = db.prepare(`
   INSERT INTO render_jobs
     (ticker, entry_author, entry_message, entry_ts,
      exit_author, exit_message, exit_ts, pnl, proof_image_base64,
-     template_name, composition)
+     template_name, composition, recap_data)
   VALUES
     (@ticker, @entry_author, @entry_message, @entry_ts,
      @exit_author, @exit_message, @exit_ts, @pnl, @proof_image_base64,
-     @template_name, @composition)
+     @template_name, @composition, @recap_data)
 `);
 
 const stmtGetPendingRenderJobs = db.prepare(`
   SELECT id, ticker, entry_author, entry_message, entry_ts,
          exit_author, exit_message, exit_ts, pnl, status, created_at,
-         proof_image_base64, template_name, composition
+         proof_image_base64, template_name, composition, recap_data
   FROM render_jobs
   WHERE status = 'pending'
   ORDER BY created_at ASC
@@ -1692,13 +1713,14 @@ const stmtMarkRenderJobFailed = db.prepare(`
 `);
 
 function enqueueRenderJob(payload) {
-  // proof_image_base64 + template_name + composition optionnels — si
-  // absents du payload, défaulte à null/'BoomProof'. better-sqlite3 plante
+  // proof_image_base64 + template_name + composition + recap_data optionnels
+  // — si absents du payload, défaulte à null/'BoomProof'. better-sqlite3 plante
   // si on ne fournit pas explicitement les @-paramètres du SQL.
   const result = stmtEnqueueRenderJob.run({
     proof_image_base64: null,
     template_name: null,
     composition: 'BoomProof',
+    recap_data: null,
     ...payload,
   });
   return result.lastInsertRowid;
@@ -1714,6 +1736,41 @@ function markRenderJobDone(id, discordMsgId) {
 
 function markRenderJobFailed(id, errorMessage) {
   stmtMarkRenderJobFailed.run(errorMessage || 'unknown error', id);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// daily_recaps : idempotence par date pour les recaps auto-déclenchés
+// ─────────────────────────────────────────────────────────────────────
+
+const stmtClaimRecapDate = db.prepare(`
+  INSERT OR IGNORE INTO daily_recaps (date, message_id, tickers_count)
+  VALUES (?, ?, ?)
+`);
+
+const stmtSetRecapRenderJobId = db.prepare(`
+  UPDATE daily_recaps SET render_job_id = ? WHERE date = ?
+`);
+
+const stmtGetRecapByDate = db.prepare(`
+  SELECT date, message_id, render_job_id, tickers_count,
+         runners_hit, runners_total, created_at
+  FROM daily_recaps WHERE date = ?
+`);
+
+// Tente de claimer une date : true au premier call (recap pas encore
+// fait aujourd'hui), false sinon. Idempotent : safe à appeler 2× sur
+// la même date sans side effect.
+function tryClaimRecapDate(date, messageId, tickersCount) {
+  const result = stmtClaimRecapDate.run(date, messageId, tickersCount);
+  return result.changes > 0;
+}
+
+function setRecapRenderJobId(date, renderJobId) {
+  stmtSetRecapRenderJobId.run(renderJobId, date);
+}
+
+function getRecapByDate(date) {
+  return stmtGetRecapByDate.get(date) || null;
 }
 
 module.exports = {
@@ -1852,4 +1909,9 @@ module.exports = {
   getPendingRenderJobs,
   markRenderJobDone,
   markRenderJobFailed,
+
+  // daily_recaps (idempotence recap auto-déclenché)
+  tryClaimRecapDate,
+  setRecapRenderJobId,
+  getRecapByDate,
 };

@@ -1,4 +1,4 @@
-import { AbsoluteFill, Audio, Sequence, staticFile } from 'remotion';
+import { AbsoluteFill, Audio, Sequence, interpolate, staticFile } from 'remotion';
 import { z } from 'zod';
 import { zTextarea, zColor } from '@remotion/zod-types';
 import { loadFont as loadInter } from '@remotion/google-fonts/Inter';
@@ -7,6 +7,7 @@ import { RecapHeroStat } from '../components/RecapHeroStat';
 import { RecapTickerWaterfall } from '../components/RecapTickerWaterfall';
 import { RecapTop3Highlight } from '../components/RecapTop3Highlight';
 import { RecapClosingStat } from '../components/RecapClosingStat';
+import { RecapOutro } from '../components/RecapOutro';
 
 const { fontFamily } = loadInter('normal', {
   weights: ['400', '600', '700', '900'],
@@ -140,13 +141,21 @@ export const BoomRecap: React.FC<BoomRecapProps> = (props) => {
         />
       </Sequence>
 
-      {/* Phase 6 : Outro — Task 12 */}
+      {/* Phase 6: Outro */}
       <Sequence from={outroStart} durationInFrames={RECAP_FRAMES.OUTRO}>
-        <PhasePlaceholder label="OUTRO" props={props} />
+        <RecapOutro accentColor={props.accentColor} />
       </Sequence>
 
       {/* Background music (Task 12 finalise le mix) */}
-      <Audio src={staticFile('audio/proof-track.mp3')} volume={musicVolume} />
+      <Audio
+        src={staticFile('audio/proof-track.mp3')}
+        volume={(f) => {
+          const totalFrames = computeTotalFrames(props);
+          const fadeStart = totalFrames - 60;
+          if (f < fadeStart) return musicVolume;
+          return interpolate(f, [fadeStart, totalFrames], [musicVolume, 0], { extrapolateRight: 'clamp' });
+        }}
+      />
     </AbsoluteFill>
   );
 };

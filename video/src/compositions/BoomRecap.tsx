@@ -5,6 +5,7 @@ import { loadFont as loadInter } from '@remotion/google-fonts/Inter';
 import { RecapDateStinger } from '../components/RecapDateStinger';
 import { RecapHeroStat } from '../components/RecapHeroStat';
 import { RecapTickerWaterfall } from '../components/RecapTickerWaterfall';
+import { RecapTop3Highlight } from '../components/RecapTop3Highlight';
 
 const { fontFamily } = loadInter('normal', {
   weights: ['400', '600', '700', '900'],
@@ -113,10 +114,15 @@ export const BoomRecap: React.FC<BoomRecapProps> = (props) => {
         />
       </Sequence>
 
-      {/* Phase 4 : Top3Highlight — Task 10 (conditional) */}
+      {/* Phase 4: Top3Highlight (conditional) */}
       {props.showTop3Phase && (
         <Sequence from={top3Start} durationInFrames={RECAP_FRAMES.TOP3}>
-          <PhasePlaceholder label="TOP 3" props={props} />
+          <RecapTop3Highlight
+            tickers={props.tickers}
+            accentColor={props.accentColor}
+            lifestyleSeed={props.lifestyleSeed}
+            sfxEnabled={props.sfxEnabled}
+          />
         </Sequence>
       )}
 

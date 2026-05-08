@@ -79,10 +79,35 @@ function requireWorkerAuth(req, res, next) {
 }
 
 // Helper : poste une vidéo dans le canal Discord configuré, retourne msg id.
+// Erreurs explicites pour faciliter le debug côté Railway logs :
+//   - RENDER_OUTPUT_CHANNEL_ID manquant
+//   - Discord client pas encore prêt
+//   - Channel inaccessible (bot pas dans le serveur, ou pas de permissions)
+//   - send() qui throw (permissions Send Messages / Attach Files manquantes)
 async function postVideoToChannel(client, mp4Buffer, caption, filename) {
   const channelId = process.env.RENDER_OUTPUT_CHANNEL_ID;
   if (!channelId) throw new Error('RENDER_OUTPUT_CHANNEL_ID not set');
-  const channel = await client.channels.fetch(channelId);
+  if (!client || !client.channels) {
+    throw new Error('Discord client not ready (channels manager unavailable)');
+  }
+
+  // Try cache first (sync), then fetch (network). Fetch peut retourner null
+  // si le bot n'a pas accès (guild non joint, channel privé sans perms).
+  let channel = client.channels.cache.get(channelId);
+  if (!channel) {
+    try {
+      channel = await client.channels.fetch(channelId);
+    } catch (err) {
+      throw new Error(`Cannot fetch channel ${channelId}: ${err.message}. Vérifie que le bot est dans le serveur ET a les perms View Channel + Send Messages + Attach Files.`);
+    }
+  }
+  if (!channel) {
+    throw new Error(`Channel ${channelId} introuvable. Causes possibles : (1) le bot n'est pas membre du serveur contenant ce canal, (2) le canal a été supprimé, (3) le canal est privé et le bot n'a pas View Channel.`);
+  }
+  if (typeof channel.send !== 'function') {
+    throw new Error(`Channel ${channelId} (type=${channel.type}) ne supporte pas .send() — vérifie que c'est un text channel, pas une catégorie/voix.`);
+  }
+
   const sent = await channel.send({
     content: caption,
     files: [{ attachment: mp4Buffer, name: filename }],

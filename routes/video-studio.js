@@ -16,7 +16,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const { enqueueRenderJob } = require('../db/sqlite');
+const { enqueueRenderJob, getMessagesByTicker } = require('../db/sqlite');
+const { computePnlString } = require('../utils/prices');
 
 const TEMPLATES_DIR = path.join(__dirname, '..', 'video', 'templates');
 
@@ -81,7 +82,31 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
     const author = item.author || 'Z';
     const ts = item.ts || new Date().toISOString();
     const ticker = (item.ticker || 'BOOM').toUpperCase();
-    const messageStr = `$${ticker} signal`;
+
+    // Lookup du message original dans la DB pour extraire le contenu exact
+    // et calculer le PnL. La gallery stocke seulement metadata (id, ticker,
+    // author, ts, buffer) — pas le texte. On query messages WHERE ticker=
+    // dans une fenêtre de ±60s autour de gallery.ts pour matcher.
+    let messageStr = `$${ticker} signal`;
+    let computedPnl = '+0%';
+    try {
+      const galleryTime = new Date(ts).getTime();
+      const sinceIso = new Date(galleryTime - 60_000).toISOString();
+      const rows = getMessagesByTicker(ticker, sinceIso);
+      // Match : auteur + ts dans ±60s autour de gallery.ts.
+      const match = rows.find(r => {
+        const t = new Date(r.ts).getTime();
+        return Math.abs(t - galleryTime) < 60_000
+          && (r.author || '').toLowerCase() === author.toLowerCase();
+      });
+      if (match && match.content) {
+        messageStr = match.content;
+        const pnl = computePnlString(match.content);
+        if (pnl) computedPnl = pnl;
+      }
+    } catch (err) {
+      console.warn('[video-studio] DB lookup failed, using defaults:', err.message);
+    }
 
     try {
       const jobId = enqueueRenderJob({
@@ -94,13 +119,13 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
         exit_author: author,
         exit_message: messageStr,
         exit_ts: ts,
-        pnl: '+0%', // placeholder, écrasé visuellement par l'image canvas
+        pnl: computedPnl,
         proof_image_base64: item.buffer.toString('base64'),
         template_name: templateId,
         composition,
       });
-      console.log(`[video-studio] enqueue render_job #${jobId} from gallery ${galleryId} (${item.type}) → composition ${composition}, template ${templateId}`);
-      res.json({ jobId, composition, templateId });
+      console.log(`[video-studio] enqueue render_job #${jobId} from gallery ${galleryId} (${item.type}) → composition ${composition}, template ${templateId}, pnl ${computedPnl}`);
+      res.json({ jobId, composition, templateId, pnl: computedPnl });
     } catch (err) {
       console.error('[video-studio] enqueue failed:', err);
       res.status(500).json({ error: err.message });

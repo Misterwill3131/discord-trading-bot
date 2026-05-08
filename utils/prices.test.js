@@ -148,6 +148,40 @@ test('extractPnl returns null for null/undefined', () => {
   assert.strictEqual(extractPnl(undefined), null);
 });
 
+// ─── computePnlString : best effort multi-format ─────────────────────
+const { computePnlString } = require('./prices');
+
+test('computePnlString : explicit "+20%" pass-through', () => {
+  assert.strictEqual(computePnlString('$TSLA out +20%'), '+20%');
+});
+
+test('computePnlString : "up 8%" → +8%', () => {
+  assert.strictEqual(computePnlString('NVDA up 8%'), '+8%');
+});
+
+test('computePnlString : "down 3.5%" → -3.5%', () => {
+  assert.strictEqual(computePnlString('AMD down 3.5%'), '-3.5%');
+});
+
+test('computePnlString : "locked in 12.5%" → +12.5%', () => {
+  assert.strictEqual(computePnlString('locked in 12.5%'), '+12.5%');
+});
+
+test('computePnlString : range "4.7-5.59" → +18.9%', () => {
+  assert.strictEqual(computePnlString('MNTS 4.7-5.59 so far'), '+18.9%');
+});
+
+test('computePnlString : entry-only → null', () => {
+  assert.strictEqual(computePnlString('$GDC .19 entry'), null);
+  assert.strictEqual(computePnlString('TSLA 150 entry long'), null);
+});
+
+test('computePnlString : empty/null', () => {
+  assert.strictEqual(computePnlString(''), null);
+  assert.strictEqual(computePnlString(null), null);
+  assert.strictEqual(computePnlString(undefined), null);
+});
+
 test('extractPnl picks first match if multiple', () => {
   assert.strictEqual(extractPnl('out +10% target was +15%'), '+10%');
 });

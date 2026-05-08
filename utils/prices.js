@@ -284,6 +284,42 @@ function extractPnl(content) {
   return match ? match[0] : null;
 }
 
+// Calcul "best effort" du PnL en string formatté ("+19%", "-3%").
+// Fallbacks dans cet ordre :
+//   1. extractPnl(content) → match explicite "+X%" / "-X%"
+//   2. extractExitGainPct(content) → "up X%" / "locked in X%" / etc.
+//   3. extractPrices(content).gain_pct → range "4.7-5.59" → +18.94%
+// Retourne string formaté avec signe + arrondi à 1 décimale, ou null
+// si aucune méthode ne trouve de PnL.
+function computePnlString(content) {
+  if (!content || typeof content !== 'string') return null;
+  // 1. Explicit +X%
+  const explicit = extractPnl(content);
+  if (explicit) return explicit;
+  // 2. up/down/locked in patterns
+  const exitGain = extractExitGainPct(content);
+  if (exitGain !== null && !Number.isNaN(exitGain)) {
+    return formatPnl(exitGain);
+  }
+  // 3. Range / target prices → compute gain_pct
+  const { gain_pct } = extractPrices(content);
+  if (gain_pct !== null && !Number.isNaN(gain_pct)) {
+    return formatPnl(gain_pct);
+  }
+  return null;
+}
+
+// Helper : formate un number signé en "+X%" / "-X%" (1 décimale max).
+function formatPnl(num) {
+  if (num === null || Number.isNaN(num)) return null;
+  const sign = num >= 0 ? '+' : '';
+  // Round à 1 décimale pour propreté visuelle.
+  const rounded = Math.round(num * 10) / 10;
+  // Si entier, drop le .0.
+  const formatted = rounded % 1 === 0 ? String(rounded) : rounded.toFixed(1);
+  return sign + formatted + '%';
+}
+
 module.exports = {
   extractPrices,
   extractTicker,
@@ -291,6 +327,8 @@ module.exports = {
   enrichContent,
   extractExitGainPct,
   extractPnl,
+  computePnlString,
+  formatPnl,
   stripDiscordMeta,
   TICKER_IGNORE,
 };

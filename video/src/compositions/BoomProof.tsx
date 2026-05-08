@@ -2,6 +2,15 @@ import { AbsoluteFill, Audio, Sequence, staticFile } from 'remotion';
 import { TransitionSeries, linearTiming } from '@remotion/transitions';
 import { fade } from '@remotion/transitions/fade';
 import { slide } from '@remotion/transitions/slide';
+import { z } from 'zod';
+import { zTextarea } from '@remotion/zod-types';
+import { loadFont as loadInter } from '@remotion/google-fonts/Inter';
+
+// Charge Inter (poids 700 + 900 pour les gros titres + corps).
+// fontFamily est utilisable dans tous les sous-composants via inheritance.
+const { fontFamily } = loadInter('normal', {
+  weights: ['400', '600', '700', '900'],
+});
 import { Stinger } from '../components/Stinger';
 import { LifestyleHook } from '../components/LifestyleHook';
 import { ResultTease } from '../components/ResultTease';
@@ -9,20 +18,27 @@ import { TimePassAct } from '../components/TimePassAct';
 import { ProofImageAct } from '../components/ProofImageAct';
 import { ResultCta } from '../components/ResultCta';
 
-export type BoomProofProps = {
-  ticker: string;
-  entryAuthor: string;
-  entryMessage: string;
-  entryTimestamp: string;
-  exitAuthor: string;
-  exitMessage: string;
-  exitTimestamp: string;
-  pnl: string;
-  // Data URL (data:image/png;base64,...) de l'image canvas-rendered
-  // entry+exit conversation. Optionnel : si null, ProofImageAct affiche
-  // un placeholder "image unavailable".
-  proofImageDataUrl?: string | null;
-};
+// Zod schema : Studio génère automatiquement un formulaire d'édition riche
+// (text fields validés, textareas multi-line, etc.) à partir de cette
+// définition. Les props peuvent être modifiées en live sans toucher au code.
+export const boomProofSchema = z.object({
+  ticker: z.string().min(1).max(10).describe('Ticker stock (ex: TSLA, GDC)'),
+  entryAuthor: z.string().min(1).describe("Pseudo Discord de l'analyste qui a posté l'entry"),
+  entryMessage: zTextarea().describe("Texte du message d'entry"),
+  entryTimestamp: z.string().describe("Timestamp ISO 8601 de l'entry (ex: 2026-04-25T13:32:00-04:00)"),
+  exitAuthor: z.string().min(1).describe("Pseudo Discord de l'analyste qui a clôt"),
+  exitMessage: zTextarea().describe("Texte du message d'exit"),
+  exitTimestamp: z.string().describe('Timestamp ISO 8601 de l\'exit'),
+  pnl: z.string().regex(/^[+-]?\d+(\.\d+)?%$/).describe('Gain en % (ex: +20%, -5%)'),
+  proofImageDataUrl: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('Data URL PNG (image canvas entry+exit). Vide = placeholder.'),
+});
+
+// Inferred TypeScript type — cohérent avec le schema, plus de duplication.
+export type BoomProofProps = z.infer<typeof boomProofSchema>;
 
 // Transitions courtes (~0.2s) entre chaque phase pour fluidité sans ralentir.
 // Sequences gonflées pour préserver le timing visuel d'origine malgré les overlaps.
@@ -54,7 +70,7 @@ export const BoomProof = ({
     : `$${ticker} · ${entryAuthor} → ${exitAuthor} · ${pnl}`;
 
   return (
-    <AbsoluteFill style={{ backgroundColor: 'black' }}>
+    <AbsoluteFill style={{ backgroundColor: 'black', fontFamily }}>
       {/* === AUDIO === */}
       <Audio src={staticFile('audio/proof-track.mp3')} volume={0.55} />
 

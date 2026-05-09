@@ -44,6 +44,17 @@ function jobToApiShape(row) {
     // Composition Remotion à rendre ('BoomProof' default, ou 'BoomEntry'
     // pour les renders manuels depuis /dashboard/video-studio).
     composition: row.composition || 'BoomProof',
+    // JSON sérialisé des props recap (uniquement pour BoomRecap). Le worker
+    // parse uniquement si composition === 'BoomRecap'. Snake-case car le
+    // worker le destructure tel quel via `recap_data`.
+    recap_data: row.recap_data || null,
+    // Override des champs tease (action verb + subtext) par le picker
+    // contextuel (utils/pick-tease.js). Spreadés via `...rest` dans le worker.
+    // Conditionnels : si null, on n'inclut PAS le field — le composition
+    // utilise alors la valeur du template / defaultProps Zod (qui rejetterait
+    // null car la majorité des fields ont z.string().default(...) non-nullable).
+    ...(row.tease_action != null ? { teaseAction: row.tease_action } : {}),
+    ...(row.tease_subtext != null ? { teaseSubtext: row.tease_subtext } : {}),
   };
 }
 

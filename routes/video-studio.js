@@ -18,8 +18,13 @@ const fs = require('fs');
 const path = require('path');
 const { enqueueRenderJob, getMessagesByTicker } = require('../db/sqlite');
 const { computePnlString } = require('../utils/prices');
+const { pickTease, parsePnlNumeric } = require('../utils/pick-tease');
 
 const TEMPLATES_DIR = path.join(__dirname, '..', 'video', 'templates');
+
+// Floor en % en-dessous duquel on rejette les renders proof (manuels).
+// Même valeur que le auto-render dans handler.js (PROOF_PCT_FLOOR env).
+const PROOF_PCT_FLOOR = parseFloat(process.env.PROOF_PCT_FLOOR || '20');
 
 function loadTemplates() {
   if (!fs.existsSync(TEMPLATES_DIR)) return [];
@@ -108,6 +113,27 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
       console.warn('[video-studio] DB lookup failed, using defaults:', err.message);
     }
 
+    // Floor PnL pour proof renders : on rejette les vidéos < PROOF_PCT_FLOOR%
+    // pour préserver l'impact (mêmes raisons business que côté auto-render).
+    // Signal renders (entry) ne sont pas filtrés car n'ont pas de PnL pertinent.
+    if (item.type === 'proof') {
+      const pnlNum = parsePnlNumeric(computedPnl);
+      if (pnlNum !== null && pnlNum < PROOF_PCT_FLOOR) {
+        return res.status(400).json({
+          error: `PnL trop faible (${computedPnl} < ${PROOF_PCT_FLOOR}%). Vidéo non générée.`,
+        });
+      }
+    }
+
+    // Picker contextuel pour le tease text. Pool dans video/messages/contexts.json.
+    // Seedé sur galleryId pour que re-render du même item produise la même
+    // phrase (cohérence visuelle, évite la roulette aléatoire).
+    const tease = pickTease({
+      type: item.type,        // 'proof' → exit-win-*, 'signal' → entry
+      pnl: computedPnl,
+      seed: galleryId,
+    });
+
     try {
       const jobId = enqueueRenderJob({
         ticker,
@@ -123,9 +149,11 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
         proof_image_base64: item.buffer.toString('base64'),
         template_name: templateId,
         composition,
+        tease_action: tease ? tease.teaseAction : null,
+        tease_subtext: tease ? tease.teaseSubtext : null,
       });
-      console.log(`[video-studio] enqueue render_job #${jobId} from gallery ${galleryId} (${item.type}) → composition ${composition}, template ${templateId}, pnl ${computedPnl}`);
-      res.json({ jobId, composition, templateId, pnl: computedPnl });
+      console.log(`[video-studio] enqueue render_job #${jobId} from gallery ${galleryId} (${item.type}) → composition ${composition}, template ${templateId}, pnl ${computedPnl}, tease ctx '${tease ? tease.context : 'none'}'`);
+      res.json({ jobId, composition, templateId, pnl: computedPnl, teaseContext: tease ? tease.context : null });
     } catch (err) {
       console.error('[video-studio] enqueue failed:', err);
       res.status(500).json({ error: err.message });

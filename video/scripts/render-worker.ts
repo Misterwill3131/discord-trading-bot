@@ -42,6 +42,11 @@ export type RenderJob = {
   // JSON sérialisé contenant les props du récap (tickers, runnersHit, etc.).
   // Uniquement peuplé pour composition === 'BoomRecap'.
   recap_data?: string | null;
+  // Tease text override (camelCase via jobToApiShape) — picker contextuel
+  // décide ces valeurs au moment de l'enqueue. Si null, le worker utilise
+  // les valeurs du template/defaultProps.
+  teaseAction?: string | null;
+  teaseSubtext?: string | null;
 };
 
 // Charge un template JSON depuis video/templates/<name>.json.

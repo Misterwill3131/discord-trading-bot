@@ -1,0 +1,27 @@
+{
+  "_doc": "Pool de phrases tease pour BoomProof / BoomEntry. Picker dans utils/pick-tease.js. Sélection seedée → cohérente entre re-renders du même item. Pour ajouter des variations, append à la liste — au minimum 3 par contexte pour avoir de la diversité.",
+  "entry": [
+    { "teaseAction": "is going long.",         "teaseSubtext": "Don't miss this →" },
+    { "teaseAction": "spotted this setup.",    "teaseSubtext": "Move incoming →" },
+    { "teaseAction": "called this entry.",     "teaseSubtext": "Watch live →" },
+    { "teaseAction": "is loading up.",         "teaseSubtext": "Fast play →" },
+    { "teaseAction": "just rang the bell.",    "teaseSubtext": "Hop in now →" },
+    { "teaseAction": "flagged a runner.",      "teaseSubtext": "About to send →" }
+  ],
+  "exit-win-small": [
+    { "teaseAction": "locked in profits.",        "teaseSubtext": "Clean win →" },
+    { "teaseAction": "scaled out beautifully.",   "teaseSubtext": "Profit secured →" },
+    { "teaseAction": "called the top.",           "teaseSubtext": "Banked it →" },
+    { "teaseAction": "trimmed the move.",         "teaseSubtext": "Easy money →" },
+    { "teaseAction": "took the win.",             "teaseSubtext": "Watch the play →" },
+    { "teaseAction": "closed it green.",          "teaseSubtext": "Solid call →" }
+  ],
+  "exit-win-big": [
+    { "teaseAction": "crushed it.",                "teaseSubtext": "Watch how →" },
+    { "teaseAction": "nailed the move.",           "teaseSubtext": "Insane gains →" },
+    { "teaseAction": "absolutely dominated.",      "teaseSubtext": "Banked huge →" },
+    { "teaseAction": "called this perfectly.",     "teaseSubtext": "Pure alpha →" },
+    { "teaseAction": "just printed.",              "teaseSubtext": "Crazy run →" },
+    { "teaseAction": "rode this monster.",         "teaseSubtext": "Massive win →" }
+  ]
+}

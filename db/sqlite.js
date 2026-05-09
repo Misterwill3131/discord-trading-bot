@@ -488,6 +488,15 @@ addColumnIfMissing('render_jobs', 'composition', "TEXT NOT NULL DEFAULT 'BoomPro
 // BoomProof/BoomEntry existants.
 addColumnIfMissing('render_jobs', 'recap_data', 'TEXT');
 
+// ── render_jobs : tease_action + tease_subtext (picker contextuel) ─────
+// Texte du tease (action verb + subtext) choisi par utils/pick-tease.js
+// au moment de l'enqueue, en fonction du contexte (entry / exit-win-small
+// / exit-win-big). Override les valeurs du template pour permettre une
+// rotation contextuelle des phrases sans toucher aux JSON templates.
+// Nullable : si null, le worker utilise les valeurs du template.
+addColumnIfMissing('render_jobs', 'tease_action', 'TEXT');
+addColumnIfMissing('render_jobs', 'tease_subtext', 'TEXT');
+
 // ── SaaS licenses : passthrough channel séparé pour bots upstream ─────
 // Permet de router les alertes "passthrough" (ex: TrendVision) vers un
 // salon distinct du target_channel_id (signaux principaux).
@@ -1683,17 +1692,18 @@ const stmtEnqueueRenderJob = db.prepare(`
   INSERT INTO render_jobs
     (ticker, entry_author, entry_message, entry_ts,
      exit_author, exit_message, exit_ts, pnl, proof_image_base64,
-     template_name, composition, recap_data)
+     template_name, composition, recap_data, tease_action, tease_subtext)
   VALUES
     (@ticker, @entry_author, @entry_message, @entry_ts,
      @exit_author, @exit_message, @exit_ts, @pnl, @proof_image_base64,
-     @template_name, @composition, @recap_data)
+     @template_name, @composition, @recap_data, @tease_action, @tease_subtext)
 `);
 
 const stmtGetPendingRenderJobs = db.prepare(`
   SELECT id, ticker, entry_author, entry_message, entry_ts,
          exit_author, exit_message, exit_ts, pnl, status, created_at,
-         proof_image_base64, template_name, composition, recap_data
+         proof_image_base64, template_name, composition, recap_data,
+         tease_action, tease_subtext
   FROM render_jobs
   WHERE status = 'pending'
   ORDER BY created_at ASC
@@ -1713,14 +1723,16 @@ const stmtMarkRenderJobFailed = db.prepare(`
 `);
 
 function enqueueRenderJob(payload) {
-  // proof_image_base64 + template_name + composition + recap_data optionnels
-  // — si absents du payload, défaulte à null/'BoomProof'. better-sqlite3 plante
-  // si on ne fournit pas explicitement les @-paramètres du SQL.
+  // proof_image_base64 + template_name + composition + recap_data + tease_*
+  // optionnels — si absents du payload, défaulte à null/'BoomProof'.
+  // better-sqlite3 plante si on ne fournit pas explicitement les @-paramètres.
   const result = stmtEnqueueRenderJob.run({
     proof_image_base64: null,
     template_name: null,
     composition: 'BoomProof',
     recap_data: null,
+    tease_action: null,
+    tease_subtext: null,
     ...payload,
   });
   return result.lastInsertRowid;

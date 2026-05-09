@@ -30,6 +30,12 @@ const { classifySignal } = require('../filters/signal');
 const { getMessagesByTicker, enqueueRenderJob, tryClaimRecapDate, setRecapRenderJobId } = require('../db/sqlite');
 const { parseRecap } = require('../utils/parse-recap');
 const { pickTemplate } = require('../utils/template-dispatcher');
+const { pickTease, parsePnlNumeric } = require('../utils/pick-tease');
+
+// Floor en % en-dessous duquel on ne génère PAS de proof video.
+// Décision business : trop petit = pas worth the render time + dilue le brand.
+// Configurable via env si tu veux tuner sans code change.
+const PROOF_PCT_FLOOR = parseFloat(process.env.PROOF_PCT_FLOOR || '20');
 const { customFilters } = require('../state/custom-filters');
 const { messageLog, logEvent } = require('../state/messages');
 const { generateImage, generateProofImage, generateProofImageVertical } = require('../canvas/proof');
@@ -147,6 +153,15 @@ async function maybeEnqueueProofRender({
   if (!originalAlert.ts) return;        // skip replies sans parent ts
   if (!pnl || pnl.startsWith('-')) return;  // pnl manquant ou négatif
 
+  // Floor PnL : skip les petits gains (< PROOF_PCT_FLOOR %). Décision business :
+  // les vidéos sous 20% diluent l'impact / coûtent du render time pour peu
+  // de valeur marketing. Configurable via env PROOF_PCT_FLOOR.
+  const pnlNum = parsePnlNumeric(pnl);
+  if (pnlNum !== null && pnlNum < PROOF_PCT_FLOOR) {
+    console.log(`[render-queue] $${signalTicker} ${pnl} skipped — below ${PROOF_PCT_FLOOR}% floor`);
+    return;
+  }
+
   // Génère l'image proof canvas (entry+exit Discord-styled, role pills,
   // emojis custom, etc.). Stockée en base64 pour que le worker l'embed
   // dans la vidéo Remotion. Si la génération échoue, on enqueue quand
@@ -176,6 +191,15 @@ async function maybeEnqueueProofRender({
     entryAuthor: originalAlert.author,
   });
 
+  // Picker contextuel pour le tease text (action verb + subtext). Pool dans
+  // video/messages/contexts.json. Seedé sur ticker+exitTs pour reproductibilité
+  // (re-render du même item → même phrase).
+  const tease = pickTease({
+    type: 'proof',
+    pnl,
+    seed: `${signalTicker}-${messageCreatedAt.toISOString()}`,
+  });
+
   try {
     enqueueRenderJob({
       ticker: signalTicker,
@@ -191,8 +215,10 @@ async function maybeEnqueueProofRender({
       pnl,
       proof_image_base64: proofImageBase64,
       template_name: templateName,
+      tease_action: tease ? tease.teaseAction : null,
+      tease_subtext: tease ? tease.teaseSubtext : null,
     });
-    console.log(`[render-queue] enqueued ${signalTicker} ${pnl} → template '${templateName}'`);
+    console.log(`[render-queue] enqueued ${signalTicker} ${pnl} → template '${templateName}', tease ctx '${tease ? tease.context : 'none'}'`);
   } catch (err) {
     console.error('[render-queue] enqueue failed:', err.message);
   }

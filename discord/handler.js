@@ -106,7 +106,16 @@ async function handleStatsCommand(message, ticker) {
 // ── Recherche de l'alerte originale pour un recap ───────────────────
 // Priorité 1 : si c'est une réponse Discord, on prend le message parent.
 // Priorité 2 : single query DB via l'index (ticker, ts), on retient le
-// premier message passed antérieur au recap (getMessagesByTicker trie DESC).
+// premier message qui ressemble à un VRAI entry signal antérieur au recap.
+//
+// Critères stricts (évite les mentions casuelles type "look at $RXT" qui
+// matchaient avant et nous donnaient un mauvais entry author) :
+//   - m.passed === true (filtre signal a accepté)
+//   - m.type === 'entry' (classifié comme entry, pas exit/neutral/recap)
+//   - m.entry_price !== null (un prix d'entrée a été extrait du message,
+//     preuve qu'il y a un setup chiffré, pas juste une mention de ticker)
+//
+// getMessagesByTicker trie DESC par ts → le premier match est le plus récent.
 function findOriginalAlert({ signalTicker, messageCreatedAt, isReply, parentContent, parentAuthor }) {
   if (isReply && parentContent && parentAuthor) {
     return { author: parentAuthor, content: parentContent, ts: null };
@@ -114,10 +123,11 @@ function findOriginalAlert({ signalTicker, messageCreatedAt, isReply, parentCont
 
   const sinceIso = new Date(messageCreatedAt.getTime() - 30 * 86400000).toISOString();
   const rows = getMessagesByTicker(signalTicker.toUpperCase(), sinceIso);
-  // rows est triée DESC par ts → le premier `passed` antérieur au recap
-  // est bien le dernier signal d'entrée le plus récent.
   const found = rows.find(m =>
-    m.passed && m.id !== undefined && new Date(m.ts) < messageCreatedAt
+    m.passed && m.id !== undefined &&
+    m.type === 'entry' &&
+    m.entry_price !== null && m.entry_price !== undefined &&
+    new Date(m.ts) < messageCreatedAt
   );
   if (!found) return null;
   return {

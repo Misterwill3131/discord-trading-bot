@@ -17,6 +17,14 @@ import { ResultTease } from '../components/ResultTease';
 import { TimePassAct } from '../components/TimePassAct';
 import { ProofImageAct } from '../components/ProofImageAct';
 import { ResultCta } from '../components/ResultCta';
+import { SharedOutro } from '../components/SharedOutro';
+
+// Frames pour le SharedOutro (image lion brandée TOB) ajouté en fin de
+// composition. 90 frames @ 30fps = 3s de Ken Burns zoom + fade in/out.
+// Si tu changes cette valeur, mets à jour Root.tsx durationInFrames
+// (518 frames TransitionSeries + 90 SharedOutro = 608 total).
+const SHARED_OUTRO_FRAMES = 90;
+const TRANSITION_SERIES_END = 518;
 
 // Zod schema : Studio génère automatiquement un formulaire d'édition riche
 // (text fields validés, textareas multi-line, etc.) à partir de cette
@@ -174,6 +182,13 @@ export const BoomProof = ({
           <ResultCta pnl={pnl} url={ctaUrl} />
         </TransitionSeries.Sequence>
       </TransitionSeries>
+
+      {/* Phase 6 — SharedOutro brandé TOB (~3s) : image lion + URL.
+          Picker seedé sur ticker+entryTimestamp pour cohérence entre
+          re-renders. Démarre après la TransitionSeries (frame 518). */}
+      <Sequence from={TRANSITION_SERIES_END} durationInFrames={SHARED_OUTRO_FRAMES}>
+        <SharedOutro seed={`${ticker}-${entryTimestamp}`} />
+      </Sequence>
     </AbsoluteFill>
   );
 };

@@ -9,6 +9,13 @@ import { zTextarea, zColor } from '@remotion/zod-types';
 import { loadFont as loadInter } from '@remotion/google-fonts/Inter';
 import { LifestyleHook } from '../components/LifestyleHook';
 import { MoneyRain } from '../components/MoneyRain';
+import { SharedOutro } from '../components/SharedOutro';
+
+// Frames pour le SharedOutro (image lion brandée TOB) ajouté en fin de
+// composition. 90 frames @ 30fps = 3s. Met à jour Root.tsx durationInFrames
+// (376 frames TransitionSeries + 90 SharedOutro = 466 total).
+const SHARED_OUTRO_FRAMES_BE = 90;
+const TRANSITION_SERIES_END_BE = 376;
 
 const { fontFamily } = loadInter('normal', { weights: ['400', '600', '700', '900'] });
 
@@ -281,6 +288,11 @@ export const BoomEntry = ({
           <CtaJoin title={ctaTitle} url={ctaUrl} subtitle={ctaSubtitle} color={accentColor} titleFontSize={ctaTitleFontSize} />
         </TransitionSeries.Sequence>
       </TransitionSeries>
+
+      {/* Phase 5 — SharedOutro brandé TOB (~3s). Démarre après la TransitionSeries (frame 376). */}
+      <Sequence from={TRANSITION_SERIES_END_BE} durationInFrames={SHARED_OUTRO_FRAMES_BE}>
+        <SharedOutro seed={`${ticker}-${timestamp}`} />
+      </Sequence>
     </AbsoluteFill>
   );
 };

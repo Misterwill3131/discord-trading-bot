@@ -83,7 +83,7 @@ export const Root = () => {
       <Composition
         id="BoomProof"
         component={BoomProof}
-        durationInFrames={518}
+        durationInFrames={608}
         fps={30}
         width={1080}
         height={1920}
@@ -93,7 +93,7 @@ export const Root = () => {
       <Composition
         id="BoomEntry"
         component={BoomEntry}
-        durationInFrames={376}
+        durationInFrames={466}
         fps={30}
         width={1080}
         height={1920}

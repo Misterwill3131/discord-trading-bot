@@ -8,6 +8,7 @@ import { RecapTickerWaterfall } from '../components/RecapTickerWaterfall';
 import { RecapTop3Highlight } from '../components/RecapTop3Highlight';
 import { RecapClosingStat } from '../components/RecapClosingStat';
 import { RecapOutro } from '../components/RecapOutro';
+import { SharedOutro } from '../components/SharedOutro';
 
 const { fontFamily } = loadInter('normal', {
   weights: ['400', '600', '700', '900'],
@@ -51,7 +52,8 @@ export const RECAP_FRAMES = {
   // WATERFALL = dynamique (12-24f par ticker)
   TOP3:      180,   // 6s (skipped si showTop3Phase=false)
   CLOSING:   240,   // 8s
-  OUTRO:      90,   // 3s
+  OUTRO:      90,   // 3s — RecapOutro existant (BOOM logo + DAILY RECAP)
+  SHARED_OUTRO: 90, // 3s — image lion brandée TOB (Ken Burns zoom)
 };
 
 const MIN_FRAMES = 900;   // 30s
@@ -66,7 +68,7 @@ export function computeTotalFrames(props: BoomRecapProps) {
   const waterfall = computeWaterfallFrames(props.tickers);
   const top3 = props.showTop3Phase ? RECAP_FRAMES.TOP3 : 0;
   const total = RECAP_FRAMES.STINGER + RECAP_FRAMES.HERO_STAT + waterfall
-              + top3 + RECAP_FRAMES.CLOSING + RECAP_FRAMES.OUTRO;
+              + top3 + RECAP_FRAMES.CLOSING + RECAP_FRAMES.OUTRO + RECAP_FRAMES.SHARED_OUTRO;
   return Math.max(MIN_FRAMES, Math.min(MAX_FRAMES, total));
 }
 
@@ -78,12 +80,13 @@ export const BoomRecap: React.FC<BoomRecapProps> = (props) => {
   const top3Frames = props.showTop3Phase ? RECAP_FRAMES.TOP3 : 0;
 
   let cursor = 0;
-  const stingerStart   = cursor; cursor += RECAP_FRAMES.STINGER;
-  const heroStart      = cursor; cursor += RECAP_FRAMES.HERO_STAT;
-  const waterfallStart = cursor; cursor += waterfallFrames;
-  const top3Start      = cursor; cursor += top3Frames;
-  const closingStart   = cursor; cursor += RECAP_FRAMES.CLOSING;
-  const outroStart     = cursor;
+  const stingerStart    = cursor; cursor += RECAP_FRAMES.STINGER;
+  const heroStart       = cursor; cursor += RECAP_FRAMES.HERO_STAT;
+  const waterfallStart  = cursor; cursor += waterfallFrames;
+  const top3Start       = cursor; cursor += top3Frames;
+  const closingStart    = cursor; cursor += RECAP_FRAMES.CLOSING;
+  const outroStart      = cursor; cursor += RECAP_FRAMES.OUTRO;
+  const sharedOutroStart = cursor;
 
   return (
     <AbsoluteFill style={{ backgroundColor: bgColor, fontFamily }}>
@@ -141,9 +144,14 @@ export const BoomRecap: React.FC<BoomRecapProps> = (props) => {
         />
       </Sequence>
 
-      {/* Phase 6: Outro */}
+      {/* Phase 6: Outro (BOOM logo + DAILY RECAP) */}
       <Sequence from={outroStart} durationInFrames={RECAP_FRAMES.OUTRO}>
         <RecapOutro accentColor={props.accentColor} />
+      </Sequence>
+
+      {/* Phase 7: SharedOutro brandé TOB (image lion + URL, Ken Burns zoom) */}
+      <Sequence from={sharedOutroStart} durationInFrames={RECAP_FRAMES.SHARED_OUTRO}>
+        <SharedOutro seed={`recap-${props.date}`} />
       </Sequence>
 
       {/* Background music (Task 12 finalise le mix) */}

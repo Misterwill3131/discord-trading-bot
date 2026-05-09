@@ -111,6 +111,10 @@ async function getDailyContext(yahoo, ticker) {
   // Best-effort : fallback null si erreur, le détecteur retombera sur
   // yesterday.close (gap RTH-only).
   let prevSessionClose = null;
+  // fiveDay15mBars : bars adaptées au format engine {t,o,h,l,c,v}, exposées
+  // pour le rendu du chart gap-alert (canvas/gap-chart.js). Empty si fetch
+  // failed ou pas de données.
+  let fiveDay15mBars = [];
   try {
     const intra5d = await yahoo.getChart(ticker, '5D');
     const bars = (intra5d && intra5d.quotes) || [];
@@ -123,6 +127,13 @@ async function getDailyContext(yahoo, ticker) {
         break;
       }
     }
+    // Adapt to engine bar shape for downstream consumers (chart renderer).
+    fiveDay15mBars = bars
+      .filter(b => Number.isFinite(b.close))
+      .map(b => ({
+        t: b.date instanceof Date ? b.date.getTime() : b.date,
+        o: b.open, h: b.high, l: b.low, c: b.close, v: b.volume,
+      }));
   } catch (err) {
     console.warn(`[trend] prevSessionClose fetch failed for ${ticker}: ${err && err.message}`);
   }
@@ -139,6 +150,7 @@ async function getDailyContext(yahoo, ticker) {
     todayOpen: today.open,
     todayCumVolume: today.volume,
     prevSessionClose,
+    fiveDay15mBars,
   };
 }
 
@@ -259,10 +271,16 @@ function formatVolumeAboveAlert(ticker, ev, snap, nowMs) {
 // channelType : 'main' (default) ou 'gap'. Détermine quel champ DB on
 // nettoie quand le channel est UnknownChannel — on évite ainsi de purger
 // la config principale quand c'est juste le salon gap qui a été supprimé.
-async function postToChannel({ discord, store, guildId, channelId, content, channelType = 'main' }) {
+//
+// files : optionnel, array of { attachment: Buffer, name: string } passé
+// au discord.js v14 channel.send pour attacher des PNG (chart gap, etc.).
+async function postToChannel({ discord, store, guildId, channelId, content, channelType = 'main', files = null }) {
   try {
     const channel = await discord.channels.fetch(channelId);
-    await channel.send(content);
+    const payload = (Array.isArray(files) && files.length > 0)
+      ? { content, files }
+      : content;
+    await channel.send(payload);
     return { ok: true };
   } catch (err) {
     if (err && err.code === DISCORD_UNKNOWN_CHANNEL) {
@@ -403,7 +421,28 @@ async function runScanCycle({
           content = formatVolumeAboveAlert(ticker, ev, verdict.snapshot, now());
         }
 
-        if (content) messages.push({ type: ev.type, content });
+        if (!content) continue;
+        // Pour les gaps : tente de rendre un PNG annoté (best-effort).
+        // Si le rendu échoue ou retourne null, on envoie juste le texte.
+        let files = null;
+        if (ev.type === 'gap_up' || ev.type === 'gap_down') {
+          try {
+            const { renderGapChartPng } = require('../canvas/gap-chart');
+            const png = renderGapChartPng({
+              bars: (dailyContext && dailyContext.fiveDay15mBars) || [],
+              prevSessionClose: ev.prevClose,
+              todayOpen: ev.openPrice,
+              gapPct: ev.gapPct,
+              ticker,
+            });
+            if (png) {
+              files = [{ attachment: png, name: `gap-${ticker}-${Date.now()}.png` }];
+            }
+          } catch (err) {
+            console.warn(`[trend] gap chart render failed for ${ticker}: ${err && err.message}`);
+          }
+        }
+        messages.push({ type: ev.type, content, files });
       }
 
       if (messages.length === 0) continue;
@@ -436,7 +475,7 @@ async function runScanCycle({
           const dedupKey = `${channelId}:${msg.type}`;
           if (sentKeys.has(dedupKey)) continue;  // déjà envoyé sur ce salon par un autre guild
           sentKeys.add(dedupKey);
-          const result = await postToChannel({ discord, store, guildId, channelId, content: msg.content, channelType });
+          const result = await postToChannel({ discord, store, guildId, channelId, content: msg.content, channelType, files: msg.files || null });
           if (result.ok) alerts += 1;
           if (result.reason === 'unknown_channel') {
             if (channelType === 'main') break;  // main dead → skip remaining messages for this guild

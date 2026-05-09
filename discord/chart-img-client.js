@@ -116,24 +116,21 @@ const DEFAULT_STUDIES = [
   { name: 'Moving Average',             input: { in_0: 325, in_1: 'close' } },
 ];
 
-// Construit le drawing Fib Retracement à partir de high/low calculés
-// côté caller (sur les candles Yahoo de la même fenêtre). Renvoie null
-// si les anchors sont invalides — le caller skip le drawing dans ce cas.
-//
-// ⚠️  TODO — schéma INCOMPLET. La doc chart-img n'a pas la spec complète
-// du Fib Retracement. La 1re tentative en prod a renvoyé HTTP 422 :
-//   - drawings[0].input.startDatetime  must be a string  (MISSING)
-//   - drawings[0].input.endDatetime    must be a string  (MISSING)
-//   - <3e champ tronqué>               must be a number
-// Pour réactiver : compléter le `input` avec ces champs (probablement
-// startDatetime + endDatetime ISO 8601 des bougies anchor, et possiblement
-// un `levels` array). Trial-and-error via la console chart-img recommandée
-// avant de re-câbler dans market-commands.js.
-function buildFibDrawing(high, low) {
-  if (!Number.isFinite(high) || !Number.isFinite(low) || high <= low) return null;
+// Construit le drawing Fib Retracement à partir de 2 anchor points
+// (start = swing low, end = swing high par convention chart-img).
+// Schéma : startDatetime + startPrice + endDatetime + endPrice (tous
+// requis selon la doc chart-img https://doc.chart-img.com/#fib-retracement).
+// startDatetime/endDatetime doivent être des strings ISO 8601.
+// Renvoie null si l'un des champs est invalide.
+function buildFibDrawing(anchors) {
+  if (!anchors) return null;
+  const { startDatetime, startPrice, endDatetime, endPrice } = anchors;
+  if (typeof startDatetime !== 'string' || typeof endDatetime !== 'string') return null;
+  if (!Number.isFinite(startPrice) || !Number.isFinite(endPrice)) return null;
+  if (startPrice === endPrice) return null;  // FIB dégénéré, pas de range
   return {
     name: 'Fib Retracement',
-    input: { price0: low, price1: high },
+    input: { startDatetime, startPrice, endDatetime, endPrice },
   };
 }
 
@@ -207,9 +204,10 @@ function createChartImgClient({
 
   // getChart(symbol, range, opts?) → Buffer PNG
   // `symbol` doit être pré-résolu (ex: 'AMEX:SPY'). Voir resolveSymbol().
-  // opts.fibAnchors = { high, low } → ajoute un Fib Retracement drawing
-  // tracé entre ces 2 prix. Caller responsable de calculer high/low sur
-  // la même fenêtre temporelle que le range demandé.
+  // opts.fibAnchors = { startDatetime, startPrice, endDatetime, endPrice }
+  //   → ajoute un Fib Retracement drawing entre ces 2 points. Caller
+  //   responsable de trouver les swing low/high (timestamp + prix) sur
+  //   la même fenêtre que le range demandé. Voir buildFibDrawing().
   // Throws 'Invalid range' si le range n'est pas mappable, sinon
   // propage les erreurs HTTP/timeout au caller.
   async function getChart(symbol, range, opts = {}) {
@@ -220,15 +218,16 @@ function createChartImgClient({
 
     const drawings = [];
     if (opts.fibAnchors) {
-      const fib = buildFibDrawing(opts.fibAnchors.high, opts.fibAnchors.low);
+      const fib = buildFibDrawing(opts.fibAnchors);
       if (fib) drawings.push(fib);
     }
 
     // Clé case-sensitive sur le range. La présence du FIB et les anchors
-    // exacts font partie de la clé pour qu'un changement d'anchor (jour
-    // suivant, nouveau high) bypass le cache.
+    // exacts font partie de la clé pour qu'un changement de swing (nouveau
+    // high/low intraday) bypass le cache.
     const fibKey = drawings.length
-      ? '|FIB:' + opts.fibAnchors.low + '-' + opts.fibAnchors.high
+      ? '|FIB:' + opts.fibAnchors.startDatetime + '@' + opts.fibAnchors.startPrice
+        + '-' + opts.fibAnchors.endDatetime + '@' + opts.fibAnchors.endPrice
       : '';
     const key = sym + '|' + String(range) + fibKey;
 

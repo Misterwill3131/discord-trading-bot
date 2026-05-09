@@ -342,9 +342,28 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
       return;
     }
 
+    // FIB Retracement nécessite des anchor points manuels (chart-img n'a
+    // pas d'auto-mode). On fetch les bougies Yahoo pour la même fenêtre
+    // que le range demandé, puis on prend min(low) / max(high). Si le
+    // fetch échoue, on continue sans FIB plutôt que de planter le chart
+    // (les overlays studies suffisent en general).
+    let fibAnchors = null;
+    try {
+      const yChart = await yc.getChart(ticker, range);
+      const candles = (yChart && yChart.quotes) || [];
+      const highs = candles.map(c => c.high).filter(Number.isFinite);
+      const lows  = candles.map(c => c.low).filter(Number.isFinite);
+      if (highs.length > 0 && lows.length > 0) {
+        fibAnchors = { high: Math.max(...highs), low: Math.min(...lows) };
+      }
+    } catch (err) {
+      // Non-bloquant — on log et on continue sans FIB.
+      console.warn('[!chart] FIB anchors lookup failed (continuing without):', err.message);
+    }
+
     let buffer;
     try {
-      buffer = await cic.getChart(symbol, range);
+      buffer = await cic.getChart(symbol, range, { fibAnchors });
     } catch (err) {
       const msg = String(err && err.message || err);
       // 401/403 = clé invalide ou plan expiré — log explicite côté server,

@@ -98,6 +98,35 @@ function resolveSymbol(ticker, yahooExchange) {
   return tv + ':' + t;
 }
 
+// Indicateurs superposés sur le chart par défaut. Format chart-img v2 :
+// `name` = nom canonique TradingView, `input.in_0` = longueur (ou source
+// pour VWAP), `input.in_1` = price source ('close' usuel).
+//
+// 7 studies = potentiellement au-dessus de la limite du plan free
+// (typiquement 5). Si chart-img répond 4xx avec "study limit exceeded",
+// la solution rapide est de retirer MA 325 et EMA 200 (les moins
+// utilisées sur du trading court terme).
+const DEFAULT_STUDIES = [
+  { name: 'Volume Weighted Average', input: { in_0: 'Session', in_1: 'hlc3' } },
+  { name: 'Exponential Moving Average', input: { in_0: 9,   in_1: 'close' } },
+  { name: 'Exponential Moving Average', input: { in_0: 20,  in_1: 'close' } },
+  { name: 'Exponential Moving Average', input: { in_0: 50,  in_1: 'close' } },
+  { name: 'Exponential Moving Average', input: { in_0: 200, in_1: 'close' } },
+  { name: 'Moving Average',             input: { in_0: 50,  in_1: 'close' } },
+  { name: 'Moving Average',             input: { in_0: 325, in_1: 'close' } },
+];
+
+// Construit le drawing Fib Retracement à partir de high/low calculés
+// côté caller (sur les candles Yahoo de la même fenêtre). Renvoie null
+// si les anchors sont invalides — le caller skip le drawing dans ce cas.
+function buildFibDrawing(high, low) {
+  if (!Number.isFinite(high) || !Number.isFinite(low) || high <= low) return null;
+  return {
+    name: 'Fib Retracement',
+    input: { price0: low, price1: high },
+  };
+}
+
 function withTimeout(promise, ms) {
   let handle;
   const timeout = new Promise((_, reject) => {
@@ -117,14 +146,15 @@ function createChartImgClient({
   theme = 'dark',
   width = 800,
   height = 500,
+  studies = DEFAULT_STUDIES,
 } = {}) {
   if (!apiKey) throw new Error('chart-img apiKey required');
   if (!fetchImpl) throw new Error('fetch not available — provide fetchImpl');
 
-  const cache = new Map();   // 'SYMBOL|RANGE' → { ts, data: Buffer } | { inflight }
+  const cache = new Map();   // 'SYMBOL|RANGE|FIB' → { ts, data: Buffer } | { inflight }
 
-  function buildBody(symbol, mapping) {
-    return {
+  function buildBody(symbol, mapping, drawings) {
+    const body = {
       symbol,
       interval: mapping.interval,
       range:    mapping.range,
@@ -132,6 +162,9 @@ function createChartImgClient({
       width,
       height,
     };
+    if (studies && studies.length > 0) body.studies = studies;
+    if (drawings && drawings.length > 0) body.drawings = drawings;
+    return body;
   }
 
   async function fetchPng(body) {
@@ -162,17 +195,32 @@ function createChartImgClient({
     return Buffer.from(ab);
   }
 
-  // getChart(symbol, range) → Buffer PNG
+  // getChart(symbol, range, opts?) → Buffer PNG
   // `symbol` doit être pré-résolu (ex: 'AMEX:SPY'). Voir resolveSymbol().
+  // opts.fibAnchors = { high, low } → ajoute un Fib Retracement drawing
+  // tracé entre ces 2 prix. Caller responsable de calculer high/low sur
+  // la même fenêtre temporelle que le range demandé.
   // Throws 'Invalid range' si le range n'est pas mappable, sinon
   // propage les erreurs HTTP/timeout au caller.
-  async function getChart(symbol, range) {
+  async function getChart(symbol, range, opts = {}) {
     const mapping = mapRangeToChartImg(range);
     if (!mapping) throw new Error('Invalid range: ' + range);
 
     const sym = String(symbol);
-    // Clé case-sensitive sur le range pour distinguer 1m/1M.
-    const key = sym + '|' + String(range);
+
+    const drawings = [];
+    if (opts.fibAnchors) {
+      const fib = buildFibDrawing(opts.fibAnchors.high, opts.fibAnchors.low);
+      if (fib) drawings.push(fib);
+    }
+
+    // Clé case-sensitive sur le range. La présence du FIB et les anchors
+    // exacts font partie de la clé pour qu'un changement d'anchor (jour
+    // suivant, nouveau high) bypass le cache.
+    const fibKey = drawings.length
+      ? '|FIB:' + opts.fibAnchors.low + '-' + opts.fibAnchors.high
+      : '';
+    const key = sym + '|' + String(range) + fibKey;
 
     const hit = cache.get(key);
     if (hit) {
@@ -180,7 +228,7 @@ function createChartImgClient({
       if (hit.inflight) return hit.inflight;
     }
 
-    const body = buildBody(sym, mapping);
+    const body = buildBody(sym, mapping, drawings);
     const inflight = fetchPng(body);
     cache.set(key, { inflight });
     try {
@@ -201,6 +249,8 @@ module.exports = {
   resolveSymbol,
   // exposed for tests
   mapRangeToChartImg,
+  buildFibDrawing,
   YAHOO_TO_TV_EXCHANGE,
+  DEFAULT_STUDIES,
   CHART_IMG_BASE,
 };

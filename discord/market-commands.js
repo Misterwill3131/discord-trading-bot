@@ -10,9 +10,7 @@
 // TTL 30s + timeout 10s sur chaque appel externe.
 // ─────────────────────────────────────────────────────────────────────
 
-const { createCanvas } = require('@napi-rs/canvas');
-const { computeIndicators, calcEMASeries, calcVWAPSeries } = require('../trading/indicators');
-const { FONT } = require('../canvas/config');
+const { computeIndicators } = require('../trading/indicators');
 
 // Table des timeframes acceptés, convention TradingView :
 //   - minute en MINUSCULE  : 1m, 2m, 5m, 15m, 30m
@@ -157,38 +155,6 @@ function createYahooClient({
   return { getQuote, getChart };
 }
 
-// Label d'intervalle affiché dans le titre — dérivé du range demandé.
-// On préfère displayLabel quand défini (cas de 4h qui utilise 1h côté
-// Yahoo mais s'affiche 4h après agrégation).
-const INTERVAL_LABEL = Object.fromEntries(
-  Object.entries(VALID_RANGES).map(([k, v]) => [k, v.displayLabel || v.interval])
-);
-
-// Renvoie 'pre' | 'rth' | 'post' | 'closed' selon l'heure ET d'une
-// bougie. Frontières US NYSE : pre 04:00-09:30, RTH 09:30-16:00,
-// post 16:00-20:00. Hors de ces plages = 'closed'. Intl gère la DST
-// automatiquement pour 'America/New_York'.
-function getETPhase(date) {
-  if (!(date instanceof Date)) return 'closed';
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).formatToParts(date);
-  let hour = 0, minute = 0;
-  for (const p of parts) {
-    if (p.type === 'hour') hour = parseInt(p.value, 10);
-    if (p.type === 'minute') minute = parseInt(p.value, 10);
-  }
-  const mins = hour * 60 + minute;
-  if (mins < 4 * 60) return 'closed';         // 00:00-03:59
-  if (mins < 9 * 60 + 30) return 'pre';       // 04:00-09:29
-  if (mins < 16 * 60) return 'rth';           // 09:30-15:59
-  if (mins < 20 * 60) return 'post';          // 16:00-19:59
-  return 'closed';                             // 20:00-23:59
-}
-
 // Agrège des bars OHLCV N-par-N : O = premier, H = max, L = min,
 // C = dernier, V = somme. Utilisé pour 4h (4 × 1h).
 function aggregateBars(bars, n) {
@@ -231,413 +197,6 @@ function formatVolume(v) {
   return String(Math.round(v));
 }
 
-// Format label temporel. `dailyGranularity` = true quand l'intervalle
-// est 1d → on affiche MMM dd. Sinon intraday → HH:mm.
-function formatTimeLabel(date, dailyGranularity) {
-  if (!(date instanceof Date)) return '';
-  if (dailyGranularity) {
-    return date.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
-  }
-  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-}
-
-function formatDateLabel(date) {
-  if (!(date instanceof Date)) return '';
-  return date.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
-}
-
-function renderChartPng(candles, ticker, range) {
-  // ── Layout ────────────────────────────────────────────────────────
-  const W = 1200, H = 700;
-  const TITLE_H = 50;
-  const TIME_H = 28;
-  const VOL_H = 120;                         // zone volume réduite…
-  const VOL_GAP = 12;                        // gap entre chart et volume
-  const BOTTOM_PAD = 18;                     // …pour garder une marge bas
-  const RIGHT_AXIS_W = 90;
-  const LEFT_PAD = 10;
-
-  const chartY0 = TITLE_H;
-  const chartY1 = H - BOTTOM_PAD - VOL_H - VOL_GAP - TIME_H;
-  const chartH = chartY1 - chartY0;
-  const timeY = chartY1 + 18;                // baseline label temps
-  const volY0 = chartY1 + TIME_H + VOL_GAP;  // haut sous-graphe volume
-  const plotX0 = LEFT_PAD;
-  const plotX1 = W - RIGHT_AXIS_W;
-  const plotW = plotX1 - plotX0;
-
-  // ── Couleurs (thème sombre "TradingView-ish") ─────────────────────
-  const BG = '#0b0e11';
-  const TEXT = '#e6edf3';
-  const TEXT_DIM = '#6e7681';
-  const GRID = '#20252c';
-  const UP = '#2fc774';
-  const DOWN = '#f5515f';
-  const AXIS_PILL_BG = '#1f6feb';
-  const AXIS_PILL_TEXT = '#ffffff';
-
-  const canvas = createCanvas(W, H);
-  const ctx = canvas.getContext('2d');
-
-  // ── Background ────────────────────────────────────────────────────
-  ctx.fillStyle = BG;
-  ctx.fillRect(0, 0, W, H);
-
-  // ── Filter candles : on a besoin de O/H/L/C finis pour dessiner
-  //    un candlestick. Les bars sans OHLC complet sont ignorées. ────
-  const validCandles = (candles || []).filter(c =>
-    Number.isFinite(c.open) && Number.isFinite(c.high)
-    && Number.isFinite(c.low) && Number.isFinite(c.close)
-  );
-  if (validCandles.length < 2) {
-    ctx.fillStyle = TEXT_DIM;
-    ctx.font = '16px ' + FONT;
-    ctx.textAlign = 'left';
-    ctx.fillText('Not enough data to render chart.', LEFT_PAD + 20, chartY0 + chartH / 2);
-    return canvas.toBuffer('image/png');
-  }
-
-  const N = validCandles.length;
-  const opens  = validCandles.map(c => c.open);
-  const highs  = validCandles.map(c => c.high);
-  const lows   = validCandles.map(c => c.low);
-  const closes = validCandles.map(c => c.close);
-  const volumes = validCandles.map(c => Number.isFinite(c.volume) ? c.volume : 0);
-
-  // ── Overlays (EMAs, VWAP) ─────────────────────────────────────────
-  const ema9Series = calcEMASeries(closes, 9);
-  const ema20Series = calcEMASeries(closes, 20);
-  const vwapBars = validCandles.map(c => ({ h: c.high, l: c.low, c: c.close, v: c.volume }));
-  const vwapSeries = calcVWAPSeries(vwapBars);
-
-  // ── Échelle Y prix : clipping par percentile pour éviter qu'un
-  //    outlier (spike illiquide pre/post-market chez Yahoo) compresse
-  //    toute la zone principale. On prend le 2e/98e percentile des
-  //    highs et lows, puis on ajoute un padding 5% de chaque côté.
-  //    Les valeurs hors percentile sont visuellement CLAMPED à
-  //    [minY, maxY] (PAS [minC, maxC]) pour qu'un wick extrême
-  //    s'arrête à 5% du bord du chart, pas pile sur le bord. ────────
-  function percentile(arr, p) {
-    if (arr.length === 0) return 0;
-    const sorted = [...arr].sort((a, b) => a - b);
-    const idx = Math.max(0, Math.min(sorted.length - 1, Math.floor(p * sorted.length)));
-    return sorted[idx];
-  }
-  const yValuesForScale = highs.concat(
-    lows,
-    ema9Series.filter(v => v != null),
-    ema20Series.filter(v => v != null),
-    vwapSeries.filter(v => v != null),
-  );
-  const minY = percentile(yValuesForScale, 0.02);
-  const maxY = percentile(yValuesForScale, 0.98);
-  const ySpan = (maxY - minY) || 1;
-  const yPad = ySpan * 0.05;
-  const minC = minY - yPad;
-  const maxC = maxY + yPad;
-  const span = maxC - minC;
-  const clampToRange = (v) => Math.max(minY, Math.min(maxY, v));
-
-  // ── Helpers de projection ─────────────────────────────────────────
-  // Candle centre en x = plotX0 + (i + 0.5) * slotW, slotW = plotW / N.
-  const slotW = plotW / N;
-  const xCenter = (i) => plotX0 + (i + 0.5) * slotW;
-  // y projeté, puis clampé à la bbox du plot pour les valeurs hors
-  // scale (percentile-clipped outliers).
-  const y = (v) => {
-    const raw = chartY0 + chartH - ((v - minC) / span) * chartH;
-    if (raw < chartY0) return chartY0;
-    if (raw > chartY0 + chartH) return chartY0 + chartH;
-    return raw;
-  };
-
-  // ── Titre : "TICKER, INTERVAL • $PRICE • ±CHANGE%" ────────────────
-  const interval = INTERVAL_LABEL[String(range)] || '';
-  const firstOpen = opens[0];
-  const lastClose = closes[N - 1];
-  const changePct = firstOpen !== 0 ? ((lastClose - firstOpen) / firstOpen) * 100 : 0;
-  const up = changePct >= 0;
-
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
-  const titleY = 32;
-  let tx = LEFT_PAD + 14;
-  ctx.font = 'bold 22px ' + FONT;
-  ctx.fillStyle = TEXT;
-  const titleLeft = ticker + (interval ? ', ' + interval : '');
-  ctx.fillText(titleLeft, tx, titleY);
-  tx += ctx.measureText(titleLeft).width;
-  ctx.fillStyle = TEXT_DIM;
-  ctx.fillText(' • ', tx, titleY);
-  tx += ctx.measureText(' • ').width;
-  ctx.fillStyle = TEXT;
-  const priceStr = '$' + formatPrice(lastClose);
-  ctx.fillText(priceStr, tx, titleY);
-  tx += ctx.measureText(priceStr).width;
-  ctx.fillStyle = TEXT_DIM;
-  ctx.fillText(' • ', tx, titleY);
-  tx += ctx.measureText(' • ').width;
-  ctx.fillStyle = up ? UP : DOWN;
-  ctx.fillText((up ? '+' : '') + changePct.toFixed(2) + '%', tx, titleY);
-
-  // ── Background shading pour les phases hors RTH ───────────────────
-  // Pré-market / after-hours obtiennent un léger éclaircissement pour
-  // distinguer visuellement la session régulière (9:30-16:00 ET) du
-  // reste. Skip pour les ranges daily (intervals '1d') où le concept
-  // ne s'applique pas (chaque bar = 1 journée complète).
-  if (interval !== '1d') {
-    // Groupe les bars contiguës de même phase pour dessiner un seul
-    // rectangle par groupe (évite N fillRect pour N bars).
-    const EXT_HOURS_SHADE = 'rgba(255, 255, 255, 0.03)';
-    let groupStart = -1;
-    let groupPhase = null;
-    const shadeGroup = (startIdx, endIdx) => {
-      const x0 = xCenter(startIdx) - slotW / 2;
-      const x1 = xCenter(endIdx) + slotW / 2;
-      ctx.fillStyle = EXT_HOURS_SHADE;
-      ctx.fillRect(x0, chartY0, x1 - x0, chartH);
-      ctx.fillRect(x0, volY0, x1 - x0, VOL_H);
-    };
-    for (let i = 0; i < N; i++) {
-      const phase = getETPhase(validCandles[i].date);
-      const shade = phase === 'pre' || phase === 'post';
-      if (shade && groupPhase !== 'ext') {
-        groupStart = i;
-        groupPhase = 'ext';
-      } else if (!shade && groupPhase === 'ext') {
-        shadeGroup(groupStart, i - 1);
-        groupPhase = null;
-      }
-    }
-    if (groupPhase === 'ext') shadeGroup(groupStart, N - 1);
-  }
-
-  // ── Gridlines horizontales + axe Y droit ──────────────────────────
-  // 5 niveaux de grille équidistants en prix.
-  ctx.font = '11px ' + FONT;
-  ctx.textAlign = 'left';
-  const gridSteps = 5;
-  for (let k = 0; k <= gridSteps; k++) {
-    const v = minC + (span * k) / gridSteps;
-    const yy = y(v);
-    ctx.strokeStyle = GRID;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(plotX0, yy);
-    ctx.lineTo(plotX1, yy);
-    ctx.stroke();
-    ctx.fillStyle = TEXT_DIM;
-    ctx.fillText(formatPrice(v), plotX1 + 6, yy + 4);
-  }
-
-  // ── Pill High (en haut à droite) ─────────────────────────────────
-  const highMax = Math.max(...highs);
-  const lowMin  = Math.min(...lows);
-  function drawPill(textLine1, textLine2, color, textColor, yTop) {
-    ctx.font = 'bold 11px ' + FONT;
-    const w = Math.max(
-      ctx.measureText(textLine1).width,
-      textLine2 ? ctx.measureText(textLine2).width : 0,
-    ) + 12;
-    const h = textLine2 ? 28 : 18;
-    ctx.fillStyle = color;
-    ctx.fillRect(plotX1 + 1, yTop, w, h);
-    ctx.fillStyle = textColor;
-    ctx.textAlign = 'left';
-    ctx.fillText(textLine1, plotX1 + 7, yTop + 12);
-    if (textLine2) ctx.fillText(textLine2, plotX1 + 7, yTop + 24);
-    return w;
-  }
-  // High pill en haut (aligné avec le max réel)
-  drawPill('High ' + formatPrice(highMax), null, AXIS_PILL_BG, AXIS_PILL_TEXT, y(highMax) - 14);
-  // Low pill en bas
-  drawPill('Low ' + formatPrice(lowMin), null, AXIS_PILL_BG, AXIS_PILL_TEXT, y(lowMin) - 4);
-
-  // ── Helper pour dessiner une série (null = pen-up) ───────────────
-  function drawSeries(series, color, lineWidth) {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = lineWidth;
-    ctx.beginPath();
-    let penDown = false;
-    for (let i = 0; i < series.length; i++) {
-      const v = series[i];
-      if (v == null) { penDown = false; continue; }
-      if (!penDown) { ctx.moveTo(xCenter(i), y(v)); penDown = true; }
-      else { ctx.lineTo(xCenter(i), y(v)); }
-    }
-    ctx.stroke();
-  }
-
-  // ── Candlesticks ──────────────────────────────────────────────────
-  // Body : max 80% du slot, min 1px, wick toujours au centre.
-  //
-  // Single filter conservé : range (H−L) > 8× la médiane. Catch les
-  // single-print aberrants (ex: SPY 5m bar avec L=655 alors que la
-  // médiane des ranges est 0.37) qui apparaissent occasionnellement
-  // dans le flux Yahoo, y compris pendant les heures de marché. Le
-  // 1-bar-gap qui en résulte est préférable au spike artifact.
-  // (Les gaps "naturels" d'overnight/weekend restent intacts —
-  // toutes les autres bougies sont rendues, hors percentile ou non.)
-  const ranges = [];
-  for (let i = 0; i < N; i++) {
-    const r = highs[i] - lows[i];
-    if (Number.isFinite(r) && r >= 0) ranges.push(r);
-  }
-  const sortedRanges = [...ranges].sort((a, b) => a - b);
-  const medianRange = sortedRanges.length
-    ? sortedRanges[Math.floor(sortedRanges.length / 2)]
-    : 0;
-  const maxReasonableRange = medianRange > 0
-    ? medianRange * 8
-    : Number.POSITIVE_INFINITY;
-
-  const bodyW = Math.max(1, Math.min(slotW * 0.7, 12));
-  for (let i = 0; i < N; i++) {
-    const o = opens[i], h = highs[i], l = lows[i], c = closes[i];
-    if ((h - l) > maxReasonableRange) continue;  // bad print → skip
-
-    const cx = xCenter(i);
-    const isUp = c >= o;
-    const color = isUp ? UP : DOWN;
-
-    const yOpen = y(clampToRange(o));
-    const yClose = y(clampToRange(c));
-    const bodyTop = Math.min(yOpen, yClose);
-    const bodyBottom = Math.max(yOpen, yClose);
-    const bodyH = Math.max(1, bodyBottom - bodyTop);
-
-    // Wick clampé au percentile range — évite les outlier bars qui
-    // tracent des lignes verticales jusqu'au bord du chart.
-    const yH = y(clampToRange(h));
-    const yL = y(clampToRange(l));
-    if (yH < yL) {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(cx, yH);
-      ctx.lineTo(cx, yL);
-      ctx.stroke();
-    }
-
-    ctx.fillStyle = color;
-    ctx.fillRect(cx - bodyW / 2, bodyTop, bodyW, bodyH);
-  }
-
-  // ── Overlays (par-dessus les candles) ─────────────────────────────
-  if (vwapSeries.some(v => v != null))  drawSeries(vwapSeries,  '#ff59b9', 1.5);
-  if (ema20Series.some(v => v != null)) drawSeries(ema20Series, '#4ac4ff', 1.5);
-  if (ema9Series.some(v => v != null))  drawSeries(ema9Series,  '#ffd700', 1.5);
-
-  // ── Légende des overlays (haut-gauche, sous le titre) ─────────────
-  // Seules les séries réellement dessinées apparaissent.
-  const legendItems = [];
-  if (ema9Series.some(v => v != null))  legendItems.push({ label: 'EMA9',  color: '#ffd700' });
-  if (ema20Series.some(v => v != null)) legendItems.push({ label: 'EMA20', color: '#4ac4ff' });
-  if (vwapSeries.some(v => v != null))  legendItems.push({ label: 'VWAP',  color: '#ff59b9' });
-  if (legendItems.length > 0) {
-    ctx.font = '11px ' + FONT;
-    ctx.textAlign = 'left';
-    const SWATCH = 8, SG = 4, IG = 12;
-    let lx = LEFT_PAD + 14;
-    const ly = chartY0 + 14;
-    legendItems.forEach((it) => {
-      ctx.fillStyle = it.color;
-      ctx.fillRect(lx, ly - SWATCH + 1, SWATCH, SWATCH);
-      ctx.fillStyle = TEXT_DIM;
-      ctx.fillText(it.label, lx + SWATCH + SG, ly);
-      lx += SWATCH + SG + ctx.measureText(it.label).width + IG;
-    });
-  }
-
-  // ── Pill du prix courant (sur l'axe de droite) ────────────────────
-  const currentPriceColor = up ? UP : DOWN;
-  ctx.font = 'bold 12px ' + FONT;
-  const cpText = formatPrice(lastClose);
-  const cpW = ctx.measureText(cpText).width + 12;
-  const cpY = y(lastClose) - 10;
-  ctx.fillStyle = currentPriceColor;
-  ctx.fillRect(plotX1 + 1, cpY, cpW, 20);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(cpText, plotX1 + 7, cpY + 14);
-
-  // Ligne pointillée du prix courant sur toute la largeur du chart.
-  ctx.strokeStyle = TEXT_DIM;
-  ctx.setLineDash([3, 3]);
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(plotX0, y(lastClose));
-  ctx.lineTo(plotX1, y(lastClose));
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  // ── Axe temporel : 5 ticks évenly-spaced + date à gauche ──────────
-  // Labels "HH:mm" pour les ranges qui tiennent en une seule session
-  // (≤ 1 jour : 1m, 2m, 5m, 1D). Sinon labels "MMM dd" — l'heure
-  // n'apporte rien quand le range s'étale sur plusieurs jours, et ça
-  // évite les labels ambigus type "22:00" qui peuvent appartenir à
-  // n'importe quel jour.
-  const rangeCfg = VALID_RANGES[range];
-  const useDateLabels = !rangeCfg || rangeCfg.ms > 86_400_000;
-  ctx.font = '11px ' + FONT;
-  ctx.fillStyle = TEXT_DIM;
-  ctx.textAlign = 'center';
-  const tickCount = 5;
-  for (let k = 0; k < tickCount; k++) {
-    const idx = Math.round((k / (tickCount - 1)) * (N - 1));
-    const xx = xCenter(idx);
-    const date = validCandles[idx].date;
-    ctx.fillText(formatTimeLabel(date, useDateLabels), xx, timeY);
-  }
-  // Date complète sous la zone des labels de temps, alignée à gauche
-  // dans la marge pour ne jamais sortir du canvas.
-  ctx.textAlign = 'left';
-  const firstDate = validCandles[0].date;
-  ctx.fillStyle = TEXT_DIM;
-  ctx.fillText(formatDateLabel(firstDate), LEFT_PAD + 4, timeY + 14);
-
-  // ── Volume sub-chart ──────────────────────────────────────────────
-  // On utilise le 95e percentile comme max d'échelle (au lieu du max
-  // absolu) pour que les bars extended-hours (10×-1000× plus faibles
-  // que le peak RTH) restent visibles. Les quelques bars qui dépassent
-  // sont clippés à la hauteur max. Plus : hauteur min 1px pour tout
-  // volume > 0 non trivial.
-  const posVolumes = volumes.filter(v => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
-  const p95Vol = posVolumes.length
-    ? posVolumes[Math.min(posVolumes.length - 1, Math.floor(posVolumes.length * 0.95))]
-    : 1;
-  const maxVol = p95Vol || 1;
-  // Gridlines volume (3 niveaux : 0, mid, max)
-  for (const frac of [0, 0.5, 1]) {
-    const yy = volY0 + VOL_H - frac * VOL_H;
-    ctx.strokeStyle = GRID;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(plotX0, yy);
-    ctx.lineTo(plotX1, yy);
-    ctx.stroke();
-    ctx.fillStyle = TEXT_DIM;
-    ctx.font = '10px ' + FONT;
-    ctx.textAlign = 'left';
-    ctx.fillText(formatVolume(frac * maxVol), plotX1 + 6, yy + 3);
-  }
-  // Bars volume (même couleur que la candle correspondante).
-  for (let i = 0; i < N; i++) {
-    const v = volumes[i];
-    if (!Number.isFinite(v) || v <= 0) continue;
-    // Clip à VOL_H (pour les bars qui dépassent le 95e percentile) et
-    // force 2px minimum pour que les petits volumes (extended-hours,
-    // souvent 100×-1000× plus faibles que RTH) restent visibles.
-    const vh = Math.max(2, Math.min(VOL_H, (v / maxVol) * VOL_H));
-    const isUp = closes[i] >= opens[i];
-    ctx.fillStyle = isUp ? UP : DOWN;
-    ctx.globalAlpha = 0.85;
-    ctx.fillRect(xCenter(i) - bodyW / 2, volY0 + VOL_H - vh, bodyW, vh);
-  }
-  ctx.globalAlpha = 1;
-
-  return canvas.toBuffer('image/png');
-}
-
 function formatQuoteMessage(quote) {
   const price = quote.regularMarketPrice;
   const change = quote.regularMarketChangePercent;
@@ -676,8 +235,12 @@ function isUnknownTickerError(err) {
   return /quote\s+not\s+found|invalid\s+(?:symbol|ticker)|no\s+fundamentals|HTTPError.*404|symbol\s+not\s+found/i.test(msg);
 }
 
-function registerMarketCommands(client, { yahooClient } = {}) {
+function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
   const yc = yahooClient || createYahooClient();
+  // chartImgClient peut être null si CHART_IMG_API_KEY est absent — dans ce
+  // cas le handler !chart répond avec un message "command unavailable" plutôt
+  // que de crasher. Permet au reste du bot de tourner sans la clé.
+  const cic = chartImgClient || null;
 
   // ── !price TICKER ───────────────────────────────────────────────────
   client.on('messageCreate', async (message) => {
@@ -719,6 +282,10 @@ function registerMarketCommands(client, { yahooClient } = {}) {
   });
 
   // ── !chart TICKER [RANGE] ───────────────────────────────────────────
+  // Délègue à chart-img.com (Advanced Chart API) — le client encapsule la
+  // requête HTTP, la cache 30s et le mapping range→{interval, range}.
+  // Si CHART_IMG_API_KEY n'est pas en env, le handler répond avec un
+  // message d'indisponibilité plutôt que de crasher.
   client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
     const m = message.content.trim().match(/^!chart(?:\s+([A-Za-z$.\-]{1,10}))?(?:\s+([A-Za-z0-9]{1,3}))?$/i);
@@ -739,42 +306,34 @@ function registerMarketCommands(client, { yahooClient } = {}) {
       return;
     }
 
-    console.log('[!chart] ' + ticker + ' ' + range + ' requested by ' + message.author.username
-      + ' in #' + (message.channel.name || message.channel.id));
-
-    let candles;
-    try {
-      const chart = await yc.getChart(ticker, range);
-      candles = (chart && chart.quotes) || [];
-      if (candles.length === 0) {
-        // Ticker valide mais pas de données (jour férié, hors séance, ticker
-        // très illiquide). On distingue du cas "ticker introuvable" qui passe
-        // par le catch.
-        try { await message.reply('❌ No data available for $' + ticker + ' on ' + range); } catch (_) {}
-        return;
-      }
-    } catch (err) {
-      if (isUnknownTickerError(err)) {
-        console.log('[!chart] Unknown ticker: ' + ticker);
-        try { await message.reply('❌ Ticker $' + ticker + ' not found'); } catch (_) {}
-        return;
-      }
-      if (isRateLimitError(err)) {
-        console.error('[!chart] Rate limited');
-        try { await message.reply('❌ Rate limited, try again in 30s'); } catch (_) {}
-        return;
-      }
-      console.error('[yahoo]', err.stack || err.message);
-      try { await message.reply('❌ Yahoo Finance unavailable, try again in a few minutes'); } catch (_) {}
+    if (!cic) {
+      console.warn('[!chart] CHART_IMG_API_KEY missing — command unavailable');
+      try { await message.reply('❌ Chart command unavailable (CHART_IMG_API_KEY not configured)'); } catch (_) {}
       return;
     }
 
+    console.log('[!chart] ' + ticker + ' ' + range + ' requested by ' + message.author.username
+      + ' in #' + (message.channel.name || message.channel.id));
+
     let buffer;
     try {
-      buffer = renderChartPng(candles, ticker, range);
+      buffer = await cic.getChart(ticker, range);
     } catch (err) {
-      console.error('[!chart] render failed', err.stack || err.message);
-      try { await message.reply('❌ Chart rendering failed'); } catch (_) {}
+      const msg = String(err && err.message || err);
+      // 401/403 = clé invalide ou plan expiré — log explicite côté server,
+      // message générique côté Discord (n'expose pas le code).
+      if (/HTTP 401|HTTP 403/.test(msg)) {
+        console.error('[!chart] auth error:', msg);
+        try { await message.reply('❌ Chart unavailable, try again later'); } catch (_) {}
+        return;
+      }
+      if (/HTTP 429/.test(msg)) {
+        console.error('[!chart] rate limited:', msg);
+        try { await message.reply('❌ Rate limited, try again in 30s'); } catch (_) {}
+        return;
+      }
+      console.error('[!chart] chart-img error:', err.stack || msg);
+      try { await message.reply('❌ Chart unavailable, try again later'); } catch (_) {}
       return;
     }
 
@@ -860,7 +419,6 @@ module.exports = {
   formatPrice,
   formatVolume,
   createYahooClient,
-  renderChartPng,
   registerMarketCommands,
   // exposed for tests
   formatQuoteMessage,

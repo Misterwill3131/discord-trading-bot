@@ -348,6 +348,8 @@ registerTrendCommands(client, {
   yahoo: sharedYahoo,
   scannerConfig: { intervalMin: parseInt(process.env.TREND_SCAN_INTERVAL_MIN, 10) || 5 },
 });
+const { registerGapCommands } = require('./discord/gap-commands');
+registerGapCommands(client, { yahoo: sharedYahoo });
 startTrendScanner({ client, store: trendStore, yahoo: sharedYahoo });
 registerProfitListener(client, { profitsChannelId: PROFITS_CHANNEL_ID });
 registerTradingHandler(client, {

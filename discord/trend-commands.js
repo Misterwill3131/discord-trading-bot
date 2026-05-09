@@ -42,6 +42,98 @@ function isUnknownTicker(err) {
   );
 }
 
+// !trend chart TICKER → render le PNG annoté du dernier gap overnight pour
+// ce ticker (premarket open vs prev session close, avec bande overnight,
+// lignes de référence et label). On-demand uniquement — pas attaché auto
+// aux alertes gap (trop verbeux). Marche aussi pour les tickers pas dans
+// la watchlist. Si pas assez de données ou Yahoo échoue → message texte.
+async function handleChart(message, args, { yahoo }) {
+  if (!message.guildId) {
+    return message.reply('Use this command in a server.').catch(() => {});
+  }
+  if (args.length < 2) {
+    return message.reply('Usage: `!trend chart <TICKER>`').catch(() => {});
+  }
+  const ticker = args[1].replace(/\$/g, '').toUpperCase();
+  if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(ticker)) {
+    return message.reply('❌ Invalid ticker format').catch(() => {});
+  }
+
+  let chart;
+  try {
+    chart = await yahoo.getChart(ticker, '5D');
+  } catch (err) {
+    if (isUnknownTicker(err)) {
+      return message.reply(`❌ Unknown ticker $${ticker}`).catch(() => {});
+    }
+    return message.reply('❌ Yahoo Finance unavailable, try again in a few minutes').catch(() => {});
+  }
+
+  const quotes = (chart && chart.quotes) || [];
+  const bars = quotes
+    .filter(q => Number.isFinite(q.close))
+    .map(q => ({
+      t: q.date instanceof Date ? q.date.getTime() : q.date,
+      o: q.open, h: q.high, l: q.low, c: q.close, v: q.volume,
+    }));
+  if (bars.length < 2) {
+    return message.reply(`❌ Not enough data for $${ticker}`).catch(() => {});
+  }
+
+  // Détermine les 2 dernières dates ET distinctes dans les bars (handles
+  // weekends/holidays naturellement). prevSessionClose = dernière bougie de
+  // l'avant-dernière date ; todayOpen = première bougie de la dernière date.
+  const { formatDateET } = require('../trading/trend-scanner');
+  const datesInOrder = [];
+  const seen = new Set();
+  for (const b of bars) {
+    const d = formatDateET(new Date(b.t));
+    if (!seen.has(d)) { seen.add(d); datesInOrder.push(d); }
+  }
+  if (datesInOrder.length < 2) {
+    return message.reply(`❌ Need at least 2 trading days of data for $${ticker}`).catch(() => {});
+  }
+  const latestDate = datesInOrder[datesInOrder.length - 1];
+  const prevDate   = datesInOrder[datesInOrder.length - 2];
+
+  let prevSessionClose = null;
+  for (let i = bars.length - 1; i >= 0; i--) {
+    if (formatDateET(new Date(bars[i].t)) === prevDate) {
+      prevSessionClose = bars[i].c;
+      break;
+    }
+  }
+  let todayOpen = null;
+  for (let i = 0; i < bars.length; i++) {
+    if (formatDateET(new Date(bars[i].t)) === latestDate) {
+      todayOpen = bars[i].o;
+      break;
+    }
+  }
+  if (!Number.isFinite(prevSessionClose) || !Number.isFinite(todayOpen) || prevSessionClose <= 0) {
+    return message.reply(`❌ Could not compute gap for $${ticker}`).catch(() => {});
+  }
+
+  const gapPct = ((todayOpen - prevSessionClose) / prevSessionClose) * 100;
+  const { renderGapChartPng } = require('../canvas/gap-chart');
+  const png = renderGapChartPng({ bars, prevSessionClose, todayOpen, gapPct, ticker });
+  if (!png) {
+    return message.reply(`❌ Could not render chart for $${ticker}`).catch(() => {});
+  }
+
+  const sign = gapPct >= 0 ? '+' : '';
+  const arrow = gapPct >= 0 ? '⬆️' : '⬇️';
+  const direction = gapPct >= 0 ? 'up' : 'down';
+  const captionLines = [
+    `${arrow} **$${ticker}** — overnight gap ${direction} ${sign}${gapPct.toFixed(2)}%`,
+    `Open ${formatPrice(todayOpen)} vs prev session close ${formatPrice(prevSessionClose)}`,
+  ];
+  return message.reply({
+    content: captionLines.join('\n'),
+    files: [{ attachment: png, name: `gap-${ticker}-${Date.now()}.png` }],
+  }).catch(e => console.error('[trend] chart reply', e.message));
+}
+
 // !trend TICKER → analyse complète
 async function handleAnalyze(message, ticker, { yahoo, store }) {
   let chart, dailyContext;
@@ -476,7 +568,7 @@ function registerTrendCommands(client, { store, yahoo, scannerConfig }) {
 
     const args = text.slice('!trend'.length).trim().split(/\s+/).filter(Boolean);
     if (args.length === 0) {
-      return message.reply('Usage: `!trend <TICKER>` · `!trend watch <TICKER>` · `!trend unwatch <TICKER>` · `!trend watchlist` · `!trend status` · `!trend list` · `!trend channel #channel` · `!trend gap-channel #channel` · `!trend direction on|off`').catch(() => {});
+      return message.reply('Usage: `!trend <TICKER>` · `!trend chart <TICKER>` · `!trend watch <TICKER>` · `!trend unwatch <TICKER>` · `!trend watchlist` · `!trend status` · `!trend list` · `!trend channel #channel` · `!trend gap-channel #channel` · `!trend direction on|off`').catch(() => {});
     }
 
     const sub = args[0].toLowerCase();
@@ -485,6 +577,7 @@ function registerTrendCommands(client, { store, yahoo, scannerConfig }) {
     if (sub === 'channel')      return handleChannel(message, args, { store });
     if (sub === 'gap-channel')  return handleGapChannel(message, args, { store });
     if (sub === 'direction')    return handleDirection(message, args, { store });
+    if (sub === 'chart')        return handleChart(message, args, { yahoo });
     if (sub === 'watchlist')    return handleWatchlist(message, { store, yahoo });
     if (sub === 'status')       return handleStatus(message, { store, scannerConfig });
     if (sub === 'list')         return handleList(message, { store });

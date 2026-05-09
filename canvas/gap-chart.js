@@ -30,18 +30,21 @@ function dateET(ms) {
   }).format(new Date(ms));
 }
 
-// Filtre les bars à la fenêtre focus : tous les bars d'aujourd'hui ET
-// + tous les bars d'hier ET. Si pas d'hier, fallback sur today seulement.
+// Filtre les bars à la fenêtre focus : les 2 dates ET les plus récentes
+// présentes dans les données. Anchor sur les bars eux-mêmes (pas Date.now())
+// pour gérer correctement weekends/holidays/données stales — utile pour le
+// rendu on-demand (commande `!trend chart`) où la dernière barre peut
+// dater de vendredi alors qu'on est lundi.
 function filterToFocusWindow(bars) {
   if (!Array.isArray(bars) || bars.length === 0) return [];
-  const todayET = dateET(Date.now());
-  const yest = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const yesterdayET = dateET(yest.getTime());
-  return bars.filter(b => {
-    if (!Number.isFinite(b.t)) return false;
-    const d = dateET(b.t);
-    return d === todayET || d === yesterdayET;
-  });
+  const recentDates = new Set();
+  for (let i = bars.length - 1; i >= 0; i--) {
+    if (!Number.isFinite(bars[i].t)) continue;
+    recentDates.add(dateET(bars[i].t));
+    if (recentDates.size >= 2) break;
+  }
+  if (recentDates.size === 0) return [];
+  return bars.filter(b => Number.isFinite(b.t) && recentDates.has(dateET(b.t)));
 }
 
 // Trouve l'index où la date ET change entre 2 bars consécutifs (= la
@@ -57,6 +60,11 @@ function findOvernightBoundary(bars) {
 function renderGapChartPng({ bars, prevSessionClose, todayOpen, gapPct, ticker }) {
   const focused = filterToFocusWindow(bars);
   if (focused.length < 2) return null;
+  // Require at least 2 distinct ET dates : sans transition jour, pas de
+  // gap overnight visible. Évite de rendre un chart sans valeur ajoutée.
+  const distinctDates = new Set();
+  for (const b of focused) distinctDates.add(dateET(b.t));
+  if (distinctDates.size < 2) return null;
   if (!Number.isFinite(prevSessionClose) || !Number.isFinite(todayOpen)) return null;
   if (!Number.isFinite(gapPct)) return null;
 

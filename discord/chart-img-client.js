@@ -98,22 +98,24 @@ function resolveSymbol(ticker, yahooExchange) {
   return tv + ':' + t;
 }
 
-// Indicateurs superposés sur le chart par défaut. Format chart-img v2 :
-// `name` = nom canonique TradingView, `input.in_0` = longueur (ou source
-// pour VWAP), `input.in_1` = price source ('close' usuel).
+// Indicateurs superposés sur le chart par défaut. Noms et schéma vérifiés
+// contre la doc chart-img (https://doc.chart-img.com — sections #vwap,
+// #moving-average-exponential, #moving-average) :
+//   - VWAP n'a PAS d'input (computed sur la session)
+//   - EMA / MA prennent `length` (int) + `source` (string), PAS `in_0`/`in_1`
+//   - Le nom EMA est "Moving Average Exponential", PAS "Exponential Moving Average"
 //
-// 7 studies = potentiellement au-dessus de la limite du plan free
-// (typiquement 5). Si chart-img répond 4xx avec "study limit exceeded",
-// la solution rapide est de retirer MA 325 et EMA 200 (les moins
-// utilisées sur du trading court terme).
+// 7 studies = potentiellement au-dessus du plan free (souvent 5). Si
+// chart-img répond "study limit exceeded", retirer EMA 200 + MA 325
+// (les moins utilisées en trading court terme).
 const DEFAULT_STUDIES = [
-  { name: 'Volume Weighted Average', input: { in_0: 'Session', in_1: 'hlc3' } },
-  { name: 'Exponential Moving Average', input: { in_0: 9,   in_1: 'close' } },
-  { name: 'Exponential Moving Average', input: { in_0: 20,  in_1: 'close' } },
-  { name: 'Exponential Moving Average', input: { in_0: 50,  in_1: 'close' } },
-  { name: 'Exponential Moving Average', input: { in_0: 200, in_1: 'close' } },
-  { name: 'Moving Average',             input: { in_0: 50,  in_1: 'close' } },
-  { name: 'Moving Average',             input: { in_0: 325, in_1: 'close' } },
+  { name: 'VWAP' },
+  { name: 'Moving Average Exponential', input: { length: 9,   source: 'close' } },
+  { name: 'Moving Average Exponential', input: { length: 20,  source: 'close' } },
+  { name: 'Moving Average Exponential', input: { length: 50,  source: 'close' } },
+  { name: 'Moving Average Exponential', input: { length: 200, source: 'close' } },
+  { name: 'Moving Average',             input: { length: 50,  source: 'close' } },
+  { name: 'Moving Average',             input: { length: 325, source: 'close' } },
 ];
 
 // Construit le drawing Fib Retracement à partir de 2 anchor points

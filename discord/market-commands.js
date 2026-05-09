@@ -342,28 +342,16 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
       return;
     }
 
-    // FIB Retracement nécessite des anchor points manuels (chart-img n'a
-    // pas d'auto-mode). On fetch les bougies Yahoo pour la même fenêtre
-    // que le range demandé, puis on prend min(low) / max(high). Si le
-    // fetch échoue, on continue sans FIB plutôt que de planter le chart
-    // (les overlays studies suffisent en general).
-    let fibAnchors = null;
-    try {
-      const yChart = await yc.getChart(ticker, range);
-      const candles = (yChart && yChart.quotes) || [];
-      const highs = candles.map(c => c.high).filter(Number.isFinite);
-      const lows  = candles.map(c => c.low).filter(Number.isFinite);
-      if (highs.length > 0 && lows.length > 0) {
-        fibAnchors = { high: Math.max(...highs), low: Math.min(...lows) };
-      }
-    } catch (err) {
-      // Non-bloquant — on log et on continue sans FIB.
-      console.warn('[!chart] FIB anchors lookup failed (continuing without):', err.message);
-    }
-
+    // FIB Retracement temporairement désactivé : la doc chart-img était
+    // incomplète sur le schéma — l'API renvoie HTTP 422 disant que
+    // startDatetime, endDatetime (et un 3e champ tronqué dans nos logs)
+    // sont requis en plus de price0/price1. Pour réactiver : compléter
+    // buildFibDrawing() avec les bons champs et passer fibAnchors:
+    // { high, low, highTime, lowTime } depuis ici. Voir le commentaire
+    // TODO dans chart-img-client.js.
     let buffer;
     try {
-      buffer = await cic.getChart(symbol, range, { fibAnchors });
+      buffer = await cic.getChart(symbol, range);
     } catch (err) {
       const msg = String(err && err.message || err);
       // 401/403 = clé invalide ou plan expiré — log explicite côté server,

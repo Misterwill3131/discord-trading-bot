@@ -119,6 +119,16 @@ const DEFAULT_STUDIES = [
 // Construit le drawing Fib Retracement à partir de high/low calculés
 // côté caller (sur les candles Yahoo de la même fenêtre). Renvoie null
 // si les anchors sont invalides — le caller skip le drawing dans ce cas.
+//
+// ⚠️  TODO — schéma INCOMPLET. La doc chart-img n'a pas la spec complète
+// du Fib Retracement. La 1re tentative en prod a renvoyé HTTP 422 :
+//   - drawings[0].input.startDatetime  must be a string  (MISSING)
+//   - drawings[0].input.endDatetime    must be a string  (MISSING)
+//   - <3e champ tronqué>               must be a number
+// Pour réactiver : compléter le `input` avec ces champs (probablement
+// startDatetime + endDatetime ISO 8601 des bougies anchor, et possiblement
+// un `levels` array). Trial-and-error via la console chart-img recommandée
+// avant de re-câbler dans market-commands.js.
 function buildFibDrawing(high, low) {
   if (!Number.isFinite(high) || !Number.isFinite(low) || high <= low) return null;
   return {

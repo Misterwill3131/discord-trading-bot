@@ -211,9 +211,18 @@ async function processJob(
     codec: 'h264',
     outputLocation: outPath,
     inputProps: jobPropsToRemotion(job),
+    // Cap bitrate pour rester sous la limite Discord (25 MB par défaut sur
+    // serveur non-boosté). 3 Mbps × 20s ~= 7.5 MB, ample marge. La qualité
+    // visuelle reste très bonne pour socials 1080×1920 (TikTok/Reels).
+    // Sans cap, Remotion default (crf 18 = visually lossless) produit des
+    // fichiers de 30-50 MB qui dépassent la limite Discord.
+    videoBitrate: '3M',
   });
 
-  console.log(`[worker] rendered ${outPath}`);
+  // Log file size pour debug. Discord accepte 25 MB par défaut (free),
+  // 50 MB si Nitro Basic, 100 MB si Boost Level 3.
+  const fileSizeMb = (fs.statSync(outPath).size / 1024 / 1024).toFixed(2);
+  console.log(`[worker] rendered ${outPath} (${fileSizeMb} MB)`);
 
   try {
     await ackJobSuccess(

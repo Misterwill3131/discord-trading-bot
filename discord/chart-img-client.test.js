@@ -260,17 +260,26 @@ test('getChart times out after timeoutMs', async () => {
 });
 
 // ── DEFAULT_STUDIES + studies in body ──────────────────────────────
-test('DEFAULT_STUDIES includes the 7 expected indicators', () => {
-  // Sanity check — protège contre une suppression accidentelle.
-  const names = DEFAULT_STUDIES.map(s => s.name + ':' + s.input.in_0);
-  assert.ok(names.includes('Volume Weighted Average:Session'));
-  assert.ok(names.includes('Exponential Moving Average:9'));
-  assert.ok(names.includes('Exponential Moving Average:20'));
-  assert.ok(names.includes('Exponential Moving Average:50'));
-  assert.ok(names.includes('Exponential Moving Average:200'));
-  assert.ok(names.includes('Moving Average:50'));
-  assert.ok(names.includes('Moving Average:325'));
+test('DEFAULT_STUDIES includes the 7 expected indicators with chart-img names', () => {
+  // Sanity check — protège contre une régression sur les noms (la doc
+  // chart-img exige "VWAP" et "Moving Average Exponential", pas les noms
+  // TradingView humains).
+  const sigs = DEFAULT_STUDIES.map(s =>
+    s.name + (s.input ? ':' + s.input.length : ''));
+  assert.ok(sigs.includes('VWAP'), 'VWAP (no input)');
+  assert.ok(sigs.includes('Moving Average Exponential:9'));
+  assert.ok(sigs.includes('Moving Average Exponential:20'));
+  assert.ok(sigs.includes('Moving Average Exponential:50'));
+  assert.ok(sigs.includes('Moving Average Exponential:200'));
+  assert.ok(sigs.includes('Moving Average:50'));
+  assert.ok(sigs.includes('Moving Average:325'));
   assert.strictEqual(DEFAULT_STUDIES.length, 7);
+  // Verify input shape: length + source (NOT in_0/in_1)
+  for (const s of DEFAULT_STUDIES) {
+    if (!s.input) continue;
+    assert.ok(Number.isFinite(s.input.length), s.name + ' must have numeric length');
+    assert.strictEqual(s.input.source, 'close', s.name + ' must use close source');
+  }
 });
 
 test('getChart sends DEFAULT_STUDIES in the body by default', async () => {

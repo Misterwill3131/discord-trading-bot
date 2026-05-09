@@ -11,6 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const { computeIndicators } = require('../trading/indicators');
+const { resolveSymbol } = require('./chart-img-client');
 
 // Table des timeframes acceptés, convention TradingView :
 //   - minute en MINUSCULE  : 1m, 2m, 5m, 15m, 30m
@@ -315,9 +316,35 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
     console.log('[!chart] ' + ticker + ' ' + range + ' requested by ' + message.author.username
       + ' in #' + (message.channel.name || message.channel.id));
 
+    // chart-img requires an exchange-prefixed symbol (ex: AMEX:SPY).
+    // Yahoo's quote() returns the exchange code, which we map to the
+    // TradingView convention via resolveSymbol(). Cached for 30s by yc,
+    // so a burst of !chart calls on the same ticker only hits Yahoo once.
+    let symbol;
+    try {
+      const quote = await yc.getQuote(ticker);
+      if (!quote || !quote.symbol) {
+        try { await message.reply('❌ Ticker $' + ticker + ' not found'); } catch (_) {}
+        return;
+      }
+      symbol = resolveSymbol(ticker, quote.exchange);
+    } catch (err) {
+      if (isUnknownTickerError(err)) {
+        try { await message.reply('❌ Ticker $' + ticker + ' not found'); } catch (_) {}
+        return;
+      }
+      if (isRateLimitError(err)) {
+        try { await message.reply('❌ Rate limited, try again in 30s'); } catch (_) {}
+        return;
+      }
+      console.error('[!chart] yahoo lookup failed:', err.stack || err.message);
+      try { await message.reply('❌ Chart unavailable, try again later'); } catch (_) {}
+      return;
+    }
+
     let buffer;
     try {
-      buffer = await cic.getChart(ticker, range);
+      buffer = await cic.getChart(symbol, range);
     } catch (err) {
       const msg = String(err && err.message || err);
       // 401/403 = clé invalide ou plan expiré — log explicite côté server,

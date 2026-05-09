@@ -4,20 +4,21 @@
 // Wrapper minimal autour de l'Advanced Chart API v2 de chart-img.com.
 // Renvoie un Buffer PNG prêt à être posté dans Discord.
 //
-// Endpoint : GET https://api.chart-img.com/v2/tradingview/advanced-chart
+// Endpoint : POST https://api.chart-img.com/v2/tradingview/advanced-chart
 //   Auth   : header `x-api-key: <CHART_IMG_API_KEY>`
-//   Query  : symbol, interval, range, theme, width, height
+//   CT     : Content-Type: application/json
+//   Body   : { symbol, interval, range, theme, width, height }  (JSON)
 //   Resp   : binaire PNG (Content-Type: image/png)
+//
+// IMPORTANT : `symbol` doit être PRÉFIXÉ par l'exchange TradingView
+// (ex: "AMEX:SPY", "NASDAQ:AAPL", "NYSE:BABA"). Le caller est
+// responsable de la résolution — voir resolveSymbol() ci-dessous.
 //
 // Pattern identique à discord/fmp-client.js :
 //   - Cache en mémoire (TTL 30s) — chart-img facture par requête
 //   - Dedup des appels concurrents pour la même clé
 //   - Timeout 10s via Promise.race
 //   - fetchImpl injectable pour les tests (Node 18+ a fetch global)
-//
-// Usage côté handler :
-//   const buffer = await client.getChart('AAPL', '1D');
-//   await message.reply({ files: [{ attachment: buffer, name: 'AAPL-1D.png' }] });
 // ─────────────────────────────────────────────────────────────────────
 
 const CHART_IMG_BASE = 'https://api.chart-img.com/v2/tradingview/advanced-chart';
@@ -60,6 +61,43 @@ function mapRangeToChartImg(range) {
   return RANGE_MAP[String(range)] || null;
 }
 
+// Yahoo exchange code → préfixe TradingView.
+// Source des codes Yahoo : champ `exchange` retourné par yahoo-finance2
+// quote() (ex: NMS pour Apple, PCX pour SPY). Source des préfixes TV :
+// convention TradingView.com (ex: ETFs sur NYSE Arca s'affichent
+// AMEX:XXX, héritage historique).
+//
+// Fallback NASDAQ : sécuritaire pour les tickers tech non listés ici.
+// Si tu vois un ticker légitime tomber dans le fallback et chart-img
+// retourne 404, ajoute le code Yahoo correspondant ici.
+const YAHOO_TO_TV_EXCHANGE = {
+  // Nasdaq
+  NMS:  'NASDAQ',  // Nasdaq Global Select Market (ex: AAPL, MSFT)
+  NGM:  'NASDAQ',  // Nasdaq Global Market
+  NCM:  'NASDAQ',  // Nasdaq Capital Market
+  NAS:  'NASDAQ',
+  // NYSE
+  NYQ:  'NYSE',    // NYSE listed (ex: BABA, JPM)
+  NYS:  'NYSE',
+  // NYSE Arca / AMEX (ETFs surtout — TV utilise AMEX comme préfixe)
+  PCX:  'AMEX',    // NYSE Arca (ex: SPY, QQQ, VOO)
+  ASE:  'AMEX',    // NYSE American (ex-AMEX)
+  // Autres
+  BTS:  'BATS',
+  BATS: 'BATS',
+  OTC:  'OTC',
+  PNK:  'OTC',     // OTC Pink
+};
+
+// resolveSymbol(ticker, yahooExchangeCode) → 'TVPREFIX:TICKER'
+// Si le code n'est pas dans la map, fallback NASDAQ (statistiquement
+// le plus probable pour les tickers US courts).
+function resolveSymbol(ticker, yahooExchange) {
+  const t = String(ticker).toUpperCase();
+  const tv = YAHOO_TO_TV_EXCHANGE[String(yahooExchange || '').toUpperCase()] || 'NASDAQ';
+  return tv + ':' + t;
+}
+
 function withTimeout(promise, ms) {
   let handle;
   const timeout = new Promise((_, reject) => {
@@ -83,23 +121,29 @@ function createChartImgClient({
   if (!apiKey) throw new Error('chart-img apiKey required');
   if (!fetchImpl) throw new Error('fetch not available — provide fetchImpl');
 
-  const cache = new Map();   // 'TICKER|RANGE' → { ts, data: Buffer } | { inflight }
+  const cache = new Map();   // 'SYMBOL|RANGE' → { ts, data: Buffer } | { inflight }
 
-  function buildUrl(symbol, mapping) {
-    const params = new URLSearchParams({
+  function buildBody(symbol, mapping) {
+    return {
       symbol,
       interval: mapping.interval,
       range:    mapping.range,
       theme,
-      width:    String(width),
-      height:   String(height),
-    });
-    return base + '?' + params.toString();
+      width,
+      height,
+    };
   }
 
-  async function fetchPng(url) {
+  async function fetchPng(body) {
     const res = await withTimeout(
-      fetchImpl(url, { headers: { 'x-api-key': apiKey } }),
+      fetchImpl(base, {
+        method: 'POST',
+        headers: {
+          'x-api-key':    apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      }),
       timeoutMs,
     );
     if (!res || typeof res.ok !== 'boolean') {
@@ -111,7 +155,6 @@ function createChartImgClient({
       throw new Error(
         'chart-img HTTP ' + res.status + ': ' + (text || '').slice(0, 200));
     }
-    // L'API renvoie du PNG binaire. fetch global expose .arrayBuffer().
     if (typeof res.arrayBuffer !== 'function') {
       throw new Error('chart-img: response missing arrayBuffer()');
     }
@@ -119,16 +162,17 @@ function createChartImgClient({
     return Buffer.from(ab);
   }
 
-  // getChart(ticker, range) → Buffer PNG
-  // Throws 'invalid range' si le range n'est pas mappable, sinon
+  // getChart(symbol, range) → Buffer PNG
+  // `symbol` doit être pré-résolu (ex: 'AMEX:SPY'). Voir resolveSymbol().
+  // Throws 'Invalid range' si le range n'est pas mappable, sinon
   // propage les erreurs HTTP/timeout au caller.
-  async function getChart(ticker, range) {
+  async function getChart(symbol, range) {
     const mapping = mapRangeToChartImg(range);
     if (!mapping) throw new Error('Invalid range: ' + range);
 
-    const symbol = String(ticker).toUpperCase();
+    const sym = String(symbol);
     // Clé case-sensitive sur le range pour distinguer 1m/1M.
-    const key = symbol + '|' + String(range);
+    const key = sym + '|' + String(range);
 
     const hit = cache.get(key);
     if (hit) {
@@ -136,8 +180,8 @@ function createChartImgClient({
       if (hit.inflight) return hit.inflight;
     }
 
-    const url = buildUrl(symbol, mapping);
-    const inflight = fetchPng(url);
+    const body = buildBody(sym, mapping);
+    const inflight = fetchPng(body);
     cache.set(key, { inflight });
     try {
       const data = await inflight;
@@ -154,7 +198,9 @@ function createChartImgClient({
 
 module.exports = {
   createChartImgClient,
+  resolveSymbol,
   // exposed for tests
   mapRangeToChartImg,
+  YAHOO_TO_TV_EXCHANGE,
   CHART_IMG_BASE,
 };

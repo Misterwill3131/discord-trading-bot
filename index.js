@@ -29,6 +29,7 @@ const { registerTradingHandler } = require('./discord/handler');
 const { registerDiscordCommands } = require('./discord/commands');
 const { registerMarketCommands } = require('./discord/market-commands');
 const { createYahooClient } = require('./discord/market-commands');
+const { createChartImgClient } = require('./discord/chart-img-client');
 const { db } = require('./db/sqlite');
 const { createTrendStore } = require('./db/trend-store');
 const { registerTrendCommands } = require('./discord/trend-commands');
@@ -98,6 +99,9 @@ const MARKET_ALERTS_CHANNEL_ID = process.env.MARKET_ALERTS_CHANNEL_ID
 const RESEND_API_KEY    = process.env.RESEND_API_KEY || '';
 const ALERT_EMAIL_TO    = process.env.ALERT_EMAIL_TO || '';
 const ALERT_EMAIL_FROM  = process.env.ALERT_EMAIL_FROM || '';
+// chart-img.com API — alimente !chart. Si absent, !chart répond avec un
+// message "command unavailable" (pas de crash). Définir dans Railway env vars.
+const CHART_IMG_API_KEY = process.env.CHART_IMG_API_KEY || '';
 const PORT               = process.env.PORT || 3000;
 const RAILWAY_URL = process.env.RAILWAY_PUBLIC_DOMAIN
   ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
@@ -317,10 +321,22 @@ registerRenderQueueRoutes(app, client);
 // Listeners + scheduler. Les helpers internes font eux-mêmes leur
 // `client.once('ready')` si nécessaire — pas de ordre requis ici.
 registerDiscordCommands(client, { profitsChannelId: PROFITS_CHANNEL_ID });
-// Shared yahooClient — same in-memory cache for !price/!chart/!indicator
+// Shared yahooClient — same in-memory cache for !price/!indicator
 // (market-commands), !trend (trend-commands), and the auto-scanner.
+// !chart is now served by chart-img (Advanced Chart API) instead of the
+// local renderer. If CHART_IMG_API_KEY is unset, !chart replies with a
+// "command unavailable" message — the rest of the bot still runs.
 const sharedYahoo = createYahooClient();
-registerMarketCommands(client, { yahooClient: sharedYahoo });
+const chartImgClient = CHART_IMG_API_KEY
+  ? createChartImgClient({ apiKey: CHART_IMG_API_KEY })
+  : null;
+if (!CHART_IMG_API_KEY) {
+  console.warn('[!chart] CHART_IMG_API_KEY absent — !chart command will reply with "unavailable"');
+}
+registerMarketCommands(client, {
+  yahooClient: sharedYahoo,
+  chartImgClient,
+});
 const trendStore = createTrendStore(db);
 registerTrendCommands(client, {
   store: trendStore,

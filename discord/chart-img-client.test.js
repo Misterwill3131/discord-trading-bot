@@ -4,7 +4,9 @@ const {
   createChartImgClient,
   resolveSymbol,
   mapRangeToChartImg,
+  buildFibDrawing,
   YAHOO_TO_TV_EXCHANGE,
+  DEFAULT_STUDIES,
   CHART_IMG_BASE,
 } = require('./chart-img-client');
 
@@ -125,8 +127,12 @@ test('getChart sets x-api-key and Content-Type headers', async () => {
 });
 
 test('getChart sends a JSON body with the resolved symbol', async () => {
+  // Pass studies:[] to assert the core body shape independently of the
+  // default-studies payload (which has its own dedicated tests below).
   const fetcher = makeFakeFetch(pngOk());
-  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  const client = createChartImgClient({
+    apiKey: 'KEY', fetchImpl: fetcher.fn, studies: [],
+  });
   await client.getChart('AMEX:SPY', '1D');
   const body = fetcher.lastBody;
   assert.deepStrictEqual(body, {
@@ -251,4 +257,101 @@ test('getChart times out after timeoutMs', async () => {
     apiKey: 'KEY', fetchImpl: fetcher.fn, timeoutMs: 50,
   });
   await assert.rejects(() => client.getChart('AMEX:SPY', '1D'), /timeout/);
+});
+
+// ── DEFAULT_STUDIES + studies in body ──────────────────────────────
+test('DEFAULT_STUDIES includes the 7 expected indicators', () => {
+  // Sanity check — protège contre une suppression accidentelle.
+  const names = DEFAULT_STUDIES.map(s => s.name + ':' + s.input.in_0);
+  assert.ok(names.includes('Volume Weighted Average:Session'));
+  assert.ok(names.includes('Exponential Moving Average:9'));
+  assert.ok(names.includes('Exponential Moving Average:20'));
+  assert.ok(names.includes('Exponential Moving Average:50'));
+  assert.ok(names.includes('Exponential Moving Average:200'));
+  assert.ok(names.includes('Moving Average:50'));
+  assert.ok(names.includes('Moving Average:325'));
+  assert.strictEqual(DEFAULT_STUDIES.length, 7);
+});
+
+test('getChart sends DEFAULT_STUDIES in the body by default', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '1D');
+  assert.deepStrictEqual(fetcher.lastBody.studies, DEFAULT_STUDIES);
+});
+
+test('getChart respects a custom studies override', async () => {
+  const custom = [{ name: 'Relative Strength Index', input: { in_0: 14 } }];
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({
+    apiKey: 'KEY', fetchImpl: fetcher.fn, studies: custom,
+  });
+  await client.getChart('AMEX:SPY', '1D');
+  assert.deepStrictEqual(fetcher.lastBody.studies, custom);
+});
+
+test('getChart omits studies field when studies = []', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({
+    apiKey: 'KEY', fetchImpl: fetcher.fn, studies: [],
+  });
+  await client.getChart('AMEX:SPY', '1D');
+  assert.strictEqual(fetcher.lastBody.studies, undefined);
+});
+
+// ── buildFibDrawing ────────────────────────────────────────────────
+test('buildFibDrawing returns a valid Fib Retracement object', () => {
+  const fib = buildFibDrawing(450, 400);
+  assert.deepStrictEqual(fib, {
+    name: 'Fib Retracement',
+    input: { price0: 400, price1: 450 },
+  });
+});
+
+test('buildFibDrawing returns null for invalid inputs', () => {
+  assert.strictEqual(buildFibDrawing(NaN, 400), null);
+  assert.strictEqual(buildFibDrawing(450, NaN), null);
+  assert.strictEqual(buildFibDrawing(400, 450), null, 'high <= low → null');
+  assert.strictEqual(buildFibDrawing(400, 400), null, 'high == low → null');
+  assert.strictEqual(buildFibDrawing(null, 400), null);
+});
+
+// ── getChart with fibAnchors → drawings in body ────────────────────
+test('getChart adds Fib Retracement to drawings when fibAnchors provided', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '1D', { fibAnchors: { high: 450, low: 400 } });
+  assert.deepStrictEqual(fetcher.lastBody.drawings, [
+    { name: 'Fib Retracement', input: { price0: 400, price1: 450 } },
+  ]);
+});
+
+test('getChart omits drawings when no fibAnchors', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '1D');
+  assert.strictEqual(fetcher.lastBody.drawings, undefined);
+});
+
+test('getChart omits drawings when fibAnchors are invalid', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '1D', { fibAnchors: { high: NaN, low: 400 } });
+  assert.strictEqual(fetcher.lastBody.drawings, undefined);
+});
+
+test('getChart cache key includes fib anchors (different anchors = different cache)', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '1D', { fibAnchors: { high: 450, low: 400 } });
+  await client.getChart('AMEX:SPY', '1D', { fibAnchors: { high: 460, low: 400 } });
+  assert.strictEqual(fetcher.calls, 2, 'different anchors = bypass cache');
+});
+
+test('getChart cache HIT when same symbol + range + anchors', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '1D', { fibAnchors: { high: 450, low: 400 } });
+  await client.getChart('AMEX:SPY', '1D', { fibAnchors: { high: 450, low: 400 } });
+  assert.strictEqual(fetcher.calls, 1);
 });

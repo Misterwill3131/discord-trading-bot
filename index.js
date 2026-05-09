@@ -306,6 +306,11 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
   ],
 });
+// On a 11+ modules qui ajoutent leur propre listener messageCreate (handler,
+// commands, market-commands, profit-listener, screener-ingest, saas-relay,
+// trend-commands, etc.). La limite Node par défaut est 10 → warning. Bump
+// à 30 pour avoir de la marge sans masquer une vraie fuite EventEmitter.
+client.setMaxListeners(30);
 
 // Injection du client dans les modules qui en ont besoin (mentions
 // dans canvas, daily summary dans profit, alertes trading).

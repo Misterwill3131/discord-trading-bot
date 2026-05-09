@@ -85,9 +85,16 @@ function createYahooClient({
     // il faut `new YahooFinance()` avant d'appeler .quote()/.chart().
     // Sans ça : "Call `const yahooFinance = new YahooFinance()` first."
     // La classe est require'd paresseusement ici ; les tests injectent un fake.
-    // suppressNotices évite l'impression du survey Yahoo sur le premier appel.
+    // - suppressNotices : évite le banner survey Yahoo au premier appel.
+    // - validation.logErrors=false : Yahoo retourne souvent des payloads
+    //   slightly off-spec sur les small-caps (ex. NVTS) ; la lib log alors
+    //   un pavé d'erreur géant, mais les données sont quand même utilisables.
+    //   On désactive juste le log — la validation continue silencieusement.
     const YahooFinance = require('yahoo-finance2').default;
-    yahoo = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
+    yahoo = new YahooFinance({
+      suppressNotices: ['yahooSurvey'],
+      validation: { logErrors: false },
+    });
   }
 
   const quoteCache = new Map();

@@ -300,29 +300,56 @@ test('getChart omits studies field when studies = []', async () => {
 });
 
 // ── buildFibDrawing ────────────────────────────────────────────────
+const FIB_OK = {
+  startDatetime: '2026-05-08T13:30:00.000Z',
+  startPrice:    400,
+  endDatetime:   '2026-05-08T20:00:00.000Z',
+  endPrice:      450,
+};
+
 test('buildFibDrawing returns a valid Fib Retracement object', () => {
-  const fib = buildFibDrawing(450, 400);
+  const fib = buildFibDrawing(FIB_OK);
   assert.deepStrictEqual(fib, {
     name: 'Fib Retracement',
-    input: { price0: 400, price1: 450 },
+    input: {
+      startDatetime: '2026-05-08T13:30:00.000Z',
+      startPrice:    400,
+      endDatetime:   '2026-05-08T20:00:00.000Z',
+      endPrice:      450,
+    },
   });
 });
 
 test('buildFibDrawing returns null for invalid inputs', () => {
-  assert.strictEqual(buildFibDrawing(NaN, 400), null);
-  assert.strictEqual(buildFibDrawing(450, NaN), null);
-  assert.strictEqual(buildFibDrawing(400, 450), null, 'high <= low → null');
-  assert.strictEqual(buildFibDrawing(400, 400), null, 'high == low → null');
-  assert.strictEqual(buildFibDrawing(null, 400), null);
+  assert.strictEqual(buildFibDrawing(null), null);
+  assert.strictEqual(buildFibDrawing(undefined), null);
+  // Missing datetime
+  assert.strictEqual(buildFibDrawing({ ...FIB_OK, startDatetime: undefined }), null);
+  assert.strictEqual(buildFibDrawing({ ...FIB_OK, endDatetime: 12345 }), null,
+    'datetime must be a string');
+  // Missing or non-finite prices
+  assert.strictEqual(buildFibDrawing({ ...FIB_OK, startPrice: NaN }), null);
+  assert.strictEqual(buildFibDrawing({ ...FIB_OK, endPrice: undefined }), null);
+  // Degenerate range
+  assert.strictEqual(buildFibDrawing({ ...FIB_OK, endPrice: 400 }), null,
+    'startPrice == endPrice → null');
 });
 
 // ── getChart with fibAnchors → drawings in body ────────────────────
 test('getChart adds Fib Retracement to drawings when fibAnchors provided', async () => {
   const fetcher = makeFakeFetch(pngOk());
   const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
-  await client.getChart('AMEX:SPY', '1D', { fibAnchors: { high: 450, low: 400 } });
+  await client.getChart('AMEX:SPY', '1D', { fibAnchors: FIB_OK });
   assert.deepStrictEqual(fetcher.lastBody.drawings, [
-    { name: 'Fib Retracement', input: { price0: 400, price1: 450 } },
+    {
+      name: 'Fib Retracement',
+      input: {
+        startDatetime: '2026-05-08T13:30:00.000Z',
+        startPrice:    400,
+        endDatetime:   '2026-05-08T20:00:00.000Z',
+        endPrice:      450,
+      },
+    },
   ]);
 });
 
@@ -336,22 +363,26 @@ test('getChart omits drawings when no fibAnchors', async () => {
 test('getChart omits drawings when fibAnchors are invalid', async () => {
   const fetcher = makeFakeFetch(pngOk());
   const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
-  await client.getChart('AMEX:SPY', '1D', { fibAnchors: { high: NaN, low: 400 } });
+  await client.getChart('AMEX:SPY', '1D', {
+    fibAnchors: { ...FIB_OK, startPrice: NaN },
+  });
   assert.strictEqual(fetcher.lastBody.drawings, undefined);
 });
 
 test('getChart cache key includes fib anchors (different anchors = different cache)', async () => {
   const fetcher = makeFakeFetch(pngOk());
   const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
-  await client.getChart('AMEX:SPY', '1D', { fibAnchors: { high: 450, low: 400 } });
-  await client.getChart('AMEX:SPY', '1D', { fibAnchors: { high: 460, low: 400 } });
+  await client.getChart('AMEX:SPY', '1D', { fibAnchors: FIB_OK });
+  await client.getChart('AMEX:SPY', '1D', {
+    fibAnchors: { ...FIB_OK, endPrice: 460 },
+  });
   assert.strictEqual(fetcher.calls, 2, 'different anchors = bypass cache');
 });
 
 test('getChart cache HIT when same symbol + range + anchors', async () => {
   const fetcher = makeFakeFetch(pngOk());
   const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
-  await client.getChart('AMEX:SPY', '1D', { fibAnchors: { high: 450, low: 400 } });
-  await client.getChart('AMEX:SPY', '1D', { fibAnchors: { high: 450, low: 400 } });
+  await client.getChart('AMEX:SPY', '1D', { fibAnchors: FIB_OK });
+  await client.getChart('AMEX:SPY', '1D', { fibAnchors: FIB_OK });
   assert.strictEqual(fetcher.calls, 1);
 });

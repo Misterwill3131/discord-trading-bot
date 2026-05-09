@@ -342,16 +342,37 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
       return;
     }
 
-    // FIB Retracement temporairement désactivé : la doc chart-img était
-    // incomplète sur le schéma — l'API renvoie HTTP 422 disant que
-    // startDatetime, endDatetime (et un 3e champ tronqué dans nos logs)
-    // sont requis en plus de price0/price1. Pour réactiver : compléter
-    // buildFibDrawing() avec les bons champs et passer fibAnchors:
-    // { high, low, highTime, lowTime } depuis ici. Voir le commentaire
-    // TODO dans chart-img-client.js.
+    // FIB Retracement : on fetch les bougies Yahoo pour la même fenêtre
+    // que le range, on identifie le swing low et swing high (avec leurs
+    // timestamps), et on les passe à chart-img comme anchors. Convention
+    // chart-img : start = swing low, end = swing high.
+    // Si le fetch ou les anchors échouent, on continue sans FIB plutôt
+    // que de planter le chart (les studies suffisent en general).
+    let fibAnchors = null;
+    try {
+      const yChart = await yc.getChart(ticker, range);
+      const candles = (yChart && yChart.quotes) || [];
+      let lowC = null, highC = null;
+      for (const c of candles) {
+        if (!(c.date instanceof Date)) continue;
+        if (Number.isFinite(c.low)  && (!lowC  || c.low  < lowC.low))   lowC  = c;
+        if (Number.isFinite(c.high) && (!highC || c.high > highC.high)) highC = c;
+      }
+      if (lowC && highC) {
+        fibAnchors = {
+          startDatetime: lowC.date.toISOString(),
+          startPrice:    lowC.low,
+          endDatetime:   highC.date.toISOString(),
+          endPrice:      highC.high,
+        };
+      }
+    } catch (err) {
+      console.warn('[!chart] FIB anchors lookup failed (continuing without):', err.message);
+    }
+
     let buffer;
     try {
-      buffer = await cic.getChart(symbol, range);
+      buffer = await cic.getChart(symbol, range, { fibAnchors });
     } catch (err) {
       const msg = String(err && err.message || err);
       // 401/403 = clé invalide ou plan expiré — log explicite côté server,

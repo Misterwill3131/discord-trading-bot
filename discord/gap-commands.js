@@ -154,7 +154,9 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
       endPrice:        gap.todayOpen,
       text:            `GAP ${sign}${gap.gapPct.toFixed(2)}%`,
       lineColor:       'rgb(255,165,0)',          // orange solid
-      backgroundColor: 'rgba(255,165,0,0.25)',    // orange fill semi-transparent
+      // chart-img validator only accepts single-decimal alpha (`rgba(r,g,b,0.X)`).
+      // `0.25` → HTTP 422 "must be a valid rgb/rgba color". Use `0.3`.
+      backgroundColor: 'rgba(255,165,0,0.3)',     // orange fill semi-transparent
       lineWidth:       2,
     }];
   }

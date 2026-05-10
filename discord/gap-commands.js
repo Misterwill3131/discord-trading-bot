@@ -47,16 +47,20 @@ function computeGapFromBars(bars) {
   const prevDate   = datesInOrder[datesInOrder.length - 2];
 
   let prevSessionClose = null;
+  let prevCloseTimestamp = null;
   for (let i = bars.length - 1; i >= 0; i--) {
     if (formatDateET(new Date(bars[i].t)) === prevDate) {
-      prevSessionClose = bars[i].c;
+      prevSessionClose   = bars[i].c;
+      prevCloseTimestamp = bars[i].t;
       break;
     }
   }
   let todayOpen = null;
+  let todayOpenTimestamp = null;
   for (let i = 0; i < bars.length; i++) {
     if (formatDateET(new Date(bars[i].t)) === latestDate) {
-      todayOpen = bars[i].o;
+      todayOpen          = bars[i].o;
+      todayOpenTimestamp = bars[i].t;
       break;
     }
   }
@@ -65,7 +69,15 @@ function computeGapFromBars(bars) {
   }
 
   const gapPct = ((todayOpen - prevSessionClose) / prevSessionClose) * 100;
-  return { prevSessionClose, todayOpen, gapPct };
+  // Timestamps inclus pour permettre au caller de placer un drawing
+  // (rectangle, ligne, etc.) sur la zone du gap dans le chart.
+  return {
+    prevSessionClose,
+    todayOpen,
+    gapPct,
+    prevCloseTimestamp,
+    todayOpenTimestamp,
+  };
 }
 
 // !gap chart TICKER — fetch quote pour le code exchange, fetch 5D pour
@@ -127,10 +139,28 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
   // 3) Render chart via chart-img.
   //    Range '5D' = 15m bars sur 5 jours → contexte autour du gap visible
   //    avec VWAP + EMAs + MAs des DEFAULT_STUDIES.
+  //    Si on a calculé le gap, on annote la zone avec un rectangle orange
+  //    (de prev close timestamp/price → today open timestamp/price). Le
+  //    rectangle est l'élément central du chart — c'est ce qui répond à
+  //    la question "où est le gap ?".
   const symbol = resolveSymbol(ticker, quote.exchange);
+  const chartOpts = {};
+  if (gap) {
+    const sign = gap.gapPct >= 0 ? '+' : '';
+    chartOpts.rectangles = [{
+      startDatetime:   new Date(gap.prevCloseTimestamp).toISOString(),
+      startPrice:      gap.prevSessionClose,
+      endDatetime:     new Date(gap.todayOpenTimestamp).toISOString(),
+      endPrice:        gap.todayOpen,
+      text:            `GAP ${sign}${gap.gapPct.toFixed(2)}%`,
+      lineColor:       'rgb(255,165,0)',          // orange solid
+      backgroundColor: 'rgba(255,165,0,0.25)',    // orange fill semi-transparent
+      lineWidth:       2,
+    }];
+  }
   let png;
   try {
-    png = await chartImg.getChart(symbol, '5D');
+    png = await chartImg.getChart(symbol, '5D', chartOpts);
   } catch (err) {
     console.error('[gap] chart-img error for ' + symbol + ': ' + (err && err.message));
     return message.reply('❌ Chart rendering failed, try again in a few minutes').catch(() => {});

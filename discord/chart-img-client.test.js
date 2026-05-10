@@ -5,6 +5,7 @@ const {
   resolveSymbol,
   mapRangeToChartImg,
   buildFibDrawing,
+  buildRectangleDrawing,
   YAHOO_TO_TV_EXCHANGE,
   DEFAULT_STUDIES,
   CHART_IMG_BASE,
@@ -393,5 +394,114 @@ test('getChart cache HIT when same symbol + range + anchors', async () => {
   const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
   await client.getChart('AMEX:SPY', '1D', { fibAnchors: FIB_OK });
   await client.getChart('AMEX:SPY', '1D', { fibAnchors: FIB_OK });
+  assert.strictEqual(fetcher.calls, 1);
+});
+
+// ── buildRectangleDrawing ──────────────────────────────────────────
+const RECT_OK = {
+  startDatetime: '2026-05-07T20:00:00.000Z',
+  startPrice:    731.43,
+  endDatetime:   '2026-05-08T13:30:00.000Z',
+  endPrice:      733.49,
+};
+
+test('buildRectangleDrawing returns minimal valid Rectangle (no override)', () => {
+  const r = buildRectangleDrawing(RECT_OK);
+  assert.deepStrictEqual(r, {
+    name: 'Rectangle',
+    input: RECT_OK,
+    zOrder: 'top',  // default
+  });
+});
+
+test('buildRectangleDrawing accepts text + style override', () => {
+  const r = buildRectangleDrawing({
+    ...RECT_OK,
+    text:            'GAP +0.28%',
+    lineColor:       'rgb(255,165,0)',
+    backgroundColor: 'rgba(255,165,0,0.25)',
+    lineWidth:       2,
+  });
+  assert.strictEqual(r.name, 'Rectangle');
+  assert.strictEqual(r.input.text, 'GAP +0.28%');
+  assert.strictEqual(r.zOrder, 'top');
+  assert.deepStrictEqual(r.override, {
+    lineColor:       'rgb(255,165,0)',
+    backgroundColor: 'rgba(255,165,0,0.25)',
+    lineWidth:       2,
+    showLabel:       true,
+    fontBold:        true,
+    horzLabelAlign:  'center',
+    vertLabelAlign:  'middle',
+  });
+});
+
+test('buildRectangleDrawing zOrder bottom passes through', () => {
+  const r = buildRectangleDrawing({ ...RECT_OK, zOrder: 'bottom' });
+  assert.strictEqual(r.zOrder, 'bottom');
+});
+
+test('buildRectangleDrawing returns null for invalid inputs', () => {
+  assert.strictEqual(buildRectangleDrawing(null), null);
+  assert.strictEqual(buildRectangleDrawing(undefined), null);
+  assert.strictEqual(buildRectangleDrawing({ ...RECT_OK, startDatetime: undefined }), null);
+  assert.strictEqual(buildRectangleDrawing({ ...RECT_OK, endDatetime: 12345 }), null,
+    'datetime must be a string');
+  assert.strictEqual(buildRectangleDrawing({ ...RECT_OK, startPrice: NaN }), null);
+  assert.strictEqual(buildRectangleDrawing({ ...RECT_OK, endPrice: undefined }), null);
+});
+
+// ── getChart with rectangles → drawings in body ────────────────────
+test('getChart adds Rectangle to drawings when opts.rectangles provided', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '5D', {
+    rectangles: [{ ...RECT_OK, text: 'GAP', lineColor: 'rgb(255,165,0)' }],
+  });
+  assert.strictEqual(fetcher.lastBody.drawings.length, 1);
+  assert.strictEqual(fetcher.lastBody.drawings[0].name, 'Rectangle');
+  assert.strictEqual(fetcher.lastBody.drawings[0].input.text, 'GAP');
+  assert.strictEqual(fetcher.lastBody.drawings[0].override.lineColor, 'rgb(255,165,0)');
+});
+
+test('getChart accepts BOTH fibAnchors and rectangles in same call', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '5D', {
+    fibAnchors: FIB_OK,
+    rectangles: [RECT_OK],
+  });
+  assert.strictEqual(fetcher.lastBody.drawings.length, 2);
+  assert.strictEqual(fetcher.lastBody.drawings[0].name, 'Fib Retracement');
+  assert.strictEqual(fetcher.lastBody.drawings[1].name, 'Rectangle');
+});
+
+test('getChart silently filters invalid rectangles', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '5D', {
+    rectangles: [
+      { ...RECT_OK, startPrice: NaN },  // invalid → filtered
+      RECT_OK,                          // valid → kept
+    ],
+  });
+  assert.strictEqual(fetcher.lastBody.drawings.length, 1);
+});
+
+test('getChart cache key includes rectangle anchors (change = bypass cache)', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '5D', { rectangles: [RECT_OK] });
+  await client.getChart('AMEX:SPY', '5D', {
+    rectangles: [{ ...RECT_OK, endPrice: 740 }],
+  });
+  assert.strictEqual(fetcher.calls, 2);
+});
+
+test('getChart cache HIT when same rectangle anchors', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '5D', { rectangles: [RECT_OK] });
+  await client.getChart('AMEX:SPY', '5D', { rectangles: [RECT_OK] });
   assert.strictEqual(fetcher.calls, 1);
 });

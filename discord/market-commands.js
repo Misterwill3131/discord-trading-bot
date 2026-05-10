@@ -5,7 +5,7 @@
 //   !price TICKER           → quote live (prix, change%, volume, ranges, market cap)
 //   !chart TICKER [RANGE]   → image PNG du graphe (1D/5D/1M/3M/6M/1Y)
 //   !indicator TICKER       → RSI(14) + EMA(9) + EMA(20) + VWAP sur candles 5min du jour
-//   !ema9 TICKER            → chart 1D avec UNIQUEMENT VWAP + EMA(9) + valeurs texte
+//   !ema9 TICKER            → chart 5D avec UNIQUEMENT VWAP + EMA(9) + valeurs texte
 //
 // Source unique : Yahoo Finance via `yahoo-finance2`. Cache mémoire
 // TTL 30s + timeout 10s sur chaque appel externe.
@@ -500,14 +500,19 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
       return;
     }
 
-    // 1) Yahoo : quote (pour exchange code) + 1D chart (pour les indicateurs).
+    // 1) Yahoo : quote (pour exchange code) + 5D chart (pour les indicateurs).
+    //    On utilise '5D' (et non '1D') parce que '1D' retourne 0 quotes les
+    //    weekends/jours fériés → "No data available" même sur des tickers
+    //    valides. '5D' couvre les 5 derniers jours de trading et marche
+    //    n'importe quand. EMA9 et VWAP sont calculés sur les bars 15min de
+    //    cette fenêtre — toujours assez de data (~130 bars) pour les EMAs.
     //    Promise.all → parallèle, gain ~200-500ms vs séquentiel.
     let symbol;
     let yahooCandles;
     try {
       const [quote, chart] = await Promise.all([
         yc.getQuote(ticker),
-        yc.getChart(ticker, '1D'),
+        yc.getChart(ticker, '5D'),
       ]);
       if (!quote || !quote.symbol) {
         try { await message.reply('❌ Ticker $' + ticker + ' not found'); } catch (_) {}
@@ -546,9 +551,10 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
 
     // 3) Chart-img : studies = juste VWAP + EMA(9). Override les
     //    DEFAULT_STUDIES du client (sinon on aurait aussi EMA 20/50/200 etc.).
+    //    '5D' (cohérent avec Yahoo ci-dessus) → marche aussi en weekend.
     let buffer;
     try {
-      buffer = await cic.getChart(symbol, '1D', {
+      buffer = await cic.getChart(symbol, '5D', {
         studies: [
           { name: 'VWAP' },
           { name: 'Moving Average Exponential', input: { length: 9, source: 'close' } },
@@ -574,7 +580,7 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
     //    aucune bougie n'a de volume exploitable (rare) → afficher N/A.
     const vwapStr = Number.isFinite(ind.vwap) ? '$' + ind.vwap.toFixed(2) : 'N/A';
     const lines = [
-      '📊 **$' + ticker + '** — EMA(9) + VWAP (1D · 5min)',
+      '📊 **$' + ticker + '** — EMA(9) + VWAP (5D · 15min)',
       '> EMA(9): $' + ind.ema9.toFixed(2),
       '> VWAP: ' + vwapStr,
     ];

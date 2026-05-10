@@ -175,8 +175,9 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
   //      - X droit  : `todayOpenTimestamp` du gap suivant, OU `latestBarTimestamp`
   //                   pour le dernier (= bord droit du chart)
   //      - Y : [prevSessionClose, todayOpen] = la zone de prix gappée
-  //      - Label "GAP" centré (sans %, le caption Discord donne le chiffre
-  //        précis pour le gap le plus récent)
+  //      - Label = le % du gap centré (ex: "+0.28%", "-1.45%") — chiffre
+  //        directement sur le rectangle pour identifier visuellement
+  //        l'amplitude de chaque gap sans avoir à lire la caption.
   //      - Couleur amber/dark-goldenrod (alpha 0.2, lineWidth 1 — discret
   //        mais visible)
   const symbol = resolveSymbol(ticker, quote.exchange);
@@ -193,12 +194,13 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
       // Bord droit = prochain gap si présent, sinon bord du chart.
       const nextGap = gaps[i + 1];
       const endT    = nextGap ? nextGap.todayOpenTimestamp : lastBarT;
+      const sign    = g.gapPct >= 0 ? '+' : '';
       return {
         startDatetime:   new Date(g.todayOpenTimestamp).toISOString(),
         startPrice:      g.prevSessionClose,
         endDatetime:     new Date(endT).toISOString(),
         endPrice:        g.todayOpen,
-        text:            'GAP',
+        text:            `${sign}${g.gapPct.toFixed(2)}%`,
         lineColor:       'rgb(184,134,11)',          // dark goldenrod (amber border)
         // chart-img validator only accepts single-decimal alpha (`rgba(r,g,b,0.X)`).
         // `0.25` → HTTP 422 "must be a valid rgb/rgba color". Use `0.2`.

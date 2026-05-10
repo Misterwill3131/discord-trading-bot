@@ -548,3 +548,42 @@ test('getChart cache HIT when same studies override', async () => {
   await client.getChart('AMEX:SPY', '5D', { studies: [{ name: 'Volume' }] });
   assert.strictEqual(fetcher.calls, 1);
 });
+
+// ── opts.session + opts.timezone (extended hours + ET timezone display) ──
+test('getChart passes session=extended in body when opts.session set', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '5D', { session: 'extended' });
+  assert.strictEqual(fetcher.lastBody.session, 'extended');
+});
+
+test('getChart passes timezone in body when opts.timezone set', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '5D', { timezone: 'America/New_York' });
+  assert.strictEqual(fetcher.lastBody.timezone, 'America/New_York');
+});
+
+test('getChart omits session/timezone when not provided (chart-img defaults)', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '5D');
+  assert.strictEqual(fetcher.lastBody.session, undefined);
+  assert.strictEqual(fetcher.lastBody.timezone, undefined);
+});
+
+test('getChart cache key bypasses on different session', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '5D', { session: 'regular' });
+  await client.getChart('AMEX:SPY', '5D', { session: 'extended' });
+  assert.strictEqual(fetcher.calls, 2, 'different session = bypass cache');
+});
+
+test('getChart cache key bypasses on different timezone', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '5D', { timezone: 'Etc/UTC' });
+  await client.getChart('AMEX:SPY', '5D', { timezone: 'America/New_York' });
+  assert.strictEqual(fetcher.calls, 2);
+});

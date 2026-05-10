@@ -218,7 +218,7 @@ function createChartImgClient({
 
   const cache = new Map();   // 'SYMBOL|RANGE|FIB' → { ts, data: Buffer } | { inflight }
 
-  function buildBody(symbol, mapping, drawings, studiesOverride) {
+  function buildBody(symbol, mapping, drawings, studiesOverride, sessionOverride, timezoneOverride) {
     const body = {
       symbol,
       interval: mapping.interval,
@@ -235,6 +235,12 @@ function createChartImgClient({
     if (effectiveStudies && effectiveStudies.length > 0) {
       body.studies = effectiveStudies;
     }
+    // Per-call session/timezone override. chart-img defaults : session
+    // 'regular' (9:30-16h ET), timezone 'Etc/UTC'. `!gap chart` passe
+    // 'extended' (4h-20h ET) + 'America/New_York' pour aligner avec la
+    // convention trader (X-axis en ET, gap visible entre 8pm et 4am).
+    if (typeof sessionOverride === 'string')   body.session  = sessionOverride;
+    if (typeof timezoneOverride === 'string')  body.timezone = timezoneOverride;
     if (drawings && drawings.length > 0) body.drawings = drawings;
     return body;
   }
@@ -282,6 +288,14 @@ function createChartImgClient({
   //   call seulement. Use case : `!gap chart` veut juste [{ name: 'Volume' }]
   //   (pas de VWAP/EMAs/MAs qui obscurcissent la zone du gap). Passer `[]`
   //   pour zéro studies. `undefined` (ou absent) → defaults du client.
+  // opts.session = 'regular' | 'extended' → override la session affichée.
+  //   Default chart-img = 'regular' (9:30-16h ET). 'extended' inclut le
+  //   pre-market (4h ET) et l'after-hours (jusqu'à 20h ET). Use case :
+  //   `!gap chart` veut 'extended' pour rendre visible la zone 20h-4am
+  //   où le gap se produit réellement.
+  // opts.timezone = string IANA → override la timezone du X-axis (ex:
+  //   'America/New_York'). Default chart-img = 'Etc/UTC'. Use case : afficher
+  //   les heures de session US correctement labellisées sur le chart.
   // Throws 'Invalid range' si le range n'est pas mappable, sinon
   // propage les erreurs HTTP/timeout au caller.
   async function getChart(symbol, range, opts = {}) {
@@ -320,7 +334,9 @@ function createChartImgClient({
     const studiesKey = Array.isArray(opts.studies)
       ? '|S:' + JSON.stringify(opts.studies)
       : '';
-    const key = sym + '|' + String(range) + fibKey + rectKey + studiesKey;
+    const sessionKey  = typeof opts.session  === 'string' ? '|SES:' + opts.session  : '';
+    const timezoneKey = typeof opts.timezone === 'string' ? '|TZ:'  + opts.timezone : '';
+    const key = sym + '|' + String(range) + fibKey + rectKey + studiesKey + sessionKey + timezoneKey;
 
     const hit = cache.get(key);
     if (hit) {
@@ -328,7 +344,7 @@ function createChartImgClient({
       if (hit.inflight) return hit.inflight;
     }
 
-    const body = buildBody(sym, mapping, drawings, opts.studies);
+    const body = buildBody(sym, mapping, drawings, opts.studies, opts.session, opts.timezone);
     const inflight = fetchPng(body);
     cache.set(key, { inflight });
     try {

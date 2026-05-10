@@ -29,38 +29,6 @@ function isUnknownTicker(err) {
   );
 }
 
-// Returns true if the timestamp falls within US regular trading hours
-// (9:30 AM ≤ ET time < 4:00 PM ET). Pre-market et after-hours = false.
-//
-// CRITIQUE pour `!gap chart` : Yahoo retourne des bars extended-hours
-// (4h-20h ET) mais chart-img n'affiche QUE les regular hours sur son
-// chart. Si on calcule les gaps avec des bars extended-hours :
-//   - prevCloseTimestamp = ~20h ET (after-hours close, INVISIBLE sur chart-img)
-//   - todayOpenTimestamp = ~04h ET (pre-market open, INVISIBLE sur chart-img)
-//   → Le rectangle atterrit à des positions imprévisibles (chart-img doit
-//     "snapper" les timestamps invisibles à un bar visible le plus proche).
-//
-// En filtrant aux regular hours :
-//   - prevCloseTimestamp = ~15:45 ET (dernier 15min bar régulier)
-//   - todayOpenTimestamp = ~09:30 ET (premier bar régulier)
-//   → Ces timestamps sont sur des bars visibles, le rectangle est positionné
-//     précisément au boundary entre 2 sessions affichées.
-function isRegularHoursET(timestamp) {
-  const date = new Date(timestamp);
-  // toLocaleTimeString avec timeZone gère DST automatiquement (EDT/EST).
-  const etHM = date.toLocaleTimeString('en-US', {
-    timeZone: 'America/New_York',
-    hour12:   false,
-    hour:     '2-digit',
-    minute:   '2-digit',
-  });
-  // etHM = "HH:MM" (en-US 24h avec ces options)
-  const [hh, mm] = etHM.split(':').map(Number);
-  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return false;
-  const minutes = hh * 60 + mm;
-  return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
-}
-
 // Détecte TOUS les gaps overnight dans la fenêtre de bars (5D typiquement).
 // Pour chaque paire de jours ET consécutifs, calcule le gap entre la
 // dernière bougie du jour précédent et la première bougie du jour suivant.
@@ -200,27 +168,24 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
     return message.reply('❌ Yahoo Finance unavailable, try again in a few minutes').catch(() => {});
   }
 
-  // 2) Yahoo 5D — pour détecter TOUS les gaps de la fenêtre (1 rectangle
-  //    par gap) ET pour la caption (chiffres du gap le plus récent).
-  //    Si Yahoo échoue ici, on continue avec un chart sans annotations.
-  //
-  //    On FILTRE aux regular hours (9:30-16:00 ET) avant de calculer les
-  //    gaps : chart-img n'affiche que les regular hours sur son chart, donc
-  //    nos timestamps anchor doivent être sur des bars visibles. Voir
-  //    isRegularHoursET pour le détail.
+  // 2) Yahoo 5D — pour détecter TOUS les gaps de la fenêtre.
+  //    On ne filtre PAS aux regular hours : convention trader que le gap est
+  //    entre la dernière bougie ~20h ET (after-hours close) et la première
+  //    bougie ~04h ET (pre-market open). chart-img sera configuré ci-dessous
+  //    avec `session: 'extended'` pour afficher cette même fenêtre, donc
+  //    nos timestamps anchor (extended-hours bars) sont visibles sur le chart.
   let gaps = [];
-  let regularBars = [];
+  let allBars = [];
   try {
     const chart = await yahoo.getChart(ticker, '5D');
     const quotes = (chart && chart.quotes) || [];
-    regularBars = quotes
+    allBars = quotes
       .filter(q => Number.isFinite(q.close))
       .map(q => ({
         t: q.date instanceof Date ? q.date.getTime() : q.date,
         o: q.open, h: q.high, l: q.low, c: q.close, v: q.volume,
-      }))
-      .filter(b => isRegularHoursET(b.t));
-    gaps = computeAllGapsFromBars(regularBars);
+      }));
+    gaps = computeAllGapsFromBars(allBars);
   } catch (err) {
     // Non-fatal : le chart chart-img reste utile sans annotations.
     console.warn('[gap] Yahoo 5D failed for ' + ticker + ': ' + (err && err.message));
@@ -246,14 +211,16 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
   //        (alpha 0.2, lineWidth 1 — discret mais visible).
   const symbol = resolveSymbol(ticker, quote.exchange);
   const chartOpts = {
-    studies: [{ name: 'Volume' }],
+    studies:  [{ name: 'Volume' }],
+    session:  'extended',                // affiche pre-market + after-hours
+    timezone: 'America/New_York',        // X-axis labels en ET (cohérent avec ouverture/fermeture)
   };
-  const lastBarT = regularBars.length > 0
-    ? regularBars[regularBars.length - 1].t
+  const lastBarT = allBars.length > 0
+    ? allBars[allBars.length - 1].t
     : null;
   if (gaps.length > 0 && lastBarT !== null) {
     chartOpts.rectangles = gaps.map(g => {
-      const fillT = findGapFillTimestamp(regularBars, g);
+      const fillT = findGapFillTimestamp(allBars, g);
       const endT  = fillT !== null ? fillT : lastBarT;
       return {
         startDatetime:   new Date(g.todayOpenTimestamp).toISOString(),
@@ -320,6 +287,5 @@ module.exports = {
   registerGapCommands,
   computeGapFromBars,
   computeAllGapsFromBars,
-  isRegularHoursET,
   findGapFillTimestamp,
 };

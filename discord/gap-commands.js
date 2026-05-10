@@ -163,16 +163,25 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
   //    volume reste, car il aide à valider si un gap a été suivi de volume
   //    (gap + volume = signal fort, gap sans volume = souvent à fade).
   //
-  //    Pour CHAQUE gap détecté on dessine un rectangle orange :
-  //      - X : de `prevCloseTimestamp` (dernière bougie du jour précédent)
-  //            à `latestBarTimestamp` (DERNIÈRE bougie du jour qui a gap-é)
-  //            → le rectangle couvre toute la session post-gap, ce qui le
-  //              rend visible (vs juste prev→open qui serait une bande
-  //              verticale ultra-fine).
+  //    Pour CHAQUE gap détecté on dessine un rectangle orange qui surligne
+  //    EXACTEMENT la fenêtre overnight où le marché était fermé :
+  //      - X gauche : `prevCloseTimestamp` (dernière bougie du jour N,
+  //                   typiquement 20:00 ET = clôture extended-hours)
+  //      - X droit  : `todayOpenTimestamp` (première bougie du jour N+1,
+  //                   typiquement 04:00 ET = ouverture pre-market)
+  //        → Le rectangle couvre la période où le marché était fermé
+  //          (~22h ET → 04h ET, soit la "vraie" fenêtre du gap). C'est
+  //          précisément cette absence de trading qui PRODUIT le gap.
   //      - Y : [prevSessionClose, todayOpen] = le RANGE de prix gappé.
   //      - Label "GAP +X.XX%" centré.
-  //    Plusieurs rectangles sur la même fenêtre 5D ne se chevauchent pas
-  //    horizontalement (chacun = une journée distincte).
+  //
+  //    Note : si le rectangle paraît étroit sur le chart, c'est CORRECT :
+  //    un gap est par définition un instant (la transition close→open),
+  //    pas une période de trading. Étendre artificiellement le rectangle
+  //    sur toute la session du jour suivant donnerait l'impression visuelle
+  //    fausse "le prix est resté dans cette zone toute la journée" — alors
+  //    qu'en réalité le prix peut s'être éloigné de la zone gappée juste
+  //    après l'open.
   const symbol = resolveSymbol(ticker, quote.exchange);
   const chartOpts = {
     studies: [{ name: 'Volume' }],
@@ -183,7 +192,7 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
       return {
         startDatetime:   new Date(g.prevCloseTimestamp).toISOString(),
         startPrice:      g.prevSessionClose,
-        endDatetime:     new Date(g.latestBarTimestamp).toISOString(),
+        endDatetime:     new Date(g.todayOpenTimestamp).toISOString(),
         endPrice:        g.todayOpen,
         text:            `GAP ${sign}${g.gapPct.toFixed(2)}%`,
         lineColor:       'rgb(255,165,0)',          // orange solid

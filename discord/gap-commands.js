@@ -189,15 +189,15 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
   const lastBarT = allBars.length > 0
     ? allBars[allBars.length - 1].t
     : null;
-  // Marge avant le gap suivant : 4h. Permet aux rectangles de respirer
-  // visuellement (un petit espace blanc entre 2 zones gappées) au lieu
-  // de se toucher bord à bord. Math.max protège contre le cas dégénéré
-  // où 2 gaps seraient à < 4h l'un de l'autre (impossible en pratique
-  // sur du daily, mais évite un rectangle inversé).
-  const MARGIN_BEFORE_NEXT_MS = 4 * 60 * 60 * 1000;
+  // Marge avant le gap suivant : 10h. Permet aux rectangles de respirer
+  // visuellement (un espace blanc entre 2 zones gappées) au lieu de se
+  // toucher bord à bord. Math.max protège contre le cas dégénéré où
+  // 2 gaps seraient à < 10h l'un de l'autre (improbable sur du daily mais
+  // évite un rectangle inversé).
+  const MARGIN_BEFORE_NEXT_MS = 10 * 60 * 60 * 1000;
   if (gaps.length > 0 && lastBarT !== null) {
     chartOpts.rectangles = gaps.map((g, i) => {
-      // Bord droit = (prochain gap - 4h) si présent, sinon bord du chart.
+      // Bord droit = (prochain gap - 10h) si présent, sinon bord du chart.
       const nextGap = gaps[i + 1];
       const endT    = nextGap
         ? Math.max(g.todayOpenTimestamp, nextGap.todayOpenTimestamp - MARGIN_BEFORE_NEXT_MS)

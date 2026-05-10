@@ -27,22 +27,26 @@ test('computeGapFromBars returns null when all bars on the same date', () => {
 
 test('computeGapFromBars computes positive gap from 2 trading days', () => {
   // Day 1 close = 100, Day 2 open = 102 → gap +2.0%
-  const prevCloseT = ts('2026-05-07', 19, 30);
-  const todayOpenT = ts('2026-05-08', 14, 30);
+  const prevCloseT  = ts('2026-05-07', 19, 30);
+  const todayOpenT  = ts('2026-05-08', 14, 30);
+  const lastBarT    = ts('2026-05-08', 15, 30);
   const bars = [
     { t: ts('2026-05-07', 14, 30), o:  99, h: 100, l:  98, c:  99,  v: 1000 },
     { t: prevCloseT,               o:  99, h: 101, l:  99, c: 100,  v: 1500 },  // prev session close
     { t: todayOpenT,               o: 102, h: 103, l: 101, c: 102.5, v: 2000 }, // today open
-    { t: ts('2026-05-08', 15, 30), o: 102.5, h: 104, l: 102, c: 103.5, v: 1800 },
+    { t: lastBarT,                 o: 102.5, h: 104, l: 102, c: 103.5, v: 1800 }, // latest bar
   ];
   const gap = computeGapFromBars(bars);
   assert.ok(gap, 'should return non-null');
   assert.strictEqual(gap.prevSessionClose, 100);
   assert.strictEqual(gap.todayOpen, 102);
   assert.ok(Math.abs(gap.gapPct - 2.0) < 0.001, 'gapPct should be ~+2.0%, got ' + gap.gapPct);
-  // Timestamps exposed for chart annotation (rectangle drawing in !gap chart)
-  assert.strictEqual(gap.prevCloseTimestamp, prevCloseT);
-  assert.strictEqual(gap.todayOpenTimestamp, todayOpenT);
+  // Timestamps exposed for chart annotation (rectangle drawing in !gap chart):
+  // prev close + today open delimit the GAP itself ; latestBar is used to
+  // étendre le rectangle horizontalement jusqu'au bord droit du chart.
+  assert.strictEqual(gap.prevCloseTimestamp,  prevCloseT);
+  assert.strictEqual(gap.todayOpenTimestamp,  todayOpenT);
+  assert.strictEqual(gap.latestBarTimestamp,  lastBarT);
 });
 
 test('computeGapFromBars computes negative gap', () => {

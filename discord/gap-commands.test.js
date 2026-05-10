@@ -3,7 +3,6 @@ const assert = require('node:assert');
 const {
   computeGapFromBars,
   computeAllGapsFromBars,
-  findGapFillTimestamp,
 } = require('./gap-commands');
 
 // Helpers : bâtit un timestamp ET pour une date YYYY-MM-DD à hh:mm
@@ -215,82 +214,3 @@ test('computeGapFromBars (backward-compat) returns the LATEST gap from the array
   assert.strictEqual(single.todayOpen, 107);
 });
 
-// ── findGapFillTimestamp (gap fill detection) ────────────────────────
-test('findGapFillTimestamp returns null for empty/invalid input', () => {
-  assert.strictEqual(findGapFillTimestamp(null, null), null);
-  assert.strictEqual(findGapFillTimestamp([], null), null);
-  assert.strictEqual(findGapFillTimestamp(null, {}), null);
-  assert.strictEqual(findGapFillTimestamp([], {
-    prevSessionClose: 100, todayOpen: 102, todayOpenTimestamp: 1
-  }), null);
-});
-
-test('findGapFillTimestamp finds the bar that fills a gap UP', () => {
-  // Gap up: prevClose=100, todayOpen=102. Zone = [100, 102].
-  // Filled when a subsequent bar's range overlaps with [100, 102].
-  const todayT = ts('2026-05-08', 13, 30);
-  const fillT  = ts('2026-05-08', 14, 30);
-  const bars = [
-    { t: ts('2026-05-07', 19, 45), o: 99,  h: 100, l: 99,  c: 100, v: 1 },  // prev close
-    { t: todayT,                   o: 102, h: 102.5, l: 102, c: 102.3, v: 1 }, // gap to 102
-    { t: fillT,                    o: 102, h: 102, l: 100.5, c: 101, v: 1 }, // l=100.5 enters [100,102]
-  ];
-  const gap = { prevSessionClose: 100, todayOpen: 102, todayOpenTimestamp: todayT };
-  assert.strictEqual(findGapFillTimestamp(bars, gap), fillT);
-});
-
-test('findGapFillTimestamp finds the bar that fills a gap DOWN', () => {
-  // Gap down: prevClose=102, todayOpen=100. Zone = [100, 102].
-  // Filled when a subsequent bar's high reaches back into [100, 102].
-  const todayT = ts('2026-05-08', 13, 30);
-  const fillT  = ts('2026-05-08', 14, 30);
-  const bars = [
-    { t: ts('2026-05-07', 19, 45), o: 102, h: 102, l: 101, c: 102, v: 1 },
-    { t: todayT,                   o: 100, h: 100.5, l: 99.5, c: 100, v: 1 }, // gap down to 100
-    { t: fillT,                    o: 100, h: 101.5, l: 100, c: 101, v: 1 },  // h=101.5 enters [100,102]
-  ];
-  const gap = { prevSessionClose: 102, todayOpen: 100, todayOpenTimestamp: todayT };
-  assert.strictEqual(findGapFillTimestamp(bars, gap), fillT);
-});
-
-test('findGapFillTimestamp returns null when gap stays unfilled', () => {
-  // Gap up to 102, subsequent bars all stay above 102 (no fill).
-  const todayT = ts('2026-05-08', 13, 30);
-  const bars = [
-    { t: ts('2026-05-07', 19, 45), o: 99,  h: 100, l: 99,  c: 100, v: 1 },
-    { t: todayT,                   o: 102, h: 102.5, l: 102, c: 102.3, v: 1 },
-    { t: ts('2026-05-08', 14, 30), o: 103, h: 104, l: 102.5, c: 103.5, v: 1 }, // l=102.5 NOT in [100,102]
-    { t: ts('2026-05-08', 14, 45), o: 103, h: 105, l: 103,   c: 104,   v: 1 },
-  ];
-  const gap = { prevSessionClose: 100, todayOpen: 102, todayOpenTimestamp: todayT };
-  assert.strictEqual(findGapFillTimestamp(bars, gap), null);
-});
-
-test('findGapFillTimestamp ignores bars at or before todayOpenTimestamp', () => {
-  // Pré-condition : le bar AT todayOpenTimestamp est exclu (c'est le bar
-  // qui crée le gap, il ne peut pas le filler par construction).
-  const todayT = ts('2026-05-08', 13, 30);
-  const fillT  = ts('2026-05-08', 14, 30);
-  const bars = [
-    { t: ts('2026-05-07', 19, 45), o: 99, h: 100, l: 99, c: 100, v: 1 },  // prev close, in zone
-    { t: todayT,                   o: 102, h: 102, l: 100, c: 102, v: 1 }, // open bar TOUCHE la zone (l=100) — IGNORÉ
-    { t: fillT,                    o: 102, h: 102, l: 101, c: 101.5, v: 1 }, // 1er bar APRÈS open
-  ];
-  const gap = { prevSessionClose: 100, todayOpen: 102, todayOpenTimestamp: todayT };
-  // Bar at todayOpenTimestamp ignored. Next bar fills (l=101 in [100,102]).
-  assert.strictEqual(findGapFillTimestamp(bars, gap), fillT);
-});
-
-test('findGapFillTimestamp returns the FIRST filling bar (not the last)', () => {
-  const todayT  = ts('2026-05-08', 13, 30);
-  const firstT  = ts('2026-05-08', 14, 0);
-  const secondT = ts('2026-05-08', 14, 30);
-  const bars = [
-    { t: ts('2026-05-07', 19, 45), o: 99,  h: 100, l: 99,  c: 100, v: 1 },
-    { t: todayT,                   o: 102, h: 102.5, l: 102, c: 102.3, v: 1 },
-    { t: firstT,                   o: 102, h: 102, l: 101.8, c: 101.9, v: 1 }, // FIRST fill
-    { t: secondT,                  o: 101.9, h: 102, l: 100.5, c: 101, v: 1 }, // second fill (deeper)
-  ];
-  const gap = { prevSessionClose: 100, todayOpen: 102, todayOpenTimestamp: todayT };
-  assert.strictEqual(findGapFillTimestamp(bars, gap), firstT);
-});

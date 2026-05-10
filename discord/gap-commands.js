@@ -29,58 +29,73 @@ function isUnknownTicker(err) {
   );
 }
 
-// Compute le gap (prevSessionClose, todayOpen, gapPct) depuis les bars 5D
-// Yahoo. Anchor sur les 2 dernières dates ET distinctes (gère weekends/
-// holidays naturellement). Renvoie null si data insuffisante.
-function computeGapFromBars(bars) {
-  if (!Array.isArray(bars) || bars.length < 2) return null;
+// Détecte TOUS les gaps overnight dans la fenêtre de bars (5D typiquement).
+// Pour chaque paire de jours ET consécutifs, calcule le gap entre la
+// dernière bougie du jour précédent et la première bougie du jour suivant.
+//
+// Renvoie un array de gap objects, ordonnés du plus ancien au plus récent.
+// Chaque gap object :
+//   - prevSessionClose, todayOpen, gapPct
+//   - prevCloseTimestamp   : timestamp de la dernière bougie du jour précédent
+//   - todayOpenTimestamp   : timestamp de la première bougie du jour courant
+//   - latestBarTimestamp   : timestamp de la DERNIÈRE bougie du jour courant
+//                            → utilisé comme bord droit du rectangle annoté.
+//                            Pour le gap le plus récent, c'est aussi le bord
+//                            droit du chart entier.
+//
+// Skip un gap si :
+//   - prevClose ou todayOpen non-finite
+//   - prevClose <= 0 (division par zéro)
+//   - prevClose === todayOpen (pas de gap réel = rectangle dégénéré)
+function computeAllGapsFromBars(bars) {
+  if (!Array.isArray(bars) || bars.length < 2) return [];
 
-  const datesInOrder = [];
-  const seen = new Set();
+  // Construit la liste des dates ET dans l'ordre d'apparition + map
+  // first/last bar pour chaque date (1 seule passe sur bars).
+  const datesInOrder    = [];
+  const firstBarOfDate  = new Map();
+  const lastBarOfDate   = new Map();
   for (const b of bars) {
     const d = formatDateET(new Date(b.t));
-    if (!seen.has(d)) { seen.add(d); datesInOrder.push(d); }
-  }
-  if (datesInOrder.length < 2) return null;
-
-  const latestDate = datesInOrder[datesInOrder.length - 1];
-  const prevDate   = datesInOrder[datesInOrder.length - 2];
-
-  let prevSessionClose = null;
-  let prevCloseTimestamp = null;
-  for (let i = bars.length - 1; i >= 0; i--) {
-    if (formatDateET(new Date(bars[i].t)) === prevDate) {
-      prevSessionClose   = bars[i].c;
-      prevCloseTimestamp = bars[i].t;
-      break;
+    if (!firstBarOfDate.has(d)) {
+      firstBarOfDate.set(d, b);
+      datesInOrder.push(d);
     }
+    lastBarOfDate.set(d, b);  // overwrite, garde le dernier
   }
-  let todayOpen = null;
-  let todayOpenTimestamp = null;
-  for (let i = 0; i < bars.length; i++) {
-    if (formatDateET(new Date(bars[i].t)) === latestDate) {
-      todayOpen          = bars[i].o;
-      todayOpenTimestamp = bars[i].t;
-      break;
-    }
-  }
-  if (!Number.isFinite(prevSessionClose) || !Number.isFinite(todayOpen) || prevSessionClose <= 0) {
-    return null;
-  }
+  if (datesInOrder.length < 2) return [];
 
-  const gapPct = ((todayOpen - prevSessionClose) / prevSessionClose) * 100;
-  // Timestamps inclus pour permettre au caller de placer un drawing
-  // (rectangle, ligne, etc.) sur la zone du gap dans le chart.
-  // latestBarTimestamp = dernier bar des données → utile pour étendre
-  // un rectangle horizontalement jusqu'au bord droit du chart.
-  return {
-    prevSessionClose,
-    todayOpen,
-    gapPct,
-    prevCloseTimestamp,
-    todayOpenTimestamp,
-    latestBarTimestamp: bars[bars.length - 1].t,
-  };
+  const gaps = [];
+  for (let i = 1; i < datesInOrder.length; i++) {
+    const prevLast  = lastBarOfDate.get(datesInOrder[i - 1]);
+    const currFirst = firstBarOfDate.get(datesInOrder[i]);
+    const currLast  = lastBarOfDate.get(datesInOrder[i]);
+    if (!prevLast || !currFirst || !currLast) continue;
+
+    const prevSessionClose = prevLast.c;
+    const todayOpen        = currFirst.o;
+    if (!Number.isFinite(prevSessionClose) || !Number.isFinite(todayOpen)) continue;
+    if (prevSessionClose <= 0)            continue;
+    if (prevSessionClose === todayOpen)   continue;  // pas de gap réel
+
+    gaps.push({
+      prevSessionClose,
+      todayOpen,
+      gapPct: ((todayOpen - prevSessionClose) / prevSessionClose) * 100,
+      prevCloseTimestamp: prevLast.t,
+      todayOpenTimestamp: currFirst.t,
+      latestBarTimestamp: currLast.t,
+    });
+  }
+  return gaps;
+}
+
+// Backward-compat : retourne le gap le plus récent (= dernier élément de
+// computeAllGapsFromBars), ou null si aucun. Exposé pour les tests
+// existants et les éventuels consumers qui n'ont besoin que du dernier gap.
+function computeGapFromBars(bars) {
+  const gaps = computeAllGapsFromBars(bars);
+  return gaps.length > 0 ? gaps[gaps.length - 1] : null;
 }
 
 // !gap chart TICKER — fetch quote pour le code exchange, fetch 5D pour
@@ -120,10 +135,10 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
     return message.reply('❌ Yahoo Finance unavailable, try again in a few minutes').catch(() => {});
   }
 
-  // 2) Yahoo 5D — pour calculer le gap (caption seulement, le chart est
-  //    rendu par chart-img). Si Yahoo échoue ici, on continue sans gap
-  //    précis dans la caption — le chart sera quand même affiché.
-  let gap = null;
+  // 2) Yahoo 5D — pour détecter TOUS les gaps de la fenêtre (1 rectangle
+  //    par gap) ET pour la caption (chiffres du gap le plus récent).
+  //    Si Yahoo échoue ici, on continue avec un chart sans annotations.
+  let gaps = [];
   try {
     const chart = await yahoo.getChart(ticker, '5D');
     const quotes = (chart && chart.quotes) || [];
@@ -133,9 +148,9 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
         t: q.date instanceof Date ? q.date.getTime() : q.date,
         o: q.open, h: q.high, l: q.low, c: q.close, v: q.volume,
       }));
-    gap = computeGapFromBars(bars);
+    gaps = computeAllGapsFromBars(bars);
   } catch (err) {
-    // Non-fatal : le chart chart-img reste utile sans la caption précise.
+    // Non-fatal : le chart chart-img reste utile sans annotations.
     console.warn('[gap] Yahoo 5D failed for ' + ticker + ': ' + (err && err.message));
   }
 
@@ -143,38 +158,41 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
   //    Range '5D' = 15m bars sur 5 jours.
   //    Override studies = SEULEMENT Volume (pas de VWAP/EMAs/MAs des
   //    DEFAULT_STUDIES). Pour `!gap chart` on veut un chart minimal qui
-  //    laisse la zone du gap respirer — les MAs/EMAs ajouteraient des lignes
-  //    qui obscurcissent visuellement le rectangle orange. Le volume reste,
-  //    car il aide à valider si le gap a été suivi de volume (gap + volume
-  //    = signal fort, gap sans volume = souvent à fade).
+  //    laisse les zones de gap respirer — les MAs/EMAs ajouteraient des
+  //    lignes qui obscurcissent visuellement les rectangles orange. Le
+  //    volume reste, car il aide à valider si un gap a été suivi de volume
+  //    (gap + volume = signal fort, gap sans volume = souvent à fade).
   //
-  //    Si on a calculé le gap, on annote la zone avec un rectangle orange.
-  //    Le rectangle s'étend horizontalement de `prevCloseTimestamp` (moment
-  //    du gap, bord gauche) jusqu'au DERNIER bar du chart (`latestBarTimestamp`,
-  //    bord droit). Si on prenait `todayOpenTimestamp` à la place, le
-  //    rectangle serait juste une fine bande verticale entre le dernier bar
-  //    d'hier et le premier bar d'aujourd'hui — invisible sur 5D. En
-  //    l'étendant jusqu'au bord droit, on obtient une zone horizontale claire
-  //    qui surligne le RANGE de prix du gap [prevClose, todayOpen] sur toute
-  //    la portion post-gap, avec le label "GAP +X.XX%" centré.
+  //    Pour CHAQUE gap détecté on dessine un rectangle orange :
+  //      - X : de `prevCloseTimestamp` (dernière bougie du jour précédent)
+  //            à `latestBarTimestamp` (DERNIÈRE bougie du jour qui a gap-é)
+  //            → le rectangle couvre toute la session post-gap, ce qui le
+  //              rend visible (vs juste prev→open qui serait une bande
+  //              verticale ultra-fine).
+  //      - Y : [prevSessionClose, todayOpen] = le RANGE de prix gappé.
+  //      - Label "GAP +X.XX%" centré.
+  //    Plusieurs rectangles sur la même fenêtre 5D ne se chevauchent pas
+  //    horizontalement (chacun = une journée distincte).
   const symbol = resolveSymbol(ticker, quote.exchange);
   const chartOpts = {
     studies: [{ name: 'Volume' }],
   };
-  if (gap) {
-    const sign = gap.gapPct >= 0 ? '+' : '';
-    chartOpts.rectangles = [{
-      startDatetime:   new Date(gap.prevCloseTimestamp).toISOString(),
-      startPrice:      gap.prevSessionClose,
-      endDatetime:     new Date(gap.latestBarTimestamp).toISOString(),
-      endPrice:        gap.todayOpen,
-      text:            `GAP ${sign}${gap.gapPct.toFixed(2)}%`,
-      lineColor:       'rgb(255,165,0)',          // orange solid
-      // chart-img validator only accepts single-decimal alpha (`rgba(r,g,b,0.X)`).
-      // `0.25` → HTTP 422 "must be a valid rgb/rgba color". Use `0.3`.
-      backgroundColor: 'rgba(255,165,0,0.3)',     // orange fill semi-transparent
-      lineWidth:       2,
-    }];
+  if (gaps.length > 0) {
+    chartOpts.rectangles = gaps.map(g => {
+      const sign = g.gapPct >= 0 ? '+' : '';
+      return {
+        startDatetime:   new Date(g.prevCloseTimestamp).toISOString(),
+        startPrice:      g.prevSessionClose,
+        endDatetime:     new Date(g.latestBarTimestamp).toISOString(),
+        endPrice:        g.todayOpen,
+        text:            `GAP ${sign}${g.gapPct.toFixed(2)}%`,
+        lineColor:       'rgb(255,165,0)',          // orange solid
+        // chart-img validator only accepts single-decimal alpha (`rgba(r,g,b,0.X)`).
+        // `0.25` → HTTP 422 "must be a valid rgb/rgba color". Use `0.3`.
+        backgroundColor: 'rgba(255,165,0,0.3)',     // orange fill semi-transparent
+        lineWidth:       2,
+      };
+    });
   }
   let png;
   try {
@@ -184,14 +202,19 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
     return message.reply('❌ Chart rendering failed, try again in a few minutes').catch(() => {});
   }
 
-  // 4) Caption : numbers from gap if available, sinon générique.
+  // 4) Caption : highlight le gap le plus récent (= dernier de l'array,
+  //    le plus utile actionnable), + count si plusieurs gaps détectés.
   const captionLines = [`📊 **$${ticker}** — overnight gap`];
-  if (gap) {
-    const sign = gap.gapPct >= 0 ? '+' : '';
-    const arrow = gap.gapPct >= 0 ? '⬆️' : '⬇️';
-    const direction = gap.gapPct >= 0 ? 'up' : 'down';
-    captionLines[0] = `${arrow} **$${ticker}** — overnight gap ${direction} ${sign}${gap.gapPct.toFixed(2)}%`;
-    captionLines.push(`Open ${fmtPrice(gap.todayOpen)} vs prev session close ${fmtPrice(gap.prevSessionClose)}`);
+  if (gaps.length > 0) {
+    const latest = gaps[gaps.length - 1];
+    const sign = latest.gapPct >= 0 ? '+' : '';
+    const arrow = latest.gapPct >= 0 ? '⬆️' : '⬇️';
+    const direction = latest.gapPct >= 0 ? 'up' : 'down';
+    captionLines[0] = `${arrow} **$${ticker}** — overnight gap ${direction} ${sign}${latest.gapPct.toFixed(2)}%`;
+    captionLines.push(`Open ${fmtPrice(latest.todayOpen)} vs prev session close ${fmtPrice(latest.prevSessionClose)}`);
+    if (gaps.length > 1) {
+      captionLines.push(`(${gaps.length} gaps detected in last 5 days — see chart)`);
+    }
   }
 
   return message.reply({
@@ -218,4 +241,4 @@ function registerGapCommands(client, { yahoo, chartImg }) {
   });
 }
 
-module.exports = { registerGapCommands, computeGapFromBars };
+module.exports = { registerGapCommands, computeGapFromBars, computeAllGapsFromBars };

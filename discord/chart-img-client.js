@@ -136,6 +136,55 @@ function buildFibDrawing(anchors) {
   };
 }
 
+// Construit le drawing Rectangle (https://doc.chart-img.com/#rectangle).
+// Use case principal : surligner la zone d'un gap overnight (prev close →
+// today open) sur le chart !gap.
+//
+// Schéma input requis : startDatetime + startPrice + endDatetime + endPrice
+// (ISO 8601 pour les datetimes, float pour les prices). Optionnel :
+//   - text          : label affiché dans le rectangle
+//   - lineColor     : couleur de la bordure (CSS color string)
+//   - backgroundColor : remplissage (typiquement rgba avec alpha 0.2-0.3)
+//   - fillBackground : false pour une bordure sans remplissage
+//   - zOrder        : 'top' (défaut, au-dessus des candles) ou 'bottom'
+//
+// `text` non vide → on active automatiquement showLabel + fontBold + center
+// alignment pour que le label soit visible et lisible. Override defaults
+// chart-img sont du violet — on laisse le caller décider de la couleur via
+// lineColor / backgroundColor.
+//
+// Renvoie null si un champ requis est invalide.
+function buildRectangleDrawing(rect) {
+  if (!rect) return null;
+  const { startDatetime, startPrice, endDatetime, endPrice } = rect;
+  if (typeof startDatetime !== 'string' || typeof endDatetime !== 'string') return null;
+  if (!Number.isFinite(startPrice) || !Number.isFinite(endPrice)) return null;
+
+  const drawing = {
+    name: 'Rectangle',
+    input: { startDatetime, startPrice, endDatetime, endPrice },
+    zOrder: rect.zOrder === 'bottom' ? 'bottom' : 'top',
+  };
+
+  const hasLabel = typeof rect.text === 'string' && rect.text.length > 0;
+  if (hasLabel) drawing.input.text = rect.text;
+
+  const override = {};
+  if (typeof rect.lineColor === 'string')        override.lineColor = rect.lineColor;
+  if (typeof rect.backgroundColor === 'string')  override.backgroundColor = rect.backgroundColor;
+  if (typeof rect.fillBackground === 'boolean')  override.fillBackground = rect.fillBackground;
+  if (Number.isInteger(rect.lineWidth))          override.lineWidth = rect.lineWidth;
+  if (hasLabel) {
+    override.showLabel     = true;
+    override.fontBold      = true;
+    override.horzLabelAlign = 'center';
+    override.vertLabelAlign = 'middle';
+  }
+  if (Object.keys(override).length > 0) drawing.override = override;
+
+  return drawing;
+}
+
 function withTimeout(promise, ms) {
   let handle;
   const timeout = new Promise((_, reject) => {
@@ -210,6 +259,11 @@ function createChartImgClient({
   //   → ajoute un Fib Retracement drawing entre ces 2 points. Caller
   //   responsable de trouver les swing low/high (timestamp + prix) sur
   //   la même fenêtre que le range demandé. Voir buildFibDrawing().
+  // opts.rectangles = [ { startDatetime, startPrice, endDatetime, endPrice,
+  //   text?, lineColor?, backgroundColor?, fillBackground?, lineWidth?,
+  //   zOrder? }, ... ] → ajoute N rectangles (une zone surlignée par item).
+  //   Use case principal : !gap chart pour surligner la zone du gap.
+  //   Voir buildRectangleDrawing().
   // Throws 'Invalid range' si le range n'est pas mappable, sinon
   // propage les erreurs HTTP/timeout au caller.
   async function getChart(symbol, range, opts = {}) {
@@ -223,15 +277,27 @@ function createChartImgClient({
       const fib = buildFibDrawing(opts.fibAnchors);
       if (fib) drawings.push(fib);
     }
+    if (Array.isArray(opts.rectangles)) {
+      for (const r of opts.rectangles) {
+        const rect = buildRectangleDrawing(r);
+        if (rect) drawings.push(rect);
+      }
+    }
 
-    // Clé case-sensitive sur le range. La présence du FIB et les anchors
-    // exacts font partie de la clé pour qu'un changement de swing (nouveau
-    // high/low intraday) bypass le cache.
-    const fibKey = drawings.length
+    // Clé case-sensitive sur le range. La présence du FIB / des rectangles
+    // et leurs anchors exacts font partie de la clé pour qu'un changement
+    // de swing ou de zone bypass le cache.
+    const fibKey = opts.fibAnchors
       ? '|FIB:' + opts.fibAnchors.startDatetime + '@' + opts.fibAnchors.startPrice
         + '-' + opts.fibAnchors.endDatetime + '@' + opts.fibAnchors.endPrice
       : '';
-    const key = sym + '|' + String(range) + fibKey;
+    const rectKey = (Array.isArray(opts.rectangles) && opts.rectangles.length > 0)
+      ? '|RECT:' + opts.rectangles.map(r =>
+          r.startDatetime + '@' + r.startPrice + '-' + r.endDatetime + '@' + r.endPrice
+            + (r.text ? '#' + r.text : '')
+        ).join(',')
+      : '';
+    const key = sym + '|' + String(range) + fibKey + rectKey;
 
     const hit = cache.get(key);
     if (hit) {
@@ -261,6 +327,7 @@ module.exports = {
   // exposed for tests
   mapRangeToChartImg,
   buildFibDrawing,
+  buildRectangleDrawing,
   YAHOO_TO_TV_EXCHANGE,
   DEFAULT_STUDIES,
   CHART_IMG_BASE,

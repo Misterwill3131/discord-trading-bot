@@ -5,7 +5,9 @@
 //   !price TICKER           → quote live (prix, change%, volume, ranges, market cap)
 //   !chart TICKER [RANGE]   → image PNG du graphe (1D/5D/1M/3M/6M/1Y)
 //   !indicator TICKER       → RSI(14) + EMA(9) + EMA(20) + VWAP sur candles 5min du jour
-//   !ema9 TICKER            → chart 5D avec UNIQUEMENT VWAP + EMA(9) + valeurs texte
+//   !ema9 TICKER [TF]       → chart avec UNIQUEMENT VWAP + EMA(9) + valeurs texte
+//                             TF optionnel : 1min, 5min, 15min, 30min, 1h, 1d
+//                             (default: 5D · 15min)
 //
 // Source unique : Yahoo Finance via `yahoo-finance2`. Cache mémoire
 // TTL 30s + timeout 10s sur chaque appel externe.
@@ -475,24 +477,74 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
     try { await message.reply(lines.join('\n')); } catch (e) { console.error('[!indicator]', e.message); }
   });
 
-  // ── !ema9 TICKER ───────────────────────────────────────────────────
-  // Chart 1D (5min bars) avec UNIQUEMENT VWAP + EMA(9) en studies +
-  // les valeurs textuelles des deux indicateurs en caption. Use case :
-  // setup intraday rapide (price vs VWAP, price vs EMA9) sans le bruit
-  // des autres MA/EMA du !chart standard.
+  // ── !ema9 TICKER [TIMEFRAME] ────────────────────────────────────────
+  // Chart avec UNIQUEMENT VWAP + EMA(9) + valeurs textuelles. Timeframe
+  // optionnel (par défaut 5D · 15min, weekend-safe).
+  // Mapping timeframe → range chart-img (et Yahoo, qui partage les keys) :
+  //   1min  → '1m'  (1m bars × 1 jour)
+  //   5min  → '5m'  (5m bars × 1 jour)
+  //   15min → '15m' (15m bars × 5 jours)
+  //   30min → '30m' (30m bars × 5 jours)
+  //   1h    → '1h'  (1h bars × 1 mois)
+  //   1d    → '1M'  (1d bars × 1 mois)
+  //   (aucun) → '5D' = 15min × 5 jours, weekend-safe par défaut
+  // Pour les timeframes courts (1min, 5min) Yahoo retourne 0 quotes les
+  // weekends → on affiche le chart sans valeurs texte et un message clair
+  // au lieu d'un "❌ Not enough data" qui suggère un bug.
+  const EMA9_TIMEFRAMES = {
+    '1min':  '1m',
+    '5min':  '5m',
+    '15min': '15m',
+    '30min': '30m',
+    '1h':    '1h',
+    '1d':    '1M',
+  };
+  const EMA9_LABELS = {
+    '1m':  '1D · 1min',
+    '5m':  '1D · 5min',
+    '15m': '5D · 15min',
+    '30m': '5D · 30min',
+    '1h':  '1M · 1h',
+    '1M':  '1M · 1d',
+    '5D':  '5D · 15min',
+  };
+
   client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
-    const m = message.content.trim().match(/^!ema9(?:\s+([A-Za-z$.\-]{1,10}))?$/i);
+    // Ticker (alpha) optionnel, puis timeframe optionnel.
+    const m = message.content.trim().match(
+      /^!ema9(?:\s+([A-Za-z$.\-]{1,10})(?:\s+(\S+))?)?$/i
+    );
     if (!m) return;
 
     const tickerArg = m[1];
+    const tfArg     = (m[2] || '').toLowerCase();
+
     if (!tickerArg) {
-      try { await message.reply('❌ Usage: !ema9 TICKER (e.g. !ema9 SPY)'); } catch (_) {}
+      try {
+        await message.reply(
+          '❌ Usage: `!ema9 TICKER [TIMEFRAME]`\n' +
+          'Timeframes: `1min`, `5min`, `15min`, `30min`, `1h`, `1d` (default: 5D · 15min)'
+        );
+      } catch (_) {}
       return;
     }
-    const ticker = tickerArg.replace(/\$/g, '').toUpperCase();
-    console.log('[!ema9] ' + ticker + ' requested by ' + message.author.username
-      + ' in #' + (message.channel.name || message.channel.id));
+
+    if (m[2] && !EMA9_TIMEFRAMES[tfArg]) {
+      try {
+        await message.reply(
+          '❌ Invalid timeframe `' + m[2] + '`. Use: `1min`, `5min`, `15min`, `30min`, `1h`, `1d`'
+        );
+      } catch (_) {}
+      return;
+    }
+
+    const ticker  = tickerArg.replace(/\$/g, '').toUpperCase();
+    const range   = EMA9_TIMEFRAMES[tfArg] || '5D';
+    const tfLabel = EMA9_LABELS[range] || range;
+
+    console.log('[!ema9] ' + ticker + ' tf=' + (tfArg || 'default') + ' requested by '
+      + message.author.username + ' in #' + (message.channel.name || message.channel.id));
 
     if (!cic) {
       console.warn('[!ema9] CHART_IMG_API_KEY missing — command unavailable');
@@ -500,19 +552,19 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
       return;
     }
 
-    // 1) Yahoo : quote (pour exchange code) + 5D chart (pour les indicateurs).
-    //    On utilise '5D' (et non '1D') parce que '1D' retourne 0 quotes les
-    //    weekends/jours fériés → "No data available" même sur des tickers
-    //    valides. '5D' couvre les 5 derniers jours de trading et marche
-    //    n'importe quand. EMA9 et VWAP sont calculés sur les bars 15min de
-    //    cette fenêtre — toujours assez de data (~130 bars) pour les EMAs.
+    // 1) Yahoo : quote (pour exchange code) + chart au timeframe demandé.
     //    Promise.all → parallèle, gain ~200-500ms vs séquentiel.
     let symbol;
-    let yahooCandles;
+    let yahooCandles = [];
     try {
       const [quote, chart] = await Promise.all([
         yc.getQuote(ticker),
-        yc.getChart(ticker, '5D'),
+        yc.getChart(ticker, range).catch(err => {
+          // Yahoo peut throw sur les timeframes courts en weekend — on
+          // tolère et on tombera sur le path "indicateurs unavailable".
+          console.warn('[!ema9] Yahoo getChart(' + range + ') failed: ' + (err && err.message));
+          return null;
+        }),
       ]);
       if (!quote || !quote.symbol) {
         try { await message.reply('❌ Ticker $' + ticker + ' not found'); } catch (_) {}
@@ -520,10 +572,6 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
       }
       symbol = resolveSymbol(ticker, quote.exchange);
       yahooCandles = (chart && chart.quotes) || [];
-      if (yahooCandles.length === 0) {
-        try { await message.reply('❌ No data available for $' + ticker); } catch (_) {}
-        return;
-      }
     } catch (err) {
       if (isUnknownTickerError(err)) {
         try { await message.reply('❌ Ticker $' + ticker + ' not found'); } catch (_) {}
@@ -539,22 +587,24 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
     }
 
     // 2) Compute EMA9 + VWAP localement (computeIndicators retourne aussi
-    //    rsi/ema20/lastPrice mais on n'en a pas besoin ici).
-    const bars = yahooCandles
-      .filter(q => Number.isFinite(q.close))
-      .map(q => ({ t: q.date, o: q.open, h: q.high, l: q.low, c: q.close, v: q.volume }));
-    const ind = computeIndicators(bars);
-    if (!Number.isFinite(ind.ema9)) {
-      try { await message.reply('❌ Not enough historical data for $' + ticker); } catch (_) {}
-      return;
+    //    rsi/ema20/lastPrice mais on n'en a pas besoin ici). Si Yahoo n'a
+    //    pas retourné de bars (cas weekend sur timeframe court), ind reste
+    //    null et on affichera juste le chart avec un message d'info.
+    let ind = null;
+    if (yahooCandles.length > 0) {
+      const bars = yahooCandles
+        .filter(q => Number.isFinite(q.close))
+        .map(q => ({ t: q.date, o: q.open, h: q.high, l: q.low, c: q.close, v: q.volume }));
+      ind = computeIndicators(bars);
     }
 
-    // 3) Chart-img : studies = juste VWAP + EMA(9). Override les
-    //    DEFAULT_STUDIES du client (sinon on aurait aussi EMA 20/50/200 etc.).
-    //    '5D' (cohérent avec Yahoo ci-dessus) → marche aussi en weekend.
+    // 3) Chart-img : studies = juste VWAP + EMA(9) au timeframe demandé.
+    //    chart-img gère les weekends pour les timeframes courts (affiche
+    //    la dernière session) — donc le chart marche même quand Yahoo
+    //    n'a rien retourné côté indicateurs textuels.
     let buffer;
     try {
-      buffer = await cic.getChart(symbol, '5D', {
+      buffer = await cic.getChart(symbol, range, {
         studies: [
           { name: 'VWAP' },
           { name: 'Moving Average Exponential', input: { length: 9, source: 'close' } },
@@ -576,18 +626,21 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
       return;
     }
 
-    // 4) Reply avec valeurs texte + chart attaché. VWAP peut être null si
-    //    aucune bougie n'a de volume exploitable (rare) → afficher N/A.
-    const vwapStr = Number.isFinite(ind.vwap) ? '$' + ind.vwap.toFixed(2) : 'N/A';
-    const lines = [
-      '📊 **$' + ticker + '** — EMA(9) + VWAP (5D · 15min)',
-      '> EMA(9): $' + ind.ema9.toFixed(2),
-      '> VWAP: ' + vwapStr,
-    ];
+    // 4) Reply avec valeurs texte + chart attaché.
+    const lines = ['📊 **$' + ticker + '** — EMA(9) + VWAP (' + tfLabel + ')'];
+    if (ind && Number.isFinite(ind.ema9)) {
+      const vwapStr = Number.isFinite(ind.vwap) ? '$' + ind.vwap.toFixed(2) : 'N/A';
+      lines.push('> EMA(9): $' + ind.ema9.toFixed(2));
+      lines.push('> VWAP: ' + vwapStr);
+    } else {
+      // Yahoo n'a pas retourné assez de bars (typiquement weekend × timeframe
+      // court). Le chart est dispo, juste les valeurs textuelles ne le sont pas.
+      lines.push('> _Indicator values unavailable for this timeframe — try a longer one_');
+    }
     try {
       await message.reply({
         content: lines.join('\n'),
-        files: [{ attachment: buffer, name: ticker + '-ema9.png' }],
+        files: [{ attachment: buffer, name: ticker + '-ema9-' + (tfArg || 'default') + '.png' }],
       });
     } catch (err) {
       console.error('[!ema9] send failed', err.message);

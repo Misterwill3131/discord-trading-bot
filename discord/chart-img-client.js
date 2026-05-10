@@ -153,6 +153,13 @@ function buildFibDrawing(anchors) {
 // chart-img sont du violet — on laisse le caller décider de la couleur via
 // lineColor / backgroundColor.
 //
+// ⚠️ Format couleur — le validator chart-img est STRICT :
+//   - `rgb(R,G,B)`        OK  (ints 0-255, pas d'espaces)
+//   - `rgba(R,G,B,0.X)`   OK  (alpha = 1 décimale max, ex: 0.2, 0.3, 0.5)
+//   - `rgba(R,G,B,0.25)`  KO  → HTTP 422 "must be a valid rgb/rgba color"
+//   - `#RRGGBB`           pas testé, à éviter
+// Toujours passer une alpha à 1 décimale (0.1 … 0.9).
+//
 // Renvoie null si un champ requis est invalide.
 function buildRectangleDrawing(rect) {
   if (!rect) return null;

@@ -1,15 +1,22 @@
 // ─────────────────────────────────────────────────────────────────────
 // discord/gap-commands.js — Commandes !gap ...
 // ─────────────────────────────────────────────────────────────────────
-//   !gap chart TICKER     — render PNG annoté du dernier gap overnight
-//                           (premarket open vs prev session close)
+//   !gap chart TICKER     — render PNG du dernier gap overnight via
+//                           chart-img (TradingView Advanced Chart).
+//                           Caption affiche les chiffres précis
+//                           (open vs prev close, % gap).
 //
 // Préfixe distinct du !trend pour que les utilisateurs n'aient pas à
 // retenir un sub-command long. Marche sur n'importe quel ticker (pas
 // besoin qu'il soit dans la watchlist du serveur).
+//
+// Le rendu canvas local (canvas/gap-chart.js) a été remplacé par
+// chart-img : la font système n'avait pas les glyphs emoji/spéciaux et
+// produisait des "□" partout. chart-img rend côté serveur avec un vrai
+// font set + indicateurs TradingView (VWAP, EMAs, MAs).
 // ─────────────────────────────────────────────────────────────────────
 
-const { renderGapChartPng } = require('../canvas/gap-chart');
+const { resolveSymbol } = require('./chart-img-client');
 const { formatDateET } = require('../trading/trend-scanner');
 
 function fmtPrice(v) { return Number.isFinite(v) ? '$' + v.toFixed(2) : '—'; }
@@ -22,52 +29,20 @@ function isUnknownTicker(err) {
   );
 }
 
-// !gap chart TICKER — fetch 5D, calcule prevSessionClose / todayOpen / gapPct
-// des 2 dernières dates ET distinctes, render PNG annoté, reply avec attach.
-// Marche n'importe quand (anchor sur les bars, pas sur Date.now()).
-async function handleGapChart(message, args, { yahoo }) {
-  if (!message.guildId) {
-    return message.reply('Use this command in a server.').catch(() => {});
-  }
-  if (args.length < 2) {
-    return message.reply('Usage: `!gap chart <TICKER>`').catch(() => {});
-  }
-  const ticker = args[1].replace(/\$/g, '').toUpperCase();
-  if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(ticker)) {
-    return message.reply('❌ Invalid ticker format').catch(() => {});
-  }
+// Compute le gap (prevSessionClose, todayOpen, gapPct) depuis les bars 5D
+// Yahoo. Anchor sur les 2 dernières dates ET distinctes (gère weekends/
+// holidays naturellement). Renvoie null si data insuffisante.
+function computeGapFromBars(bars) {
+  if (!Array.isArray(bars) || bars.length < 2) return null;
 
-  let chart;
-  try {
-    chart = await yahoo.getChart(ticker, '5D');
-  } catch (err) {
-    if (isUnknownTicker(err)) {
-      return message.reply(`❌ Unknown ticker $${ticker}`).catch(() => {});
-    }
-    return message.reply('❌ Yahoo Finance unavailable, try again in a few minutes').catch(() => {});
-  }
-
-  const quotes = (chart && chart.quotes) || [];
-  const bars = quotes
-    .filter(q => Number.isFinite(q.close))
-    .map(q => ({
-      t: q.date instanceof Date ? q.date.getTime() : q.date,
-      o: q.open, h: q.high, l: q.low, c: q.close, v: q.volume,
-    }));
-  if (bars.length < 2) {
-    return message.reply(`❌ Not enough data for $${ticker}`).catch(() => {});
-  }
-
-  // 2 dernières dates ET distinctes (gère weekends/holidays naturellement).
   const datesInOrder = [];
   const seen = new Set();
   for (const b of bars) {
     const d = formatDateET(new Date(b.t));
     if (!seen.has(d)) { seen.add(d); datesInOrder.push(d); }
   }
-  if (datesInOrder.length < 2) {
-    return message.reply(`❌ Need at least 2 trading days of data for $${ticker}`).catch(() => {});
-  }
+  if (datesInOrder.length < 2) return null;
+
   const latestDate = datesInOrder[datesInOrder.length - 1];
   const prevDate   = datesInOrder[datesInOrder.length - 2];
 
@@ -86,29 +61,98 @@ async function handleGapChart(message, args, { yahoo }) {
     }
   }
   if (!Number.isFinite(prevSessionClose) || !Number.isFinite(todayOpen) || prevSessionClose <= 0) {
-    return message.reply(`❌ Could not compute gap for $${ticker}`).catch(() => {});
+    return null;
   }
 
   const gapPct = ((todayOpen - prevSessionClose) / prevSessionClose) * 100;
-  const png = renderGapChartPng({ bars, prevSessionClose, todayOpen, gapPct, ticker });
-  if (!png) {
-    return message.reply(`❌ Could not render chart for $${ticker}`).catch(() => {});
+  return { prevSessionClose, todayOpen, gapPct };
+}
+
+// !gap chart TICKER — fetch quote pour le code exchange, fetch 5D pour
+// calculer le gap, render PNG via chart-img, reply avec attach + caption.
+// Marche n'importe quand (anchor sur les bars, pas sur Date.now()).
+async function handleGapChart(message, args, { yahoo, chartImg }) {
+  if (!message.guildId) {
+    return message.reply('Use this command in a server.').catch(() => {});
+  }
+  if (args.length < 2) {
+    return message.reply('Usage: `!gap chart <TICKER>`').catch(() => {});
+  }
+  const ticker = args[1].replace(/\$/g, '').toUpperCase();
+  if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(ticker)) {
+    return message.reply('❌ Invalid ticker format').catch(() => {});
   }
 
-  const sign = gapPct >= 0 ? '+' : '';
-  const arrow = gapPct >= 0 ? '⬆️' : '⬇️';
-  const direction = gapPct >= 0 ? 'up' : 'down';
-  const captionLines = [
-    `${arrow} **$${ticker}** — overnight gap ${direction} ${sign}${gapPct.toFixed(2)}%`,
-    `Open ${fmtPrice(todayOpen)} vs prev session close ${fmtPrice(prevSessionClose)}`,
-  ];
+  // chart-img unavailable → graceful degradation. Le caller (index.js)
+  // passe `chartImg = null` si CHART_IMG_API_KEY est absent.
+  if (!chartImg) {
+    return message.reply('❌ Chart rendering unavailable (CHART_IMG_API_KEY not configured).').catch(() => {});
+  }
+
+  // 1) Yahoo quote — sert à 2 choses :
+  //    - valider le ticker (works on weekends, contrairement à getChart 1D)
+  //    - récupérer `exchange` pour résoudre le préfixe TradingView
+  let quote;
+  try {
+    quote = await yahoo.getQuote(ticker);
+    if (!quote || !quote.symbol) {
+      return message.reply(`❌ Unknown ticker $${ticker}`).catch(() => {});
+    }
+  } catch (err) {
+    if (isUnknownTicker(err)) {
+      return message.reply(`❌ Unknown ticker $${ticker}`).catch(() => {});
+    }
+    return message.reply('❌ Yahoo Finance unavailable, try again in a few minutes').catch(() => {});
+  }
+
+  // 2) Yahoo 5D — pour calculer le gap (caption seulement, le chart est
+  //    rendu par chart-img). Si Yahoo échoue ici, on continue sans gap
+  //    précis dans la caption — le chart sera quand même affiché.
+  let gap = null;
+  try {
+    const chart = await yahoo.getChart(ticker, '5D');
+    const quotes = (chart && chart.quotes) || [];
+    const bars = quotes
+      .filter(q => Number.isFinite(q.close))
+      .map(q => ({
+        t: q.date instanceof Date ? q.date.getTime() : q.date,
+        o: q.open, h: q.high, l: q.low, c: q.close, v: q.volume,
+      }));
+    gap = computeGapFromBars(bars);
+  } catch (err) {
+    // Non-fatal : le chart chart-img reste utile sans la caption précise.
+    console.warn('[gap] Yahoo 5D failed for ' + ticker + ': ' + (err && err.message));
+  }
+
+  // 3) Render chart via chart-img.
+  //    Range '5D' = 15m bars sur 5 jours → contexte autour du gap visible
+  //    avec VWAP + EMAs + MAs des DEFAULT_STUDIES.
+  const symbol = resolveSymbol(ticker, quote.exchange);
+  let png;
+  try {
+    png = await chartImg.getChart(symbol, '5D');
+  } catch (err) {
+    console.error('[gap] chart-img error for ' + symbol + ': ' + (err && err.message));
+    return message.reply('❌ Chart rendering failed, try again in a few minutes').catch(() => {});
+  }
+
+  // 4) Caption : numbers from gap if available, sinon générique.
+  const captionLines = [`📊 **$${ticker}** — overnight gap`];
+  if (gap) {
+    const sign = gap.gapPct >= 0 ? '+' : '';
+    const arrow = gap.gapPct >= 0 ? '⬆️' : '⬇️';
+    const direction = gap.gapPct >= 0 ? 'up' : 'down';
+    captionLines[0] = `${arrow} **$${ticker}** — overnight gap ${direction} ${sign}${gap.gapPct.toFixed(2)}%`;
+    captionLines.push(`Open ${fmtPrice(gap.todayOpen)} vs prev session close ${fmtPrice(gap.prevSessionClose)}`);
+  }
+
   return message.reply({
     content: captionLines.join('\n'),
     files: [{ attachment: png, name: `gap-${ticker}-${Date.now()}.png` }],
   }).catch(e => console.error('[gap] chart reply', e.message));
 }
 
-function registerGapCommands(client, { yahoo }) {
+function registerGapCommands(client, { yahoo, chartImg }) {
   client.on('messageCreate', async (message) => {
     if (!message || !message.content || message.author?.bot) return;
     const text = message.content.trim();
@@ -120,10 +164,10 @@ function registerGapCommands(client, { yahoo }) {
     }
 
     const sub = args[0].toLowerCase();
-    if (sub === 'chart') return handleGapChart(message, args, { yahoo });
+    if (sub === 'chart') return handleGapChart(message, args, { yahoo, chartImg });
 
     return message.reply('Usage: `!gap chart <TICKER>`').catch(() => {});
   });
 }
 
-module.exports = { registerGapCommands };
+module.exports = { registerGapCommands, computeGapFromBars };

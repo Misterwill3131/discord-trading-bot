@@ -55,6 +55,27 @@ test('removeFromWatchlist returns true if removed, false if absent', () => {
   assert.deepStrictEqual(store.getWatchlist('g1'), []);
 });
 
+test('clearWatchlist removes all tickers for a guild and returns count', () => {
+  const store = createTrendStore(makeDb());
+  store.addToWatchlist('g1', 'AAPL', 1000);
+  store.addToWatchlist('g1', 'TSLA', 1001);
+  store.addToWatchlist('g1', 'NVDA', 1002);
+  assert.strictEqual(store.clearWatchlist('g1'), 3);
+  assert.deepStrictEqual(store.getWatchlist('g1'), []);
+  // Re-clearing returns 0 (already empty).
+  assert.strictEqual(store.clearWatchlist('g1'), 0);
+});
+
+test('clearWatchlist on a guild does not affect other guilds', () => {
+  const store = createTrendStore(makeDb());
+  store.addToWatchlist('g1', 'AAPL', 1000);
+  store.addToWatchlist('g2', 'AAPL', 1000);
+  store.addToWatchlist('g2', 'TSLA', 1000);
+  assert.strictEqual(store.clearWatchlist('g1'), 1);
+  assert.deepStrictEqual(store.getWatchlist('g1'), []);
+  assert.deepStrictEqual(store.getWatchlist('g2'), ['AAPL', 'TSLA']);  // intact
+});
+
 test('getWatchlist sorts tickers alphabetically', () => {
   const store = createTrendStore(makeDb());
   store.addToWatchlist('g1', 'TSLA', 1000);

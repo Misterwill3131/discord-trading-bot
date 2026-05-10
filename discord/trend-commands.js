@@ -317,7 +317,19 @@ async function handleWatch(message, args, { store, yahoo }) {
 async function handleUnwatch(message, args, { store }) {
   if (!requireManageGuild(message)) return;
   if (args.length < 2) {
-    return message.reply('Usage: `!trend unwatch <TICKER>`').catch(() => {});
+    return message.reply('Usage: `!trend unwatch <TICKER>` · `!trend unwatch all`').catch(() => {});
+  }
+  // Spécial : `!trend unwatch all` vide toute la watchlist du serveur.
+  // Pas de confirmation explicite : la commande est ManageGuild-gated et
+  // c'est facile de re-add les tickers ensuite. trend_state n'est pas
+  // touché (état global per-ticker), donc d'autres serveurs qui watch
+  // les mêmes tickers continuent normalement.
+  if (args[1].toLowerCase() === 'all') {
+    const count = store.clearWatchlist(message.guildId);
+    if (count === 0) {
+      return message.reply('ℹ️ Watchlist already empty').catch(() => {});
+    }
+    return message.reply(`✅ Removed all ${count} ticker${count === 1 ? '' : 's'} from watchlist`).catch(() => {});
   }
   const ticker = args[1].replace(/\$/g, '').toUpperCase();
   const removed = store.removeFromWatchlist(message.guildId, ticker);
@@ -476,7 +488,7 @@ function registerTrendCommands(client, { store, yahoo, scannerConfig }) {
 
     const args = text.slice('!trend'.length).trim().split(/\s+/).filter(Boolean);
     if (args.length === 0) {
-      return message.reply('Usage: `!trend <TICKER>` · `!trend watch <TICKER>` · `!trend unwatch <TICKER>` · `!trend watchlist` · `!trend status` · `!trend list` · `!trend channel #channel` · `!trend gap-channel #channel` · `!trend direction on|off` · `!gap chart <TICKER>`').catch(() => {});
+      return message.reply('Usage: `!trend <TICKER>` · `!trend watch <TICKER>` · `!trend unwatch <TICKER>|all` · `!trend watchlist` · `!trend status` · `!trend list` · `!trend channel #channel` · `!trend gap-channel #channel` · `!trend direction on|off` · `!gap chart <TICKER>`').catch(() => {});
     }
 
     const sub = args[0].toLowerCase();

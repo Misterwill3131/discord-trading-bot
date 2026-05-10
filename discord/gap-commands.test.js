@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { computeGapFromBars, computeAllGapsFromBars } = require('./gap-commands');
+const { computeGapFromBars, computeAllGapsFromBars, isRegularHoursET } = require('./gap-commands');
 
 // Helpers : bâtit un timestamp ET pour une date YYYY-MM-DD à hh:mm
 // (en UTC pour simplifier les tests — formatDateET convertira en ET).
@@ -209,4 +209,45 @@ test('computeGapFromBars (backward-compat) returns the LATEST gap from the array
   assert.deepStrictEqual(single, all[all.length - 1]);
   assert.strictEqual(single.prevSessionClose, 104);
   assert.strictEqual(single.todayOpen, 107);
+});
+
+// ── isRegularHoursET (filter pre-market & after-hours) ───────────────
+// Note : EDT = UTC-4 (en mai 2026, DST en vigueur jusqu'à novembre).
+// Donc 13:30 UTC = 09:30 ET, 20:00 UTC = 16:00 ET, etc.
+test('isRegularHoursET includes 9:30 ET (regular open)', () => {
+  // 13:30 UTC en EDT = 9:30 ET
+  assert.strictEqual(isRegularHoursET(ts('2026-05-08', 13, 30)), true);
+});
+
+test('isRegularHoursET includes 15:45 ET (last 15-min bar of regular session)', () => {
+  // 19:45 UTC en EDT = 15:45 ET
+  assert.strictEqual(isRegularHoursET(ts('2026-05-08', 19, 45)), true);
+});
+
+test('isRegularHoursET excludes 9:29 ET (1 min before open)', () => {
+  // 13:29 UTC en EDT = 9:29 ET
+  assert.strictEqual(isRegularHoursET(ts('2026-05-08', 13, 29)), false);
+});
+
+test('isRegularHoursET excludes 16:00 ET exactly (after-hours start)', () => {
+  // 20:00 UTC en EDT = 16:00 ET — borne supérieure exclusive
+  assert.strictEqual(isRegularHoursET(ts('2026-05-08', 20, 0)), false);
+});
+
+test('isRegularHoursET excludes 4:00 ET (pre-market)', () => {
+  // 8:00 UTC en EDT = 4:00 ET
+  assert.strictEqual(isRegularHoursET(ts('2026-05-08', 8, 0)), false);
+});
+
+test('isRegularHoursET excludes 20:00 ET (after-hours)', () => {
+  // 0:00 UTC du 9 mai = 20:00 ET le 8 mai (en EDT)
+  assert.strictEqual(isRegularHoursET(ts('2026-05-09', 0, 0)), false);
+});
+
+test('isRegularHoursET handles winter (EST = UTC-5)', () => {
+  // En janvier (EST), 14:30 UTC = 9:30 ET (pas 13:30 UTC qui serait 8:30 ET)
+  assert.strictEqual(isRegularHoursET(ts('2026-01-15', 14, 30)), true);
+  assert.strictEqual(isRegularHoursET(ts('2026-01-15', 13, 30)), false, '8:30 EST = pre-market');
+  assert.strictEqual(isRegularHoursET(ts('2026-01-15', 21, 0)),  false, '16:00 EST = close');
+  assert.strictEqual(isRegularHoursET(ts('2026-01-15', 20, 45)), true,  '15:45 EST = last regular bar');
 });

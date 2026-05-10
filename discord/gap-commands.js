@@ -98,39 +98,6 @@ function computeGapFromBars(bars) {
   return gaps.length > 0 ? gaps[gaps.length - 1] : null;
 }
 
-// Détecte si/quand un gap est "rempli" (filled) par le price action subséquent.
-//
-// Définition trader standard : un gap up est filled quand le prix retombe
-// dans la zone [prevClose, todayOpen]. Symétrique pour gap down.
-// Concrètement, on cherche la première bougie POST-gap dont le range [low, high]
-// chevauche la zone du gap.
-//
-// Use case : détermine la longueur du rectangle d'annotation sur le chart.
-// Si filled → rectangle s'arrête au moment du fill. Sinon → rectangle s'étend
-// jusqu'au bord droit du chart (caller passe `latestBarTimestamp` en fallback).
-//
-// Renvoie le timestamp de la première bougie qui remplit le gap, ou null si
-// le gap reste open dans la fenêtre des bars fournis.
-function findGapFillTimestamp(bars, gap) {
-  if (!Array.isArray(bars) || !gap) return null;
-  if (!Number.isFinite(gap.prevSessionClose) || !Number.isFinite(gap.todayOpen)) {
-    return null;
-  }
-  const zoneLow  = Math.min(gap.prevSessionClose, gap.todayOpen);
-  const zoneHigh = Math.max(gap.prevSessionClose, gap.todayOpen);
-  for (const bar of bars) {
-    // Skip les bars AVANT ou AU moment de l'open (le bar d'open lui-même
-    // crée le gap, il ne peut pas le remplir).
-    if (bar.t <= gap.todayOpenTimestamp) continue;
-    if (!Number.isFinite(bar.l) || !Number.isFinite(bar.h)) continue;
-    // Bar's [low, high] range chevauche la zone [zoneLow, zoneHigh] ?
-    if (bar.l <= zoneHigh && bar.h >= zoneLow) {
-      return bar.t;
-    }
-  }
-  return null;
-}
-
 // !gap chart TICKER — fetch quote pour le code exchange, fetch 5D pour
 // calculer le gap, render PNG via chart-img, reply avec attach + caption.
 // Marche n'importe quand (anchor sur les bars, pas sur Date.now()).
@@ -197,18 +164,21 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
   //    DEFAULT_STUDIES). Pour `!gap chart` on veut un chart minimal qui
   //    laisse les zones de gap respirer.
   //
-  //    Style "Fair Value Gap" / "open gap" — convention trader standard :
-  //    Pour chaque gap, le rectangle :
-  //      - X gauche : `todayOpenTimestamp` (1er bar de la session post-gap,
-  //                   = exactement où le gap est visible sur chart-img)
-  //      - X droit  : timestamp où le gap est "filled" (price re-entre
-  //                   dans la zone). Si jamais filled, étend jusqu'au
-  //                   dernier bar du chart (= bord droit visible).
-  //      - Y : [prevSessionClose, todayOpen] = la zone de prix gappée.
+  //    Pour CHAQUE gap on dessine un rectangle ambré qui s'étend jusqu'au
+  //    PROCHAIN gap (et le dernier va jusqu'au bord droit du chart). Cette
+  //    chaîne de rectangles segmente l'axe temporel par "périodes entre
+  //    gaps", ce qui rend chaque zone gappée immédiatement reconnaissable
+  //    et permet de voir comment le prix s'est comporté dans chaque tranche.
+  //
+  //    Format de chaque rectangle :
+  //      - X gauche : `todayOpenTimestamp` (1er bar de la session post-gap)
+  //      - X droit  : `todayOpenTimestamp` du gap suivant, OU `latestBarTimestamp`
+  //                   pour le dernier (= bord droit du chart)
+  //      - Y : [prevSessionClose, todayOpen] = la zone de prix gappée
   //      - Label "GAP" centré (sans %, le caption Discord donne le chiffre
-  //        précis pour le gap le plus récent).
-  //      - Couleur amber/sienna pour matcher l'esthétique TradingView FVG
-  //        (alpha 0.2, lineWidth 1 — discret mais visible).
+  //        précis pour le gap le plus récent)
+  //      - Couleur amber/dark-goldenrod (alpha 0.2, lineWidth 1 — discret
+  //        mais visible)
   const symbol = resolveSymbol(ticker, quote.exchange);
   const chartOpts = {
     studies:  [{ name: 'Volume' }],
@@ -219,9 +189,10 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
     ? allBars[allBars.length - 1].t
     : null;
   if (gaps.length > 0 && lastBarT !== null) {
-    chartOpts.rectangles = gaps.map(g => {
-      const fillT = findGapFillTimestamp(allBars, g);
-      const endT  = fillT !== null ? fillT : lastBarT;
+    chartOpts.rectangles = gaps.map((g, i) => {
+      // Bord droit = prochain gap si présent, sinon bord du chart.
+      const nextGap = gaps[i + 1];
+      const endT    = nextGap ? nextGap.todayOpenTimestamp : lastBarT;
       return {
         startDatetime:   new Date(g.todayOpenTimestamp).toISOString(),
         startPrice:      g.prevSessionClose,
@@ -287,5 +258,4 @@ module.exports = {
   registerGapCommands,
   computeGapFromBars,
   computeAllGapsFromBars,
-  findGapFillTimestamp,
 };

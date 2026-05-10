@@ -505,3 +505,46 @@ test('getChart cache HIT when same rectangle anchors', async () => {
   await client.getChart('AMEX:SPY', '5D', { rectangles: [RECT_OK] });
   assert.strictEqual(fetcher.calls, 1);
 });
+
+// ── opts.studies override (per-call replace of DEFAULT_STUDIES) ────
+test('getChart opts.studies REPLACES the client-default studies', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  // Client has DEFAULT_STUDIES (VWAP + EMAs + MAs)
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  // Per-call: just Volume
+  await client.getChart('AMEX:SPY', '5D', {
+    studies: [{ name: 'Volume' }],
+  });
+  assert.deepStrictEqual(fetcher.lastBody.studies, [{ name: 'Volume' }]);
+});
+
+test('getChart opts.studies = [] omits studies entirely (override default)', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '5D', { studies: [] });
+  assert.strictEqual(fetcher.lastBody.studies, undefined);
+});
+
+test('getChart without opts.studies still uses client defaults', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '5D');
+  // lastBody is re-parsed JSON → can't use strictEqual (reference)
+  assert.deepStrictEqual(fetcher.lastBody.studies, DEFAULT_STUDIES);
+});
+
+test('getChart cache key bypasses on different studies override', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '5D', { studies: [{ name: 'Volume' }] });
+  await client.getChart('AMEX:SPY', '5D', { studies: [{ name: 'VWAP' }] });
+  assert.strictEqual(fetcher.calls, 2, 'different studies = bypass cache');
+});
+
+test('getChart cache HIT when same studies override', async () => {
+  const fetcher = makeFakeFetch(pngOk());
+  const client = createChartImgClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
+  await client.getChart('AMEX:SPY', '5D', { studies: [{ name: 'Volume' }] });
+  await client.getChart('AMEX:SPY', '5D', { studies: [{ name: 'Volume' }] });
+  assert.strictEqual(fetcher.calls, 1);
+});

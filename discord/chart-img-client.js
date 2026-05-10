@@ -218,7 +218,7 @@ function createChartImgClient({
 
   const cache = new Map();   // 'SYMBOL|RANGE|FIB' → { ts, data: Buffer } | { inflight }
 
-  function buildBody(symbol, mapping, drawings) {
+  function buildBody(symbol, mapping, drawings, studiesOverride) {
     const body = {
       symbol,
       interval: mapping.interval,
@@ -227,7 +227,14 @@ function createChartImgClient({
       width,
       height,
     };
-    if (studies && studies.length > 0) body.studies = studies;
+    // Per-call studies override (Array.isArray check) takes precedence over
+    // the client default. `[]` is a valid override = "no studies at all".
+    const effectiveStudies = Array.isArray(studiesOverride)
+      ? studiesOverride
+      : studies;
+    if (effectiveStudies && effectiveStudies.length > 0) {
+      body.studies = effectiveStudies;
+    }
     if (drawings && drawings.length > 0) body.drawings = drawings;
     return body;
   }
@@ -271,6 +278,10 @@ function createChartImgClient({
   //   zOrder? }, ... ] → ajoute N rectangles (une zone surlignée par item).
   //   Use case principal : !gap chart pour surligner la zone du gap.
   //   Voir buildRectangleDrawing().
+  // opts.studies = array → REMPLACE les DEFAULT_STUDIES du client pour ce
+  //   call seulement. Use case : `!gap chart` veut juste [{ name: 'Volume' }]
+  //   (pas de VWAP/EMAs/MAs qui obscurcissent la zone du gap). Passer `[]`
+  //   pour zéro studies. `undefined` (ou absent) → defaults du client.
   // Throws 'Invalid range' si le range n'est pas mappable, sinon
   // propage les erreurs HTTP/timeout au caller.
   async function getChart(symbol, range, opts = {}) {
@@ -293,7 +304,9 @@ function createChartImgClient({
 
     // Clé case-sensitive sur le range. La présence du FIB / des rectangles
     // et leurs anchors exacts font partie de la clé pour qu'un changement
-    // de swing ou de zone bypass le cache.
+    // de swing ou de zone bypass le cache. Les studies aussi : un override
+    // (ex: `!gap chart` avec juste Volume) doit avoir un cache distinct
+    // du chart `!chart` avec les DEFAULT_STUDIES.
     const fibKey = opts.fibAnchors
       ? '|FIB:' + opts.fibAnchors.startDatetime + '@' + opts.fibAnchors.startPrice
         + '-' + opts.fibAnchors.endDatetime + '@' + opts.fibAnchors.endPrice
@@ -304,7 +317,10 @@ function createChartImgClient({
             + (r.text ? '#' + r.text : '')
         ).join(',')
       : '';
-    const key = sym + '|' + String(range) + fibKey + rectKey;
+    const studiesKey = Array.isArray(opts.studies)
+      ? '|S:' + JSON.stringify(opts.studies)
+      : '';
+    const key = sym + '|' + String(range) + fibKey + rectKey + studiesKey;
 
     const hit = cache.get(key);
     if (hit) {
@@ -312,7 +328,7 @@ function createChartImgClient({
       if (hit.inflight) return hit.inflight;
     }
 
-    const body = buildBody(sym, mapping, drawings);
+    const body = buildBody(sym, mapping, drawings, opts.studies);
     const inflight = fetchPng(body);
     cache.set(key, { inflight });
     try {

@@ -140,8 +140,14 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
   }
 
   // 3) Render chart via chart-img.
-  //    Range '5D' = 15m bars sur 5 jours → contexte autour du gap visible
-  //    avec VWAP + EMAs + MAs des DEFAULT_STUDIES.
+  //    Range '5D' = 15m bars sur 5 jours.
+  //    Override studies = SEULEMENT Volume (pas de VWAP/EMAs/MAs des
+  //    DEFAULT_STUDIES). Pour `!gap chart` on veut un chart minimal qui
+  //    laisse la zone du gap respirer — les MAs/EMAs ajouteraient des lignes
+  //    qui obscurcissent visuellement le rectangle orange. Le volume reste,
+  //    car il aide à valider si le gap a été suivi de volume (gap + volume
+  //    = signal fort, gap sans volume = souvent à fade).
+  //
   //    Si on a calculé le gap, on annote la zone avec un rectangle orange.
   //    Le rectangle s'étend horizontalement de `prevCloseTimestamp` (moment
   //    du gap, bord gauche) jusqu'au DERNIER bar du chart (`latestBarTimestamp`,
@@ -152,7 +158,9 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
   //    qui surligne le RANGE de prix du gap [prevClose, todayOpen] sur toute
   //    la portion post-gap, avec le label "GAP +X.XX%" centré.
   const symbol = resolveSymbol(ticker, quote.exchange);
-  const chartOpts = {};
+  const chartOpts = {
+    studies: [{ name: 'Volume' }],
+  };
   if (gap) {
     const sign = gap.gapPct >= 0 ? '+' : '';
     chartOpts.rectangles = [{

@@ -4,7 +4,8 @@
 // Commandes globales :
 //   !price TICKER           → quote live (prix, change%, volume, ranges, market cap)
 //   !chart TICKER [RANGE]   → image PNG du graphe (1D/5D/1M/3M/6M/1Y)
-//   !indicator TICKER       → RSI(14) + EMA(9) + EMA(20) sur candles 5min du jour
+//   !indicator TICKER       → RSI(14) + EMA(9) + EMA(20) + VWAP sur candles 5min du jour
+//   !ema9 TICKER            → chart 1D avec UNIQUEMENT VWAP + EMA(9) + valeurs texte
 //
 // Source unique : Yahoo Finance via `yahoo-finance2`. Cache mémoire
 // TTL 30s + timeout 10s sur chaque appel externe.
@@ -472,6 +473,119 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
       '> EMA(20): $' + ind.ema20.toFixed(2),
     ];
     try { await message.reply(lines.join('\n')); } catch (e) { console.error('[!indicator]', e.message); }
+  });
+
+  // ── !ema9 TICKER ───────────────────────────────────────────────────
+  // Chart 1D (5min bars) avec UNIQUEMENT VWAP + EMA(9) en studies +
+  // les valeurs textuelles des deux indicateurs en caption. Use case :
+  // setup intraday rapide (price vs VWAP, price vs EMA9) sans le bruit
+  // des autres MA/EMA du !chart standard.
+  client.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
+    const m = message.content.trim().match(/^!ema9(?:\s+([A-Za-z$.\-]{1,10}))?$/i);
+    if (!m) return;
+
+    const tickerArg = m[1];
+    if (!tickerArg) {
+      try { await message.reply('❌ Usage: !ema9 TICKER (e.g. !ema9 SPY)'); } catch (_) {}
+      return;
+    }
+    const ticker = tickerArg.replace(/\$/g, '').toUpperCase();
+    console.log('[!ema9] ' + ticker + ' requested by ' + message.author.username
+      + ' in #' + (message.channel.name || message.channel.id));
+
+    if (!cic) {
+      console.warn('[!ema9] CHART_IMG_API_KEY missing — command unavailable');
+      try { await message.reply('❌ Chart unavailable (CHART_IMG_API_KEY not configured)'); } catch (_) {}
+      return;
+    }
+
+    // 1) Yahoo : quote (pour exchange code) + 1D chart (pour les indicateurs).
+    //    Promise.all → parallèle, gain ~200-500ms vs séquentiel.
+    let symbol;
+    let yahooCandles;
+    try {
+      const [quote, chart] = await Promise.all([
+        yc.getQuote(ticker),
+        yc.getChart(ticker, '1D'),
+      ]);
+      if (!quote || !quote.symbol) {
+        try { await message.reply('❌ Ticker $' + ticker + ' not found'); } catch (_) {}
+        return;
+      }
+      symbol = resolveSymbol(ticker, quote.exchange);
+      yahooCandles = (chart && chart.quotes) || [];
+      if (yahooCandles.length === 0) {
+        try { await message.reply('❌ No data available for $' + ticker); } catch (_) {}
+        return;
+      }
+    } catch (err) {
+      if (isUnknownTickerError(err)) {
+        try { await message.reply('❌ Ticker $' + ticker + ' not found'); } catch (_) {}
+        return;
+      }
+      if (isRateLimitError(err)) {
+        try { await message.reply('❌ Rate limited, try again in 30s'); } catch (_) {}
+        return;
+      }
+      console.error('[!ema9] yahoo error:', err.stack || err.message);
+      try { await message.reply('❌ Yahoo Finance unavailable, try again later'); } catch (_) {}
+      return;
+    }
+
+    // 2) Compute EMA9 + VWAP localement (computeIndicators retourne aussi
+    //    rsi/ema20/lastPrice mais on n'en a pas besoin ici).
+    const bars = yahooCandles
+      .filter(q => Number.isFinite(q.close))
+      .map(q => ({ t: q.date, o: q.open, h: q.high, l: q.low, c: q.close, v: q.volume }));
+    const ind = computeIndicators(bars);
+    if (!Number.isFinite(ind.ema9)) {
+      try { await message.reply('❌ Not enough historical data for $' + ticker); } catch (_) {}
+      return;
+    }
+
+    // 3) Chart-img : studies = juste VWAP + EMA(9). Override les
+    //    DEFAULT_STUDIES du client (sinon on aurait aussi EMA 20/50/200 etc.).
+    let buffer;
+    try {
+      buffer = await cic.getChart(symbol, '1D', {
+        studies: [
+          { name: 'VWAP' },
+          { name: 'Moving Average Exponential', input: { length: 9, source: 'close' } },
+        ],
+      });
+    } catch (err) {
+      const msg = String(err && err.message || err);
+      if (/HTTP 401|HTTP 403/.test(msg)) {
+        console.error('[!ema9] auth error:', msg);
+        try { await message.reply('❌ Chart unavailable, try again later'); } catch (_) {}
+        return;
+      }
+      if (/HTTP 429/.test(msg)) {
+        try { await message.reply('❌ Rate limited, try again in 30s'); } catch (_) {}
+        return;
+      }
+      console.error('[!ema9] chart-img error:', err.stack || msg);
+      try { await message.reply('❌ Chart unavailable, try again later'); } catch (_) {}
+      return;
+    }
+
+    // 4) Reply avec valeurs texte + chart attaché. VWAP peut être null si
+    //    aucune bougie n'a de volume exploitable (rare) → afficher N/A.
+    const vwapStr = Number.isFinite(ind.vwap) ? '$' + ind.vwap.toFixed(2) : 'N/A';
+    const lines = [
+      '📊 **$' + ticker + '** — EMA(9) + VWAP (1D · 5min)',
+      '> EMA(9): $' + ind.ema9.toFixed(2),
+      '> VWAP: ' + vwapStr,
+    ];
+    try {
+      await message.reply({
+        content: lines.join('\n'),
+        files: [{ attachment: buffer, name: ticker + '-ema9.png' }],
+      });
+    } catch (err) {
+      console.error('[!ema9] send failed', err.message);
+    }
   });
 }
 

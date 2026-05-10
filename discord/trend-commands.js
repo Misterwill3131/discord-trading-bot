@@ -1,38 +1,20 @@
 // ─────────────────────────────────────────────────────────────────────
 // discord/trend-commands.js — Commandes !trend ...
 // ─────────────────────────────────────────────────────────────────────
-//   !trend TICKER          analyse à la demande (any user)
+//   !trend TICKER          raccourci pour `!trend watch TICKER` (any user)
+//   !trend watch TICKER    ajoute à la watchlist (any user)
+//   !trend unwatch TICKER  retire (ManageGuild) · `all` vide tout
 //   !trend watchlist       liste les tickers de la guild (any user)
 //   !trend status          résumé config + scanner (any user)
-//   !trend watch TICKER    ajoute (ManageGuild)
-//   !trend unwatch TICKER  retire (ManageGuild)
+//   !trend list            serveurs où le bot est actif (any user, DM-friendly)
 //   !trend channel #salon  set salon d'alerte (ManageGuild)
+//   !trend gap-channel #s  set salon dédié aux gaps (ManageGuild)
+//   !trend direction on/off  toggle alertes uptrend/downtrend (ManageGuild)
 // ─────────────────────────────────────────────────────────────────────
 
 const { PermissionsBitField } = require('discord.js');
-const { detectAll } = require('../trading/trend-engine');
-
-function adaptYahooBars(quotes) {
-  if (!Array.isArray(quotes)) return [];
-  return quotes
-    .filter(q => Number.isFinite(q.close))
-    .map(q => ({
-      t: q.date instanceof Date ? q.date.getTime() : q.date,
-      o: q.open, h: q.high, l: q.low, c: q.close, v: q.volume,
-    }));
-}
 
 const DIRECTION_EMOJI = { uptrend: '📈', downtrend: '📉', sideways: '➡️' };
-
-function formatPrice(v)  { return Number.isFinite(v) ? '$' + v.toFixed(2) : '—'; }
-function formatRsi(v)    { return Number.isFinite(v) ? v.toFixed(0) : '—'; }
-function formatTime(ms) {
-  if (!Number.isFinite(ms)) return '—';
-  return new Date(ms).toLocaleTimeString('en-US', {
-    timeZone: 'America/New_York',
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  }) + ' ET';
-}
 
 function isUnknownTicker(err) {
   return err && (
@@ -40,110 +22,6 @@ function isUnknownTicker(err) {
     /no.*data/i.test(err.message || '') ||
     err.code === 'NOT_FOUND'
   );
-}
-
-// !trend TICKER → analyse complète
-async function handleAnalyze(message, ticker, { yahoo, store }) {
-  let chart, dailyContext;
-  try {
-    chart = await yahoo.getChart(ticker, '1D');
-  } catch (err) {
-    if (isUnknownTicker(err)) {
-      return message.reply(`❌ Unknown ticker $${ticker}`).catch(() => {});
-    }
-    console.error('[trend] yahoo error', err && err.message);
-    return message.reply('❌ Yahoo Finance unavailable, try again in a few minutes').catch(() => {});
-  }
-  // Daily context: best-effort, omit sections if not available.
-  try {
-    const { getDailyContext } = require('../trading/trend-scanner');
-    dailyContext = await getDailyContext(yahoo, ticker);
-  } catch (e) {
-    dailyContext = null;
-  }
-
-  const candles = adaptYahooBars(chart && chart.quotes);
-  const state = store.getState(ticker) || {};
-  const verdict = detectAll(candles, dailyContext, state, {});
-  if (!verdict) {
-    return message.reply(`❌ Not enough data for $${ticker}`).catch(() => {});
-  }
-
-  const sinceLine = state && state.direction_changed_at
-    ? ` (since ${formatTime(state.direction_changed_at)})`
-    : '';
-
-  const lines = [
-    `📊 **$${ticker}**`,
-    `Direction: ${DIRECTION_EMOJI[verdict.direction] || ''} ${verdict.direction}${sinceLine}`,
-    `Price: ${formatPrice(verdict.snapshot.price)} · EMA9 ${formatPrice(verdict.snapshot.ema9)} · EMA20 ${formatPrice(verdict.snapshot.ema20)} · RSI ${formatRsi(verdict.snapshot.rsi)}`,
-  ];
-
-  // Today's daily-reference events (only if we have state from this trading day)
-  const dailyLines = [];
-  if (state.pdh_alerts_today > 0 && dailyContext) {
-    const priorHigh = dailyContext.priorHigh != null ? dailyContext.priorHigh : dailyContext.yesterday.high;
-    dailyLines.push(`• 🟢 PDH break (2-day high ${formatPrice(priorHigh)})`);
-  }
-  if (state.pdl_alerts_today > 0 && dailyContext) {
-    const priorLow = dailyContext.priorLow != null ? dailyContext.priorLow : dailyContext.yesterday.low;
-    dailyLines.push(`• 🔴 PDL break (2-day low ${formatPrice(priorLow)})`);
-  }
-  if (state.pmh_alerts_today > 0) {
-    dailyLines.push('• 🟩 PMH break (premarket high)');
-  }
-  if (state.pml_alerts_today > 0) {
-    dailyLines.push('• 🟥 PML break (premarket low)');
-  }
-  if (state.gap_alerted_today && dailyContext) {
-    const gapPct = ((dailyContext.todayOpen - dailyContext.yesterday.close) / dailyContext.yesterday.close) * 100;
-    const arrow = gapPct >= 0 ? '⬆️' : '⬇️';
-    const sign = gapPct >= 0 ? '+' : '';
-    dailyLines.push(`• ${arrow} Gap ${sign}${gapPct.toFixed(1)}% at open`);
-  }
-  if (state.volume_above_alerted_today && dailyContext) {
-    const ratio = dailyContext.todayCumVolume / dailyContext.yesterday.volume;
-    const overPct = (ratio - 1) * 100;
-    dailyLines.push(`• 📊 Volume above prev day (+${overPct.toFixed(1)}%)`);
-  }
-  if (dailyLines.length > 0) {
-    lines.push('');
-    lines.push("Today's daily-reference events:");
-    lines.push(...dailyLines);
-  }
-
-  // Recent intraday events
-  const intradayLines = [];
-  if (state.last_breakout_at) {
-    intradayLines.push(`• 🚀 Breakout at ${formatTime(state.last_breakout_at)}`);
-  }
-  if (state.last_bullish_reversal_at) {
-    intradayLines.push(`• 🔄 Bullish reversal at ${formatTime(state.last_bullish_reversal_at)}`);
-  }
-  if (state.last_bearish_reversal_at) {
-    intradayLines.push(`• 🔄 Bearish reversal at ${formatTime(state.last_bearish_reversal_at)}`);
-  }
-  lines.push('');
-  lines.push('Recent intraday events:');
-  if (intradayLines.length > 0) {
-    lines.push(...intradayLines);
-  } else {
-    lines.push('• (no recent events tracked — add to watchlist for monitoring)');
-  }
-
-  // Today's volume vs yesterday (if we have daily context)
-  if (dailyContext && dailyContext.yesterday.volume > 0) {
-    const ratio = dailyContext.todayCumVolume / dailyContext.yesterday.volume;
-    const overPct = (ratio - 1) * 100;
-    const sign = overPct >= 0 ? '+' : '';
-    const todayVolFmt = dailyContext.todayCumVolume >= 1e6
-      ? (dailyContext.todayCumVolume / 1e6).toFixed(1) + 'M'
-      : Math.round(dailyContext.todayCumVolume).toString();
-    lines.push('');
-    lines.push(`Today's volume: ${todayVolFmt} (${sign}${overPct.toFixed(1)}% vs yesterday)`);
-  }
-
-  return message.reply(lines.join('\n')).catch(e => console.error('[trend] reply', e.message));
 }
 
 // !trend watchlist → affiche les tickers sur la watchlist
@@ -270,7 +148,13 @@ function requireManageGuild(message) {
 
 // PUBLIC : tout membre du serveur peut ajouter un ticker à la watchlist.
 // `!trend unwatch` reste ManageGuild (sinon n'importe qui pourrait retirer
-// le travail des autres). Validation ticker + fetch Yahoo conservés.
+// le travail des autres).
+//
+// Validation : on utilise yahoo.getQuote() (et NON getChart) parce que le
+// quote endpoint retourne le metadata du ticker (symbol, quoteType, prix)
+// MÊME les weekends/jours fériés. getChart('1D') retourne 0 bougies les
+// jours non-trading → on aurait des "Unknown ticker" pour tous les tickers
+// valides en weekend. Bonus : 1 seul call Yahoo (au lieu de 2).
 async function handleWatch(message, args, { store, yahoo }) {
   if (!message.guildId) {
     return message.reply('Use this command in a server.').catch(() => {});
@@ -283,22 +167,17 @@ async function handleWatch(message, args, { store, yahoo }) {
     return message.reply('❌ Invalid ticker format').catch(() => {});
   }
 
-  // Validate ticker against Yahoo before adding (a fetch test).
   let quoteType = null;
   try {
-    const chart = await yahoo.getChart(ticker, '1D');
-    if (!chart || !Array.isArray(chart.quotes) || chart.quotes.length === 0) {
+    const quote = await yahoo.getQuote(ticker);
+    // Yahoo returns { symbol, quoteType, regularMarketPrice, ... } pour un
+    // ticker valide. Pour un ticker inconnu : throw (caught below) ou objet
+    // sans `symbol`. Le check sur `symbol` est plus robuste que sur
+    // `quoteType` (certains assets exotiques n'ont pas de quoteType).
+    if (!quote || !quote.symbol) {
       return message.reply(`❌ Unknown ticker $${ticker}`).catch(() => {});
     }
-    if (typeof yahoo.getQuote === 'function') {
-      try {
-        const quote = await yahoo.getQuote(ticker);
-        if (quote && quote.quoteType) quoteType = quote.quoteType;
-      } catch (qErr) {
-        // Quote fetch is best-effort; chart already validated the ticker exists.
-        console.warn(`[trend] quote fetch failed for ${ticker}: ${qErr && qErr.message}`);
-      }
-    }
+    quoteType = quote.quoteType || null;
   } catch (err) {
     if (isUnknownTicker(err)) {
       return message.reply(`❌ Unknown ticker $${ticker}`).catch(() => {});
@@ -488,7 +367,7 @@ function registerTrendCommands(client, { store, yahoo, scannerConfig }) {
 
     const args = text.slice('!trend'.length).trim().split(/\s+/).filter(Boolean);
     if (args.length === 0) {
-      return message.reply('Usage: `!trend <TICKER>` · `!trend watch <TICKER>` · `!trend unwatch <TICKER>|all` · `!trend watchlist` · `!trend status` · `!trend list` · `!trend channel #channel` · `!trend gap-channel #channel` · `!trend direction on|off` · `!gap chart <TICKER>`').catch(() => {});
+      return message.reply('Usage: `!trend <TICKER>` (= add to watchlist) · `!trend unwatch <TICKER>|all` · `!trend watchlist` · `!trend status` · `!trend list` · `!trend channel #channel` · `!trend gap-channel #channel` · `!trend direction on|off` · `!gap chart <TICKER>`').catch(() => {});
     }
 
     const sub = args[0].toLowerCase();
@@ -501,9 +380,10 @@ function registerTrendCommands(client, { store, yahoo, scannerConfig }) {
     if (sub === 'status')       return handleStatus(message, { store, scannerConfig });
     if (sub === 'list')         return handleList(message, { store });
 
-    // Default: treat first arg as a ticker symbol.
-    const ticker = args[0].replace(/\$/g, '').toUpperCase();
-    return handleAnalyze(message, ticker, { yahoo, store });
+    // Default: treat first arg as a ticker symbol → add to watchlist
+    // (raccourci pour `!trend watch <TICKER>`). On synthétise les args
+    // pour réutiliser handleWatch tel quel (validation + storage identiques).
+    return handleWatch(message, ['watch', args[0]], { store, yahoo });
   });
 }
 

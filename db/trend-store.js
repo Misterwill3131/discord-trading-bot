@@ -15,6 +15,9 @@ function createTrendStore(db) {
   const deleteWatch = db.prepare(
     `DELETE FROM trend_watchlist WHERE guild_id = ? AND ticker = ?`
   );
+  const deleteAllWatch = db.prepare(
+    `DELETE FROM trend_watchlist WHERE guild_id = ?`
+  );
   const selectWatchlist = db.prepare(
     `SELECT ticker FROM trend_watchlist WHERE guild_id = ? ORDER BY ticker ASC`
   );
@@ -137,6 +140,14 @@ function createTrendStore(db) {
     removeFromWatchlist(guildId, ticker) {
       const res = deleteWatch.run(guildId, ticker);
       return res.changes > 0;
+    },
+    // Vide la watchlist d'une guild d'un coup. Returns le nombre de tickers
+    // retirés (0 si la watchlist était déjà vide). N'affecte pas trend_state
+    // (= état global par ticker), donc d'autres guilds qui watch les mêmes
+    // tickers continuent à fonctionner normalement.
+    clearWatchlist(guildId) {
+      const res = deleteAllWatch.run(guildId);
+      return res.changes;
     },
     getWatchlist(guildId) {
       return selectWatchlist.all(guildId).map(r => r.ticker);

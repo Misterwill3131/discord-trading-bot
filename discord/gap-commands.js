@@ -130,6 +130,39 @@ function computeGapFromBars(bars) {
   return gaps.length > 0 ? gaps[gaps.length - 1] : null;
 }
 
+// Détecte si/quand un gap est "rempli" (filled) par le price action subséquent.
+//
+// Définition trader standard : un gap up est filled quand le prix retombe
+// dans la zone [prevClose, todayOpen]. Symétrique pour gap down.
+// Concrètement, on cherche la première bougie POST-gap dont le range [low, high]
+// chevauche la zone du gap.
+//
+// Use case : détermine la longueur du rectangle d'annotation sur le chart.
+// Si filled → rectangle s'arrête au moment du fill. Sinon → rectangle s'étend
+// jusqu'au bord droit du chart (caller passe `latestBarTimestamp` en fallback).
+//
+// Renvoie le timestamp de la première bougie qui remplit le gap, ou null si
+// le gap reste open dans la fenêtre des bars fournis.
+function findGapFillTimestamp(bars, gap) {
+  if (!Array.isArray(bars) || !gap) return null;
+  if (!Number.isFinite(gap.prevSessionClose) || !Number.isFinite(gap.todayOpen)) {
+    return null;
+  }
+  const zoneLow  = Math.min(gap.prevSessionClose, gap.todayOpen);
+  const zoneHigh = Math.max(gap.prevSessionClose, gap.todayOpen);
+  for (const bar of bars) {
+    // Skip les bars AVANT ou AU moment de l'open (le bar d'open lui-même
+    // crée le gap, il ne peut pas le remplir).
+    if (bar.t <= gap.todayOpenTimestamp) continue;
+    if (!Number.isFinite(bar.l) || !Number.isFinite(bar.h)) continue;
+    // Bar's [low, high] range chevauche la zone [zoneLow, zoneHigh] ?
+    if (bar.l <= zoneHigh && bar.h >= zoneLow) {
+      return bar.t;
+    }
+  }
+  return null;
+}
+
 // !gap chart TICKER — fetch quote pour le code exchange, fetch 5D pour
 // calculer le gap, render PNG via chart-img, reply avec attach + caption.
 // Marche n'importe quand (anchor sur les bars, pas sur Date.now()).
@@ -176,17 +209,18 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
   //    nos timestamps anchor doivent être sur des bars visibles. Voir
   //    isRegularHoursET pour le détail.
   let gaps = [];
+  let regularBars = [];
   try {
     const chart = await yahoo.getChart(ticker, '5D');
     const quotes = (chart && chart.quotes) || [];
-    const bars = quotes
+    regularBars = quotes
       .filter(q => Number.isFinite(q.close))
       .map(q => ({
         t: q.date instanceof Date ? q.date.getTime() : q.date,
         o: q.open, h: q.high, l: q.low, c: q.close, v: q.volume,
       }))
       .filter(b => isRegularHoursET(b.t));
-    gaps = computeAllGapsFromBars(bars);
+    gaps = computeAllGapsFromBars(regularBars);
   } catch (err) {
     // Non-fatal : le chart chart-img reste utile sans annotations.
     console.warn('[gap] Yahoo 5D failed for ' + ticker + ': ' + (err && err.message));
@@ -196,48 +230,42 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
   //    Range '5D' = 15m bars sur 5 jours.
   //    Override studies = SEULEMENT Volume (pas de VWAP/EMAs/MAs des
   //    DEFAULT_STUDIES). Pour `!gap chart` on veut un chart minimal qui
-  //    laisse les zones de gap respirer — les MAs/EMAs ajouteraient des
-  //    lignes qui obscurcissent visuellement les rectangles orange. Le
-  //    volume reste, car il aide à valider si un gap a été suivi de volume
-  //    (gap + volume = signal fort, gap sans volume = souvent à fade).
+  //    laisse les zones de gap respirer.
   //
-  //    Pour CHAQUE gap détecté on dessine un rectangle orange qui surligne
-  //    EXACTEMENT la fenêtre overnight où le marché était fermé :
-  //      - X gauche : `prevCloseTimestamp` (dernière bougie du jour N,
-  //                   typiquement 20:00 ET = clôture extended-hours)
-  //      - X droit  : `todayOpenTimestamp` (première bougie du jour N+1,
-  //                   typiquement 04:00 ET = ouverture pre-market)
-  //        → Le rectangle couvre la période où le marché était fermé
-  //          (~22h ET → 04h ET, soit la "vraie" fenêtre du gap). C'est
-  //          précisément cette absence de trading qui PRODUIT le gap.
-  //      - Y : [prevSessionClose, todayOpen] = le RANGE de prix gappé.
-  //      - Label "GAP +X.XX%" centré.
-  //
-  //    Note : si le rectangle paraît étroit sur le chart, c'est CORRECT :
-  //    un gap est par définition un instant (la transition close→open),
-  //    pas une période de trading. Étendre artificiellement le rectangle
-  //    sur toute la session du jour suivant donnerait l'impression visuelle
-  //    fausse "le prix est resté dans cette zone toute la journée" — alors
-  //    qu'en réalité le prix peut s'être éloigné de la zone gappée juste
-  //    après l'open.
+  //    Style "Fair Value Gap" / "open gap" — convention trader standard :
+  //    Pour chaque gap, le rectangle :
+  //      - X gauche : `todayOpenTimestamp` (1er bar de la session post-gap,
+  //                   = exactement où le gap est visible sur chart-img)
+  //      - X droit  : timestamp où le gap est "filled" (price re-entre
+  //                   dans la zone). Si jamais filled, étend jusqu'au
+  //                   dernier bar du chart (= bord droit visible).
+  //      - Y : [prevSessionClose, todayOpen] = la zone de prix gappée.
+  //      - Label "GAP" centré (sans %, le caption Discord donne le chiffre
+  //        précis pour le gap le plus récent).
+  //      - Couleur amber/sienna pour matcher l'esthétique TradingView FVG
+  //        (alpha 0.2, lineWidth 1 — discret mais visible).
   const symbol = resolveSymbol(ticker, quote.exchange);
   const chartOpts = {
     studies: [{ name: 'Volume' }],
   };
-  if (gaps.length > 0) {
+  const lastBarT = regularBars.length > 0
+    ? regularBars[regularBars.length - 1].t
+    : null;
+  if (gaps.length > 0 && lastBarT !== null) {
     chartOpts.rectangles = gaps.map(g => {
-      const sign = g.gapPct >= 0 ? '+' : '';
+      const fillT = findGapFillTimestamp(regularBars, g);
+      const endT  = fillT !== null ? fillT : lastBarT;
       return {
-        startDatetime:   new Date(g.prevCloseTimestamp).toISOString(),
+        startDatetime:   new Date(g.todayOpenTimestamp).toISOString(),
         startPrice:      g.prevSessionClose,
-        endDatetime:     new Date(g.todayOpenTimestamp).toISOString(),
+        endDatetime:     new Date(endT).toISOString(),
         endPrice:        g.todayOpen,
-        text:            `GAP ${sign}${g.gapPct.toFixed(2)}%`,
-        lineColor:       'rgb(255,165,0)',          // orange solid
+        text:            'GAP',
+        lineColor:       'rgb(184,134,11)',          // dark goldenrod (amber border)
         // chart-img validator only accepts single-decimal alpha (`rgba(r,g,b,0.X)`).
-        // `0.25` → HTTP 422 "must be a valid rgb/rgba color". Use `0.3`.
-        backgroundColor: 'rgba(255,165,0,0.3)',     // orange fill semi-transparent
-        lineWidth:       2,
+        // `0.25` → HTTP 422 "must be a valid rgb/rgba color". Use `0.2`.
+        backgroundColor: 'rgba(184,134,11,0.2)',     // amber fill, subtil
+        lineWidth:       1,
       };
     });
   }
@@ -293,4 +321,5 @@ module.exports = {
   computeGapFromBars,
   computeAllGapsFromBars,
   isRegularHoursET,
+  findGapFillTimestamp,
 };

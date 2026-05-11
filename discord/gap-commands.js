@@ -193,10 +193,25 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
   // suivant → le rectangle se termine en gros à la fin du jour gappé,
   // ce qui visuellement met l'accent sur le jour spécifique du gap.
   const MARGIN_BEFORE_NEXT_MS = 10 * 60 * 60 * 1000;
-  if (gaps.length > 0 && lastBarT !== null) {
-    chartOpts.rectangles = gaps.map((g, i) => {
-      // Bord droit = (prochain gap - 10h) si présent, sinon bord du chart.
-      const nextGap = gaps[i + 1];
+  // Cap nb de rectangles : chart-img a une limite (HTTP 422 "too many
+  // drawings" sinon). Sur 3M daily, presque chaque jour a un gap → 60+
+  // rectangles potentiels. On garde les top N par |gapPct| (les plus
+  // significatifs visuellement) puis on les trie chronologiquement pour
+  // construire la chaîne de rectangles correctement.
+  const MAX_RECTANGLES = 10;
+  let renderedGaps = gaps;
+  if (gaps.length > MAX_RECTANGLES) {
+    renderedGaps = gaps.slice()
+      .sort((a, b) => Math.abs(b.gapPct) - Math.abs(a.gapPct))  // significant first
+      .slice(0, MAX_RECTANGLES)
+      .sort((a, b) => a.todayOpenTimestamp - b.todayOpenTimestamp);  // back to chrono
+  }
+  if (renderedGaps.length > 0 && lastBarT !== null) {
+    chartOpts.rectangles = renderedGaps.map((g, i) => {
+      // Bord droit = (prochain gap RENDU - 10h) si présent, sinon bord du chart.
+      // (On utilise le prochain dans renderedGaps, pas dans gaps, pour que la
+      // chaîne reste cohérente même quand certains gaps ont été filtrés.)
+      const nextGap = renderedGaps[i + 1];
       const endT    = nextGap
         ? Math.max(g.todayOpenTimestamp, nextGap.todayOpenTimestamp - MARGIN_BEFORE_NEXT_MS)
         : lastBarT;
@@ -234,7 +249,13 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
     captionLines[0] = `${arrow} **$${ticker}** — overnight gap ${direction} ${sign}${latest.gapPct.toFixed(2)}%`;
     captionLines.push(`Open ${fmtPrice(latest.todayOpen)} vs prev session close ${fmtPrice(latest.prevSessionClose)}`);
     if (gaps.length > 1) {
-      captionLines.push(`(${gaps.length} gaps detected in last 3 months — see chart)`);
+      const detected = gaps.length;
+      const shown    = Math.min(detected, MAX_RECTANGLES);
+      if (detected > MAX_RECTANGLES) {
+        captionLines.push(`(${detected} gaps detected · top ${shown} shown by amplitude)`);
+      } else {
+        captionLines.push(`(${detected} gaps detected in last 3 months — see chart)`);
+      }
     }
   }
 

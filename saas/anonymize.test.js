@@ -812,3 +812,54 @@ test('looksLikeShortSignal: texte vide / dto null → false', () => {
   assert.strictEqual(lookShort('', null), false);
   assert.strictEqual(lookShort(null, makeDTO('')), false);
 });
+
+// ── countDistinctTickers + isMultiTickerWatchlist ───────────────────
+
+const { countDistinctTickers, isMultiTickerWatchlist } = require('./anonymize');
+
+test('countDistinctTickers: aucun ticker → 0', () => {
+  assert.strictEqual(countDistinctTickers('lol no tickers here'), 0);
+  assert.strictEqual(countDistinctTickers(''), 0);
+  assert.strictEqual(countDistinctTickers(null), 0);
+});
+
+test('countDistinctTickers: 1 ticker', () => {
+  assert.strictEqual(countDistinctTickers('$AAPL entry 150'), 1);
+});
+
+test('countDistinctTickers: doublons dédupliqués', () => {
+  assert.strictEqual(countDistinctTickers('$AAPL setup, $AAPL again'), 1);
+});
+
+test('countDistinctTickers: case-insensitive dédup', () => {
+  assert.strictEqual(countDistinctTickers('$aapl $AAPL'), 1);
+});
+
+test('countDistinctTickers: 4 tickers distincts', () => {
+  assert.strictEqual(countDistinctTickers('$HPAI $MRAM $AREB $GCTS'), 4);
+});
+
+test('countDistinctTickers: ne compte que les $-prefixed (pas TICKER nu)', () => {
+  assert.strictEqual(countDistinctTickers('$AAPL and MSFT'), 1);
+});
+
+test('isMultiTickerWatchlist: 2 tickers → false (default threshold=3)', () => {
+  assert.strictEqual(isMultiTickerWatchlist('$AAPL setup like $MSFT'), false);
+});
+
+test('isMultiTickerWatchlist: 3 tickers → true', () => {
+  assert.strictEqual(isMultiTickerWatchlist('$A $B $C'), true);
+});
+
+test('isMultiTickerWatchlist: threshold custom 2', () => {
+  assert.strictEqual(isMultiTickerWatchlist('$A $B', 2), true);
+});
+
+test('isMultiTickerWatchlist: vraie watchlist matinale → true', () => {
+  const wl = `WL for 11.05:
+$HPAI break needed
+$MRAM hold above 33
+$AREB low float
+$GCTS biotech`;
+  assert.strictEqual(isMultiTickerWatchlist(wl), true);
+});

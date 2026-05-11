@@ -27,6 +27,7 @@ const {
   parseIPOAnnouncement,
   isExitSuggestion,
   looksLikeShortSignal,
+  isMultiTickerWatchlist,
 } = require('./anonymize');
 
 // Seuil de confiance LLM minimum pour acter sur une classification. En
@@ -475,6 +476,66 @@ function setSourceChannels(channelIds) {
 //
 // Important : NE broadcast QUE si confiance >= LLM_CONFIDENCE_THRESHOLD
 // pour éviter d'inonder les clients de faux positifs LLM.
+// Pour les watchlists multi-tickers : appelle le LLM en mode extraction,
+// récupère un array de signaux, et broadcast un embed signal par ticker
+// extrait. Best-effort : tout échec → log + return (le message est juste
+// droppé comme avant, pas de fallback regex car la regex produirait un
+// embed Frankenstein).
+async function tryMultiSignalExtraction(clientSaas, message) {
+  const result = await llmClassify.extractMultiSignals(message.content || '');
+  if (!result) {
+    console.log(`[saas/relay] MULTI-SIGNAL msg=${message.id} → LLM returned null (API err / disabled)`);
+    return;
+  }
+  const { signals, cached, latencyMs, model } = result;
+
+  console.log(
+    `[saas/relay] MULTI-SIGNAL msg=${message.id} extracted=${signals.length} ` +
+    `cached=${cached} latency=${latencyMs}ms model=${model}`
+  );
+
+  if (signals.length === 0) return;
+
+  // Filtrage : seulement les signaux avec confidence ≥ threshold
+  const valid = signals.filter(s => s.confidence >= LLM_CONFIDENCE_THRESHOLD);
+  if (valid.length < signals.length) {
+    console.log(
+      `[saas/relay] MULTI-SIGNAL filtered ${signals.length - valid.length} low-conf signals`
+    );
+  }
+  if (valid.length === 0) return;
+
+  // Broadcast un embed par signal extrait. Build un DTO synthétique
+  // basé sur le DTO racine (préserve note/ts_minute/source_message_id)
+  // mais avec ticker/entry/target/stop écrasés par les valeurs LLM.
+  const baseDto = buildSignalDTO(message);
+  let totalOk = 0, totalErr = 0;
+  for (const sig of valid) {
+    const syntheticDto = {
+      ...baseDto,
+      ticker:       sig.ticker,
+      side:         sig.side,
+      entry_price:  sig.entry,
+      target_price: sig.target,
+      stop_price:   sig.stop,
+    };
+    const r = await broadcast(clientSaas, syntheticDto);
+    db.dailyAlertLogInsert({
+      ticker: sig.ticker, alert_type: 'entry', source_message_id: String(message.id),
+    });
+    totalOk += r.ok;
+    totalErr += r.error;
+    console.log(
+      `[saas/relay]   → ${sig.ticker} entry=${sig.entry} target=${sig.target} stop=${sig.stop} ` +
+      `conf=${sig.confidence.toFixed(2)} → ok=${r.ok} skip=${r.skip} err=${r.error}`
+    );
+  }
+  console.log(
+    `[saas/relay] MULTI-SIGNAL msg=${message.id} broadcast=${valid.length} ` +
+    `totalOk=${totalOk} totalErr=${totalErr}`
+  );
+}
+
 async function tryLLMFallback(clientSaas, message) {
   const result = await llmClassify.classify(message.content || '');
   if (!result) return; // API indispo / JSON invalide / disabled
@@ -709,6 +770,21 @@ function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds })
           `[saas/relay] passthrough msg=${message.id} author="${message.author?.username || '?'}" ` +
           `→ ok=${result.ok} skip=${result.skip} err=${result.error} (of ${result.total})`
         );
+        return;
+      }
+
+      // Filtre 6 : watchlist multi-tickers (≥3 $TICKER distincts).
+      // La regex single-signal aggrégerait les prix de plusieurs tickers
+      // dans un embed Frankenstein (cas réel : "WL for 11.05" → 10
+      // tickers parsés comme 1 seul $HPAI avec break entries de 3
+      // tickers différents). On bypass et on demande au LLM d'extraire
+      // un signal par ticker en mode batch.
+      if (llmClassify.isEnabled() && isMultiTickerWatchlist(message.content || '')) {
+        if (!clientSaas.isReady?.()) {
+          console.warn('[saas/relay] clientSaas not ready — skipping multi-signal extraction');
+          return;
+        }
+        await tryMultiSignalExtraction(clientSaas, message);
         return;
       }
 

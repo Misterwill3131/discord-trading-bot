@@ -303,6 +303,27 @@ function looksLikeShortSignal(text, dto) {
   return true;
 }
 
+// Compte les $TICKER distincts dans un texte. Insensible à la casse pour le
+// match mais case-preserved pour le retour. Retourne un Set ou un compteur.
+function countDistinctTickers(text) {
+  if (!text) return 0;
+  const matches = String(text).match(/\$([A-Z]{1,6})\b/g);
+  if (!matches) return 0;
+  return new Set(matches.map(m => m.toUpperCase())).size;
+}
+
+// Vrai si le message ressemble à une watchlist multi-tickers — typiquement
+// le post matinal d'un analyste avec ≥3 tickers ayant chacun leur setup
+// individuel. Format prose narrative, conditional language ("X needed for
+// Y", "has to hold"), souvent commence par "WL for [date]:".
+//
+// Quand vrai → on bypass la regex single-signal (qui produirait un embed
+// Frankenstein en aggregeant les prix de plusieurs tickers) et on route
+// vers l'extraction LLM multi-signaux.
+function isMultiTickerWatchlist(text, threshold = 3) {
+  return countDistinctTickers(text) >= threshold;
+}
+
 // Embed dédié aux suggestions de sortie. Couleur ambre (distincte des
 // signaux cyan et des IPOs teal) pour signaler visuellement "exit" et non
 // "nouveau trade". Footer rappelle que c'est une sortie, pas une entrée.
@@ -695,6 +716,8 @@ module.exports = {
   EXIT_STATUS_PATTERNS,
   isExitSuggestion,
   looksLikeShortSignal,
+  countDistinctTickers,
+  isMultiTickerWatchlist,
   brandedEmbedExit,
   isIPOAnnouncement,
   parseIPOAnnouncement,

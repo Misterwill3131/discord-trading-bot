@@ -181,3 +181,67 @@ test('VALID_TYPES contient les 5 catégories', () => {
 test('cleanup tmpDir', () => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+// ── parseExtraction (mode multi-signal) ─────────────────────────────
+
+const { parseExtraction, hashExtractText } = require('./llm-classify');
+
+test('parseExtraction: array de signaux valides', () => {
+  const r = parseExtraction('[{"ticker":"HPAI","side":"long","entry":1.5,"target":1.57,"confidence":0.9}]');
+  assert.strictEqual(r.length, 1);
+  assert.strictEqual(r[0].ticker, 'HPAI');
+  assert.strictEqual(r[0].entry, 1.5);
+  assert.strictEqual(r[0].target, 1.57);
+  assert.strictEqual(r[0].side, 'long');
+  assert.strictEqual(r[0].stop, null);
+});
+
+test('parseExtraction: array vide accepté', () => {
+  assert.deepStrictEqual(parseExtraction('[]'), []);
+});
+
+test('parseExtraction: filtre signaux sans entry+target+ticker', () => {
+  const r = parseExtraction('[{"ticker":"X","entry":5,"target":6,"confidence":0.8},{"ticker":"Y","entry":5,"confidence":0.8},{"entry":5,"target":6,"confidence":0.8}]');
+  assert.strictEqual(r.length, 1);
+  assert.strictEqual(r[0].ticker, 'X');
+});
+
+test('parseExtraction: code fence stripped', () => {
+  const r = parseExtraction('```json\n[{"ticker":"X","entry":5,"target":6,"confidence":0.8}]\n```');
+  assert.strictEqual(r.length, 1);
+});
+
+test('parseExtraction: garbage → null', () => {
+  assert.strictEqual(parseExtraction('not json'), null);
+  assert.strictEqual(parseExtraction(''), null);
+  assert.strictEqual(parseExtraction(null), null);
+});
+
+test('parseExtraction: non-array (objet) → null', () => {
+  assert.strictEqual(parseExtraction('{"ticker":"X"}'), null);
+});
+
+test('parseExtraction: side normalisé (long par défaut, short reconnu)', () => {
+  const r = parseExtraction('[{"ticker":"X","side":"short","entry":5,"target":3,"confidence":0.9},{"ticker":"Y","side":"unknown","entry":5,"target":6,"confidence":0.9}]');
+  assert.strictEqual(r[0].side, 'short');
+  assert.strictEqual(r[1].side, 'long');  // unknown → long default
+});
+
+test('parseExtraction: confidence clampée [0,1]', () => {
+  const r = parseExtraction('[{"ticker":"X","entry":5,"target":6,"confidence":2.5}]');
+  assert.strictEqual(r[0].confidence, 1);
+});
+
+test('parseExtraction: ticker uppercased', () => {
+  const r = parseExtraction('[{"ticker":"hpai","entry":1.5,"target":1.57,"confidence":0.9}]');
+  assert.strictEqual(r[0].ticker, 'HPAI');
+});
+
+test('hashExtractText: différent de hashText pour le même texte', () => {
+  const text = 'WL for 11.05 $HPAI break';
+  assert.notStrictEqual(hashText(text), hashExtractText(text));
+});
+
+test('hashExtractText: déterministe + insensible aux espaces', () => {
+  assert.strictEqual(hashExtractText('  $HPAI  '), hashExtractText('$HPAI'));
+});

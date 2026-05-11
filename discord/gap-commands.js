@@ -135,11 +135,10 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
     return message.reply('❌ Yahoo Finance unavailable, try again in a few minutes').catch(() => {});
   }
 
-  // 2) Yahoo 3M — bougies daily sur 3 mois pour détecter TOUS les gaps de la
-  //    fenêtre. Chaque bar = 1 jour de trading complet, donc gap = différence
-  //    entre la close du jour N et l'open du jour N+1 (le concept "overnight
-  //    gap" classique sur daily timeframe).
-  let gaps = [];
+  // 2) Yahoo 3M — bougies daily sur 3 mois. On a besoin de la fenêtre
+  //    historique pour le chart, mais on n'utilise que le DERNIER gap
+  //    (overnight transition close→open la plus récente) pour l'annotation.
+  let latestGap = null;
   let allBars = [];
   try {
     const chart = await yahoo.getChart(ticker, '3M');
@@ -150,36 +149,23 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
         t: q.date instanceof Date ? q.date.getTime() : q.date,
         o: q.open, h: q.high, l: q.low, c: q.close, v: q.volume,
       }));
-    gaps = computeAllGapsFromBars(allBars);
+    latestGap = computeGapFromBars(allBars);  // wrapper → dernier gap ou null
   } catch (err) {
-    // Non-fatal : le chart chart-img reste utile sans annotations.
+    // Non-fatal : le chart chart-img reste utile sans annotation.
     console.warn('[gap] Yahoo 3M failed for ' + ticker + ': ' + (err && err.message));
   }
 
   // 3) Render chart via chart-img.
   //    Range '3M' = bougies daily sur 3 mois (~66 bars).
-  //    Override studies = SEULEMENT Volume (pas de VWAP/EMAs/MAs des
-  //    DEFAULT_STUDIES). Pour `!gap chart` on veut un chart minimal qui
-  //    laisse les zones de gap respirer.
+  //    Override studies = SEULEMENT Volume.
   //
-  //    Pas besoin de `session: 'extended'` ou `timezone: 'America/New_York'`
-  //    sur du daily : chaque bougie représente déjà une session entière, et
-  //    l'axe X montre des dates (pas des heures intraday).
-  //
-  //    Pour CHAQUE gap on dessine un rectangle ambré qui s'étend jusqu'au
-  //    PROCHAIN gap (et le dernier va jusqu'au bord droit du chart). Cette
-  //    chaîne de rectangles segmente l'axe temporel par "périodes entre
-  //    gaps", ce qui rend chaque zone gappée immédiatement reconnaissable
-  //    et permet de voir comment le prix s'est comporté dans chaque tranche.
-  //
-  //    Format de chaque rectangle :
+  //    Un seul rectangle, sur le DERNIER gap (le plus récent) :
   //      - X gauche : `todayOpenTimestamp` (timestamp du bar daily du jour gappé)
-  //      - X droit  : `todayOpenTimestamp` du gap suivant, OU `latestBarTimestamp`
-  //                   pour le dernier (= bord droit du chart)
+  //      - X droit  : `latestBarTimestamp` (bord droit du chart) — étend
+  //                   le rectangle jusqu'au présent pour qu'il soit visible.
   //      - Y : [prevSessionClose, todayOpen] = la zone de prix gappée
   //      - Label = le % du gap centré (ex: "+0.28%", "-1.45%")
-  //      - Couleur amber/dark-goldenrod (alpha 0.2, lineWidth 1 — discret
-  //        mais visible)
+  //      - Couleur amber/dark-goldenrod (alpha 0.2, lineWidth 1)
   const symbol = resolveSymbol(ticker, quote.exchange);
   const chartOpts = {
     studies: [{ name: 'Volume' }],
@@ -187,51 +173,19 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
   const lastBarT = allBars.length > 0
     ? allBars[allBars.length - 1].t
     : null;
-  // Marge avant le gap suivant : 10h. Permet aux rectangles de respirer
-  // visuellement (un espace blanc entre 2 zones gappées) au lieu de se
-  // toucher bord à bord. Sur daily timeframe, 10h = ~½ jour avant le bar
-  // suivant → le rectangle se termine en gros à la fin du jour gappé,
-  // ce qui visuellement met l'accent sur le jour spécifique du gap.
-  const MARGIN_BEFORE_NEXT_MS = 10 * 60 * 60 * 1000;
-  // Cap nb de rectangles : chart-img limite à 10 paramètres TOTAL par requête
-  // (studies + drawings combinés). Erreur observée :
-  //   HTTP 403: {"message":"Exceed Max Usage Parameter Limit (10)"}
-  // On a 1 study (Volume) + N rectangles → max 9 rectangles pour rester à 10.
-  // Sur 3M daily, presque chaque jour a un gap → 60+ rectangles potentiels.
-  // On garde les top N par |gapPct| (les plus significatifs visuellement)
-  // puis on les trie chronologiquement pour construire la chaîne de
-  // rectangles correctement.
-  const MAX_RECTANGLES = 9;
-  let renderedGaps = gaps;
-  if (gaps.length > MAX_RECTANGLES) {
-    renderedGaps = gaps.slice()
-      .sort((a, b) => Math.abs(b.gapPct) - Math.abs(a.gapPct))  // significant first
-      .slice(0, MAX_RECTANGLES)
-      .sort((a, b) => a.todayOpenTimestamp - b.todayOpenTimestamp);  // back to chrono
-  }
-  if (renderedGaps.length > 0 && lastBarT !== null) {
-    chartOpts.rectangles = renderedGaps.map((g, i) => {
-      // Bord droit = (prochain gap RENDU - 10h) si présent, sinon bord du chart.
-      // (On utilise le prochain dans renderedGaps, pas dans gaps, pour que la
-      // chaîne reste cohérente même quand certains gaps ont été filtrés.)
-      const nextGap = renderedGaps[i + 1];
-      const endT    = nextGap
-        ? Math.max(g.todayOpenTimestamp, nextGap.todayOpenTimestamp - MARGIN_BEFORE_NEXT_MS)
-        : lastBarT;
-      const sign    = g.gapPct >= 0 ? '+' : '';
-      return {
-        startDatetime:   new Date(g.todayOpenTimestamp).toISOString(),
-        startPrice:      g.prevSessionClose,
-        endDatetime:     new Date(endT).toISOString(),
-        endPrice:        g.todayOpen,
-        text:            `${sign}${g.gapPct.toFixed(2)}%`,
-        lineColor:       'rgb(184,134,11)',          // dark goldenrod (amber border)
-        // chart-img validator only accepts single-decimal alpha (`rgba(r,g,b,0.X)`).
-        // `0.25` → HTTP 422 "must be a valid rgb/rgba color". Use `0.2`.
-        backgroundColor: 'rgba(184,134,11,0.2)',     // amber fill, subtil
-        lineWidth:       1,
-      };
-    });
+  if (latestGap && lastBarT !== null) {
+    const sign = latestGap.gapPct >= 0 ? '+' : '';
+    chartOpts.rectangles = [{
+      startDatetime:   new Date(latestGap.todayOpenTimestamp).toISOString(),
+      startPrice:      latestGap.prevSessionClose,
+      endDatetime:     new Date(lastBarT).toISOString(),
+      endPrice:        latestGap.todayOpen,
+      text:            `${sign}${latestGap.gapPct.toFixed(2)}%`,
+      lineColor:       'rgb(184,134,11)',          // dark goldenrod (amber border)
+      // chart-img validator only accepts single-decimal alpha (`rgba(r,g,b,0.X)`).
+      backgroundColor: 'rgba(184,134,11,0.2)',     // amber fill, subtil
+      lineWidth:       1,
+    }];
   }
   let png;
   try {
@@ -241,25 +195,15 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
     return message.reply('❌ Chart rendering failed, try again in a few minutes').catch(() => {});
   }
 
-  // 4) Caption : highlight le gap le plus récent (= dernier de l'array,
-  //    le plus utile actionnable), + count si plusieurs gaps détectés.
+  // 4) Caption : juste les chiffres du dernier gap (pas de count, on n'en
+  //    montre qu'un seul).
   const captionLines = [`📊 **$${ticker}** — overnight gap`];
-  if (gaps.length > 0) {
-    const latest = gaps[gaps.length - 1];
-    const sign = latest.gapPct >= 0 ? '+' : '';
-    const arrow = latest.gapPct >= 0 ? '⬆️' : '⬇️';
-    const direction = latest.gapPct >= 0 ? 'up' : 'down';
-    captionLines[0] = `${arrow} **$${ticker}** — overnight gap ${direction} ${sign}${latest.gapPct.toFixed(2)}%`;
-    captionLines.push(`Open ${fmtPrice(latest.todayOpen)} vs prev session close ${fmtPrice(latest.prevSessionClose)}`);
-    if (gaps.length > 1) {
-      const detected = gaps.length;
-      const shown    = Math.min(detected, MAX_RECTANGLES);
-      if (detected > MAX_RECTANGLES) {
-        captionLines.push(`(${detected} gaps detected · top ${shown} shown by amplitude)`);
-      } else {
-        captionLines.push(`(${detected} gaps detected in last 3 months — see chart)`);
-      }
-    }
+  if (latestGap) {
+    const sign = latestGap.gapPct >= 0 ? '+' : '';
+    const arrow = latestGap.gapPct >= 0 ? '⬆️' : '⬇️';
+    const direction = latestGap.gapPct >= 0 ? 'up' : 'down';
+    captionLines[0] = `${arrow} **$${ticker}** — overnight gap ${direction} ${sign}${latestGap.gapPct.toFixed(2)}%`;
+    captionLines.push(`Open ${fmtPrice(latestGap.todayOpen)} vs prev session close ${fmtPrice(latestGap.prevSessionClose)}`);
   }
 
   return message.reply({

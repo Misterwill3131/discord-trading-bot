@@ -173,6 +173,22 @@ test('maybeEnqueueRecap retourne enqueued=false si auteur hors whitelist', async
   assert.strictEqual(result.reason, 'author_not_whitelisted');
 });
 
+test('maybeEnqueueRecap accepte raw Discord username si alias correspond au whitelist (display name)', async () => {
+  // Whitelist = display name 'ZZ', author = raw Discord username 'traderzz1m'.
+  // AUTHOR_ALIASES mappe traderzz1m → ZZ donc le check doit passer.
+  // C'est le cas réel observé en prod : ZZ post avec username 'traderzz1m',
+  // et l'utilisateur configure la whitelist avec 'ZZ' (display name).
+  const result = await maybeEnqueueRecap({
+    authorName: 'traderzz1m',
+    content: ZZ_RECAP,
+    messageCreatedAt: new Date('2026-06-02T20:00:00Z'),
+    messageId: 'msg-recap-alias',
+    authorWhitelist: ['ZZ'],
+  });
+  assert.strictEqual(result.enqueued, true);
+  assert.ok(result.jobId > 0);
+});
+
 test('maybeEnqueueRecap retourne enqueued=false si pas de RECAP: en début', async () => {
   const result = await maybeEnqueueRecap({
     authorName: 'ZZ',

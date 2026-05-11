@@ -20,8 +20,12 @@ const TICKER_REGEX = /\$([A-Z]{1,6})\s+(\d+(?:\.\d+)?)%\s*(swing)?/gmi;
 // Match "5 out of 6 runners", "5/6 runners", "5 of 6 runner".
 const RUNNERS_REGEX = /(\d+)\s*(?:out\s+of|\/|of)\s*(\d+)\s*runners?/i;
 
-// Préfixe RECAP en début de message, accepte espace optionnel avant ':'.
-const RECAP_PREFIX_REGEX = /^\s*RECAP\s*:/i;
+// Préfixe RECAP en début de message. Accepte "RECAP:", "RECAP :",
+// "RECAP of <#channel> ...", "RECAP\n..." — tout ce qui commence par
+// "RECAP" suivi d'un word boundary (non-letter). ZZ poste typiquement
+// "RECAP of <#chanA> / <#chanB> above +20% only\n\n$RXT 467% swing..."
+// d'où le besoin d'être plus tolérant que `\s*RECAP\s*:`.
+const RECAP_PREFIX_REGEX = /^\s*RECAP\b/i;
 
 const TAGLINE_DEFAULT = 'Plenty of chances to bank today.';
 const MIN_TICKERS = 3;

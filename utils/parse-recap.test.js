@@ -98,6 +98,27 @@ test('parseRecap accepte décimales dans gainPct', () => {
   assert.strictEqual(result.tickers[0].gainPct, 12.5);
 });
 
+test('parseRecap accepte format "RECAP of <#chan> / <#chan> above +20% only"', () => {
+  // Format réel observé en prod (ZZ poste comme ça dans #trading-floor).
+  const content = `RECAP of <#1330906045903536178> / <#1375225022196482098> above +20% only
+
+$RXT 467% swing
+$REPL 152% swing
+$AIIO 71%`;
+  const result = parseRecap(content, new Date('2026-05-11T19:40:30Z'));
+  assert.ok(result);
+  assert.strictEqual(result.tickers.length, 3);
+  assert.strictEqual(result.tickers[0].ticker, 'RXT');
+  assert.strictEqual(result.tickers[0].gainPct, 467);
+  assert.strictEqual(result.tickers[0].swing, true);
+});
+
+test('parseRecap "Let me recap what happened" en milieu de message → null', () => {
+  // Faux positif à éviter : "recap" doit être en début, pas n'importe où.
+  const content = 'Hey everyone, let me RECAP what happened today.\n$AAPL 10%\n$TSLA 5%';
+  assert.strictEqual(parseRecap(content, new Date()), null);
+});
+
 test('parseRecap fallback tagline défaut si non trouvé', () => {
   const content = 'RECAP:\n$AAPL 10%\n$TSLA 5%\n$NVDA 8%';
   const result = parseRecap(content, new Date());

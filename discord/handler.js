@@ -243,9 +243,14 @@ async function maybeEnqueueRecap({
   authorName, content, messageCreatedAt, messageId,
   authorWhitelist,
 }) {
-  // 1. Auteur whitelist
+  // 1. Auteur whitelist — check sur raw username AND display name pour
+  // que la whitelist puisse contenir soit 'traderzz1m' (raw) soit 'ZZ'
+  // (canonical display name après alias). Sinon le user devrait connaître
+  // l'username Discord exact, peu pratique.
   const whitelistLower = (authorWhitelist || []).map(s => s.toLowerCase());
-  if (!whitelistLower.includes((authorName || '').toLowerCase())) {
+  const rawLower = (authorName || '').toLowerCase();
+  const displayLower = getDisplayName(authorName || '').toLowerCase();
+  if (!whitelistLower.includes(rawLower) && !whitelistLower.includes(displayLower)) {
     return { enqueued: false, reason: 'author_not_whitelisted' };
   }
 

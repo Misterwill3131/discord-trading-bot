@@ -175,8 +175,16 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
     : null;
   if (latestGap && lastBarT !== null) {
     const sign = latestGap.gapPct >= 0 ? '+' : '';
+    // Sur daily timeframe, `todayOpenTimestamp` et `lastBarT` correspondent
+    // au MÊME bar (le bar daily du jour qui a gappé = le dernier bar).
+    // Résultat : rectangle de largeur 0 → invisible. Fix : on démarre au
+    // bar PRÉCÉDENT (`prevCloseTimestamp` = bar du jour d'avant) ET on
+    // recule de 5 jours supplémentaires pour avoir un rectangle visible
+    // (~6-7 jours de largeur sur un chart 3M de 66 bars = ~10% du chart).
+    const VISIBILITY_PADDING_MS = 5 * 86_400_000;
+    const startTime = latestGap.prevCloseTimestamp - VISIBILITY_PADDING_MS;
     chartOpts.rectangles = [{
-      startDatetime:   new Date(latestGap.todayOpenTimestamp).toISOString(),
+      startDatetime:   new Date(startTime).toISOString(),
       startPrice:      latestGap.prevSessionClose,
       endDatetime:     new Date(lastBarT).toISOString(),
       endPrice:        latestGap.todayOpen,

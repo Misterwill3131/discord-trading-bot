@@ -245,3 +245,48 @@ test('hashExtractText: différent de hashText pour le même texte', () => {
 test('hashExtractText: déterministe + insensible aux espaces', () => {
   assert.strictEqual(hashExtractText('  $HPAI  '), hashExtractText('$HPAI'));
 });
+
+// ── Isolation guarantee (no tools / no web / no external access) ─────
+
+const { assertNoExternalAccess, FORBIDDEN_API_PARAMS } = require('./llm-classify');
+
+test('assertNoExternalAccess: payload propre passe', () => {
+  assert.doesNotThrow(() => {
+    assertNoExternalAccess({
+      model: 'foo', max_tokens: 100, temperature: 0,
+      system: [{ type: 'text', text: 'system' }],
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+  });
+});
+
+test('assertNoExternalAccess: throw si tools présent', () => {
+  assert.throws(() => assertNoExternalAccess({ model: 'foo', tools: [{ name: 'web' }] }),
+    /LLM_ISOLATION_VIOLATED.*tools/);
+});
+
+test('assertNoExternalAccess: throw si tool_choice présent', () => {
+  assert.throws(() => assertNoExternalAccess({ model: 'foo', tool_choice: 'auto' }),
+    /LLM_ISOLATION_VIOLATED.*tool_choice/);
+});
+
+test('assertNoExternalAccess: throw si mcp_servers présent', () => {
+  assert.throws(() => assertNoExternalAccess({ model: 'foo', mcp_servers: [{ url: 'x' }] }),
+    /LLM_ISOLATION_VIOLATED.*mcp_servers/);
+});
+
+test('assertNoExternalAccess: throw si thinking présent', () => {
+  assert.throws(() => assertNoExternalAccess({ model: 'foo', thinking: { type: 'enabled' } }),
+    /LLM_ISOLATION_VIOLATED.*thinking/);
+});
+
+test('assertNoExternalAccess: throw si documents présent', () => {
+  assert.throws(() => assertNoExternalAccess({ model: 'foo', documents: [] }),
+    /LLM_ISOLATION_VIOLATED.*documents/);
+});
+
+test('FORBIDDEN_API_PARAMS contient les vecteurs d\'accès externe connus', () => {
+  for (const param of ['tools', 'tool_choice', 'mcp_servers', 'thinking', 'documents', 'attachments']) {
+    assert.ok(FORBIDDEN_API_PARAMS.includes(param), `should forbid ${param}`);
+  }
+});

@@ -17,11 +17,61 @@
 // TTL nécessaire. Permet de re-poster un duplicate sans recoût.
 // Invalidation explicite via llmClassifyInvalidateModel() si on change
 // de prompt/modèle.
+//
+// ─────────────────────────────────────────────────────────────────────
+// GARANTIE D'ISOLATION DU LLM
+// ─────────────────────────────────────────────────────────────────────
+// Le LLM ne doit JAMAIS avoir accès à autre chose que ce qu'on lui donne
+// explicitement. Garanties techniques de cette isolation :
+//
+//   ✅ Aucun outil activé (pas de `tools`, `tool_choice`, `mcp_servers`)
+//      → le modèle ne peut pas browser le web, fetcher des URLs,
+//        exécuter du code, lire des fichiers, ou appeler des APIs.
+//
+//   ✅ Stateless : chaque appel est indépendant. Aucune mémoire entre
+//      requêtes côté Anthropic (sauf prompt caching qui est purement
+//      une optimisation de coût, pas un partage de données).
+//
+//   ✅ Le LLM voit EXACTEMENT 3 choses (toutes hardcodées par nous) :
+//      1. SYSTEM_PROMPT (notre texte)
+//      2. FEW_SHOT (nos exemples)
+//      3. Le message Discord à classifier (texte seul)
+//
+//   ✅ Anthropic ne forme PAS ses modèles sur les requêtes API
+//      (cf. anthropic.com/legal/aup section "Customer Data").
+//
+// L'helper `assertNoExternalAccess()` ci-dessous fait un check runtime
+// avant chaque appel : si du code futur ajoute accidentellement un
+// paramètre dangereux (tools, mcp_servers, etc.), il throw avant que
+// la requête ne parte. Belt-and-suspenders au cas où qqun (humain ou
+// LLM coding agent) modifierait le payload sans réaliser.
 // ─────────────────────────────────────────────────────────────────────
 
 const crypto = require('crypto');
 const Anthropic = require('@anthropic-ai/sdk');
 const db = require('../db/sqlite');
+
+// Liste exhaustive des paramètres Anthropic qui donneraient au LLM un
+// accès au-delà du texte qu'on lui fournit. Si l'un de ces champs est
+// présent dans le payload, on throw.
+const FORBIDDEN_API_PARAMS = [
+  'tools',           // function calling / outils
+  'tool_choice',
+  'mcp_servers',     // MCP integrations (web fetch, etc.)
+  'thinking',        // ne fuit rien mais on garde l'output simple
+  'documents',       // citations API (fetch external)
+  'attachments',     // input files
+];
+
+function assertNoExternalAccess(params) {
+  for (const key of FORBIDDEN_API_PARAMS) {
+    if (params[key] !== undefined) {
+      throw new Error(
+        `LLM_ISOLATION_VIOLATED: param "${key}" is forbidden — see GARANTIE D'ISOLATION in services/llm-classify.js`
+      );
+    }
+  }
+}
 
 const DEFAULT_MODEL = process.env.LLM_CLASSIFY_MODEL || 'claude-haiku-4-5-20251001';
 const DEFAULT_TIMEOUT_MS = parseInt(process.env.LLM_CLASSIFY_TIMEOUT_MS || '3000', 10);
@@ -233,7 +283,7 @@ async function classify(text, { model = DEFAULT_MODEL, timeoutMs = DEFAULT_TIMEO
 
   const t0 = Date.now();
   try {
-    const response = await client.messages.create({
+    const apiParams = {
       model,
       max_tokens: 200,
       temperature: 0,
@@ -246,7 +296,9 @@ async function classify(text, { model = DEFAULT_MODEL, timeoutMs = DEFAULT_TIMEO
         { type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
       ],
       messages: buildMessages(trimmed),
-    }, { timeout: timeoutMs });
+    };
+    assertNoExternalAccess(apiParams); // garde isolation
+    const response = await client.messages.create(apiParams, { timeout: timeoutMs });
 
     const rawText = response?.content?.[0]?.type === 'text'
       ? response.content[0].text
@@ -435,7 +487,7 @@ async function extractMultiSignals(text, { model = DEFAULT_MODEL, timeoutMs = DE
 
   const t0 = Date.now();
   try {
-    const response = await client.messages.create({
+    const apiParams = {
       model,
       max_tokens: 1500,           // multi-signal → output plus large
       temperature: 0,
@@ -443,7 +495,9 @@ async function extractMultiSignals(text, { model = DEFAULT_MODEL, timeoutMs = DE
         { type: 'text', text: EXTRACT_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
       ],
       messages: buildExtractMessages(trimmed),
-    }, { timeout: timeoutMs });
+    };
+    assertNoExternalAccess(apiParams); // garde isolation
+    const response = await client.messages.create(apiParams, { timeout: timeoutMs });
 
     const rawText = response?.content?.[0]?.type === 'text'
       ? response.content[0].text
@@ -476,6 +530,8 @@ module.exports = {
   hashExtractText,
   parseClassification,    // exposé pour tests
   parseExtraction,        // exposé pour tests
+  assertNoExternalAccess, // exposé pour tests
+  FORBIDDEN_API_PARAMS,
   DEFAULT_MODEL,
   PROMPT_VERSION,
   VALID_TYPES,

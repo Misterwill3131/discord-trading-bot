@@ -135,10 +135,14 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
     return message.reply('❌ Yahoo Finance unavailable, try again in a few minutes').catch(() => {});
   }
 
-  // 2) Yahoo 3M — bougies daily sur 3 mois. On a besoin de la fenêtre
-  //    historique pour le chart, mais on n'utilise que le DERNIER gap
-  //    (overnight transition close→open la plus récente) pour l'annotation.
-  let latestGap = null;
+  // 2) Yahoo 3M — bougies daily sur 3 mois. On détecte TOUS les gaps de la
+  //    fenêtre puis on sélectionne CELUI avec la plus grande amplitude
+  //    (|gapPct| desc). Raison : sur SPY/QQQ et autres mega-caps, le gap
+  //    overnight strict (Friday close → Monday open) est typiquement
+  //    ~0.05-0.2% — quasi invisible sur un chart 3M. Le gap LE PLUS
+  //    SIGNIFICATIF de la fenêtre est ce que le trader veut voir
+  //    (correspond au "vrai" gap, généralement 1%+).
+  let biggestGap = null;
   let allBars = [];
   try {
     const chart = await yahoo.getChart(ticker, '3M');
@@ -149,7 +153,12 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
         t: q.date instanceof Date ? q.date.getTime() : q.date,
         o: q.open, h: q.high, l: q.low, c: q.close, v: q.volume,
       }));
-    latestGap = computeGapFromBars(allBars);  // wrapper → dernier gap ou null
+    const gaps = computeAllGapsFromBars(allBars);
+    if (gaps.length > 0) {
+      biggestGap = gaps.reduce((a, b) =>
+        Math.abs(a.gapPct) >= Math.abs(b.gapPct) ? a : b
+      );
+    }
   } catch (err) {
     // Non-fatal : le chart chart-img reste utile sans annotation.
     console.warn('[gap] Yahoo 3M failed for ' + ticker + ': ' + (err && err.message));
@@ -159,12 +168,11 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
   //    Range '3M' = bougies daily sur 3 mois (~66 bars).
   //    Override studies = SEULEMENT Volume.
   //
-  //    Un seul rectangle, sur le DERNIER gap (le plus récent) :
-  //      - X gauche : `todayOpenTimestamp` (timestamp du bar daily du jour gappé)
-  //      - X droit  : `latestBarTimestamp` (bord droit du chart) — étend
-  //                   le rectangle jusqu'au présent pour qu'il soit visible.
+  //    Un seul rectangle, sur le gap LE PLUS SIGNIFICATIF :
+  //      - X : centré sur le moment du gap, avec ±3 jours de padding
+  //            pour la visibilité (~6 jours = ~9% du chart)
   //      - Y : [prevSessionClose, todayOpen] = la zone de prix gappée
-  //      - Label = le % du gap centré (ex: "+0.28%", "-1.45%")
+  //      - Label = le % du gap centré (ex: "+1.42%", "-2.15%")
   //      - Couleur amber/dark-goldenrod (alpha 0.2, lineWidth 1)
   const symbol = resolveSymbol(ticker, quote.exchange);
   const chartOpts = {
@@ -173,22 +181,26 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
   const lastBarT = allBars.length > 0
     ? allBars[allBars.length - 1].t
     : null;
-  if (latestGap && lastBarT !== null) {
-    const sign = latestGap.gapPct >= 0 ? '+' : '';
-    // Sur daily timeframe, `todayOpenTimestamp` et `lastBarT` correspondent
-    // au MÊME bar (le bar daily du jour qui a gappé = le dernier bar).
-    // Résultat : rectangle de largeur 0 → invisible. Fix : on démarre au
-    // bar PRÉCÉDENT (`prevCloseTimestamp` = bar du jour d'avant) ET on
-    // recule de 5 jours supplémentaires pour avoir un rectangle visible
-    // (~6-7 jours de largeur sur un chart 3M de 66 bars = ~10% du chart).
-    const VISIBILITY_PADDING_MS = 5 * 86_400_000;
-    const startTime = latestGap.prevCloseTimestamp - VISIBILITY_PADDING_MS;
+  if (biggestGap && lastBarT !== null) {
+    const sign = biggestGap.gapPct >= 0 ? '+' : '';
+    // Padding ±3 jours autour du gap pour visibilité. Math.min/max protège
+    // contre dépasser le bord droit du chart (lastBarT) ou aller plus tôt
+    // que le premier bar (allBars[0].t).
+    const X_PADDING_MS = 3 * 86_400_000;
+    const startTime = Math.max(
+      allBars[0].t,
+      biggestGap.prevCloseTimestamp - X_PADDING_MS
+    );
+    const endTime = Math.min(
+      lastBarT,
+      biggestGap.todayOpenTimestamp + X_PADDING_MS
+    );
     chartOpts.rectangles = [{
       startDatetime:   new Date(startTime).toISOString(),
-      startPrice:      latestGap.prevSessionClose,
-      endDatetime:     new Date(lastBarT).toISOString(),
-      endPrice:        latestGap.todayOpen,
-      text:            `${sign}${latestGap.gapPct.toFixed(2)}%`,
+      startPrice:      biggestGap.prevSessionClose,
+      endDatetime:     new Date(endTime).toISOString(),
+      endPrice:        biggestGap.todayOpen,
+      text:            `${sign}${biggestGap.gapPct.toFixed(2)}%`,
       lineColor:       'rgb(184,134,11)',          // dark goldenrod (amber border)
       // chart-img validator only accepts single-decimal alpha (`rgba(r,g,b,0.X)`).
       backgroundColor: 'rgba(184,134,11,0.2)',     // amber fill, subtil
@@ -203,15 +215,14 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
     return message.reply('❌ Chart rendering failed, try again in a few minutes').catch(() => {});
   }
 
-  // 4) Caption : juste les chiffres du dernier gap (pas de count, on n'en
-  //    montre qu'un seul).
+  // 4) Caption : chiffres du gap le plus significatif détecté dans la fenêtre.
   const captionLines = [`📊 **$${ticker}** — overnight gap`];
-  if (latestGap) {
-    const sign = latestGap.gapPct >= 0 ? '+' : '';
-    const arrow = latestGap.gapPct >= 0 ? '⬆️' : '⬇️';
-    const direction = latestGap.gapPct >= 0 ? 'up' : 'down';
-    captionLines[0] = `${arrow} **$${ticker}** — overnight gap ${direction} ${sign}${latestGap.gapPct.toFixed(2)}%`;
-    captionLines.push(`Open ${fmtPrice(latestGap.todayOpen)} vs prev session close ${fmtPrice(latestGap.prevSessionClose)}`);
+  if (biggestGap) {
+    const sign = biggestGap.gapPct >= 0 ? '+' : '';
+    const arrow = biggestGap.gapPct >= 0 ? '⬆️' : '⬇️';
+    const direction = biggestGap.gapPct >= 0 ? 'up' : 'down';
+    captionLines[0] = `${arrow} **$${ticker}** — biggest overnight gap ${direction} ${sign}${biggestGap.gapPct.toFixed(2)}%`;
+    captionLines.push(`Open ${fmtPrice(biggestGap.todayOpen)} vs prev session close ${fmtPrice(biggestGap.prevSessionClose)}`);
   }
 
   return message.reply({

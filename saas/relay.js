@@ -583,6 +583,14 @@ function buildClassifyAuditEmbed({ message, result, action, broadcastSummary }) 
   const isDrop = action === 'DROP' || type === 'ignore';
   const color = isDrop ? AUDIT_COLOR_DROP : AUDIT_COLOR_CLASSIFY;
 
+  // Template abstrait pour audit : montre la signature du pattern matché
+  // (ex: "added too! best sympathy to t with far lower float"). Aide à
+  // comprendre POURQUOI un cache hit a réutilisé la décision d'un message
+  // précédent à structure similaire.
+  const template = llmClassify.abstractTemplate(message.content || '');
+  const originalLower = String(message.content || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const templateChanged = template && template !== originalLower;
+
   const eb = new EmbedBuilder()
     .setColor(color)
     .setTitle(`🤖 LLM classify — ${type} (conf ${conf.toFixed(2)})`)
@@ -593,6 +601,16 @@ function buildClassifyAuditEmbed({ message, result, action, broadcastSummary }) 
       { name: 'Ticker', value: result.entities?.ticker || '—', inline: true },
       { name: 'Action', value: action || (isDrop ? 'DROP' : '—'), inline: false },
     );
+
+  // N'ajoute le field Template QUE s'il diffère du texte original
+  // (sinon redondant). T = ticker, P = prix décimal, N = entier.
+  if (templateChanged) {
+    eb.addFields({
+      name: 'Template (signature du pattern)',
+      value: '```\n' + truncateText(template, 300) + '\n```',
+      inline: false,
+    });
+  }
 
   if (broadcastSummary) {
     eb.addFields({

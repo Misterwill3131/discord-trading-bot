@@ -102,11 +102,57 @@ function isEnabled() {
   return process.env.LLM_CLASSIFY_ENABLED === 'true' && !!process.env.ANTHROPIC_API_KEY;
 }
 
-// SHA-256 hex du texte trimmé. Ne dépend ni du modèle ni du prompt :
-// si on change le prompt, il faut invalider le cache via
-// llmClassifyInvalidateModel().
+// Abstraction template-based : on remplace les valeurs spécifiques
+// (tickers, prix, nombres) par des placeholders pour cacher les
+// classifications par PATTERN plutôt que par texte exact.
+//
+// Bénéfice : "Added too! Best sympathy to HSPT with far lower float"
+// et "Added too! Best sympathy to AAPL with far lower float" partagent
+// le même template "added too! best sympathy to t with far lower float"
+// → 1 seule call API au lieu de 2.
+//
+// Limites volontaires :
+// - On n'abstrait les tickers all-caps standalone QUE si le message est
+//   majoritairement en lowercase (= prose mixte-case). Évite de tout
+//   abstraire dans un message en CAPS LOCK "BUY $AAPL NOW" où chaque
+//   mot deviendrait [TICKER].
+// - Mode extract garde le hash sur texte LITTÉRAL (les valeurs
+//   spécifiques sont nécessaires pour produire les bonnes entry/target).
+function abstractTemplate(text) {
+  if (!text) return '';
+  const original = String(text);
+
+  // Détecter si le texte est mixed-case (= prose) vs all-caps (shouty).
+  const lowerCount = (original.match(/[a-z]/g) || []).length;
+  const upperCount = (original.match(/[A-Z]/g) || []).length;
+  const isMixedCase = lowerCount > 0 && lowerCount > upperCount;
+
+  let result = original;
+
+  // Toujours abstraire $TICKER (le préfixe $ est un marqueur explicite).
+  result = result.replace(/\$[A-Z]{1,6}\b/g, '$T');
+
+  // N'abstraire les tickers standalone all-caps QUE en mode prose mixte.
+  // Évite de massacrer "BUY $AAPL NOW" → "[T] $T [T]".
+  if (isMixedCase) {
+    result = result.replace(/\b[A-Z]{3,6}\b/g, 'T');
+  }
+
+  // Remplacer les prix (décimaux) puis les entiers. Ordre important :
+  // décimaux d'abord pour éviter de splitter "4.80" en "4" et "80".
+  result = result.replace(/\b\d+\.\d+\b/g, 'P');
+  result = result.replace(/\b\d+\b/g, 'N');
+
+  return result.replace(/\s+/g, ' ').toLowerCase().trim();
+}
+
+// SHA-256 hex du TEMPLATE (texte abstrait). Permet aux messages avec
+// la même structure mais des tickers/prix différents de partager une
+// classification cachée. Note historique : avant on hashait le texte
+// littéral — d'où certaines entrées de cache passées qui ne matchent
+// plus rien (elles deviennent dormantes mais sans impact).
 function hashText(text) {
-  return crypto.createHash('sha256').update(String(text || '').trim()).digest('hex');
+  return crypto.createHash('sha256').update(abstractTemplate(text)).digest('hex');
 }
 
 // System prompt — partie cacheable côté Anthropic. Stable, jamais
@@ -528,6 +574,7 @@ module.exports = {
   isEnabled,
   hashText,
   hashExtractText,
+  abstractTemplate,       // exposé pour audit + tests
   parseClassification,    // exposé pour tests
   parseExtraction,        // exposé pour tests
   assertNoExternalAccess, // exposé pour tests

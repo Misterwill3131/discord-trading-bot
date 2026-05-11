@@ -14,6 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const { computeIndicators } = require('../trading/indicators');
+const { formatDateET }      = require('../trading/trend-scanner');
 const { resolveSymbol } = require('./chart-img-client');
 
 // Table des timeframes acceptés, convention TradingView :
@@ -163,7 +164,39 @@ function createYahooClient({
     }
   }
 
-  return { getQuote, getChart };
+  // getChartCustom : variante de getChart qui bypasse parseRange/VALID_RANGES
+  // pour permettre des combinaisons (interval, lookbackMs) custom. Use case
+  // principal : !ema9 fetche au même intervalle que le chart-img mais avec une
+  // fenêtre suffisamment large pour TOUJOURS avoir des bars (notamment pour
+  // les intervalles courts 1m/5m qui retournent 0 quotes en weekend si on
+  // demande juste 1 jour).
+  //
+  // Cache séparé du getChart standard (clé inclut interval + lookbackMs).
+  async function getChartCustom(ticker, interval, lookbackMs) {
+    const t = String(ticker).toUpperCase();
+    const period1 = new Date(now() - lookbackMs);
+    const key = t + '|c:' + interval + ':' + lookbackMs;
+    const hit = chartCache.get(key);
+    if (hit) {
+      if (hit.data && (now() - hit.ts) < ttlMs) return hit.data;
+      if (hit.inflight) return hit.inflight;
+    }
+    const inflight = withTimeout(
+      yahoo.chart(t, { interval, period1, includePrePost: true }),
+      timeoutMs,
+    );
+    chartCache.set(key, { inflight });
+    try {
+      const data = await inflight;
+      chartCache.set(key, { ts: now(), data });
+      return data;
+    } catch (err) {
+      chartCache.delete(key);
+      throw err;
+    }
+  }
+
+  return { getQuote, getChart, getChartCustom };
 }
 
 // Agrège des bars OHLCV N-par-N : O = premier, H = max, L = min,
@@ -480,25 +513,27 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
   // ── !ema9 TICKER [TIMEFRAME] ────────────────────────────────────────
   // Chart avec UNIQUEMENT VWAP + EMA(9) + valeurs textuelles. Timeframe
   // optionnel (par défaut 5D · 15min, weekend-safe).
-  // Mapping timeframe → range chart-img (et Yahoo, qui partage les keys) :
-  //   1min  → '1m'  (1m bars × 1 jour)
-  //   5min  → '5m'  (5m bars × 1 jour)
-  //   15min → '15m' (15m bars × 5 jours)
-  //   30min → '30m' (30m bars × 5 jours)
-  //   1h    → '1h'  (1h bars × 1 mois)
-  //   1d    → '1M'  (1d bars × 1 mois)
-  //   (aucun) → '5D' = 15min × 5 jours, weekend-safe par défaut
-  // Pour les timeframes courts (1min, 5min) Yahoo retourne 0 quotes les
-  // weekends → on affiche le chart sans valeurs texte et un message clair
-  // au lieu d'un "❌ Not enough data" qui suggère un bug.
-  const EMA9_TIMEFRAMES = {
-    '1min':  '1m',
-    '5min':  '5m',
-    '15min': '15m',
-    '30min': '30m',
-    '1h':    '1h',
-    '1d':    '1M',
+  //
+  // Pour chaque timeframe on définit :
+  //   - chartImg : le range key passé à chart-img (qui détermine interval+window)
+  //   - interval : l'intervalle Yahoo pour fetch les bars (= même que chartImg)
+  //   - lookbackMs : la fenêtre Yahoo (≥ 5 jours pour weekend-safe sur les
+  //     intervalles courts ; Yahoo limite 1m à 7 jours, 5m/15m/30m à 60 jours,
+  //     1h à 730 jours, 1d à plusieurs années — on reste dans ces limites).
+  //
+  // L'EMA9 est calculée sur la série complète des bars (smoothing exponentiel
+  // qui converge après ~30 bars). Le VWAP est filtré sur la dernière session
+  // ET (= session-anchored, comme le default chart-img) pour matcher la valeur
+  // affichée sur le chart.
+  const EMA9_CONFIG = {
+    '1min':  { chartImg: '1m',  interval: '1m',  lookbackMs:  7 * 86_400_000 },
+    '5min':  { chartImg: '5m',  interval: '5m',  lookbackMs:  7 * 86_400_000 },
+    '15min': { chartImg: '15m', interval: '15m', lookbackMs:  7 * 86_400_000 },
+    '30min': { chartImg: '30m', interval: '30m', lookbackMs:  7 * 86_400_000 },
+    '1h':    { chartImg: '1h',  interval: '1h',  lookbackMs: 30 * 86_400_000 },
+    '1d':    { chartImg: '1M',  interval: '1d',  lookbackMs: 90 * 86_400_000 },
   };
+  const DEFAULT_EMA9_CONFIG = { chartImg: '5D', interval: '15m', lookbackMs: 7 * 86_400_000 };
   const EMA9_LABELS = {
     '1m':  '1D · 1min',
     '5m':  '1D · 5min',
@@ -530,7 +565,7 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
       return;
     }
 
-    if (m[2] && !EMA9_TIMEFRAMES[tfArg]) {
+    if (m[2] && !EMA9_CONFIG[tfArg]) {
       try {
         await message.reply(
           '❌ Invalid timeframe `' + m[2] + '`. Use: `1min`, `5min`, `15min`, `30min`, `1h`, `1d`'
@@ -540,8 +575,8 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
     }
 
     const ticker  = tickerArg.replace(/\$/g, '').toUpperCase();
-    const range   = EMA9_TIMEFRAMES[tfArg] || '5D';
-    const tfLabel = EMA9_LABELS[range] || range;
+    const cfg     = tfArg ? EMA9_CONFIG[tfArg] : DEFAULT_EMA9_CONFIG;
+    const tfLabel = EMA9_LABELS[cfg.chartImg] || cfg.chartImg;
 
     console.log('[!ema9] ' + ticker + ' tf=' + (tfArg || 'default') + ' requested by '
       + message.author.username + ' in #' + (message.channel.name || message.channel.id));
@@ -552,17 +587,20 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
       return;
     }
 
-    // 1) Yahoo : quote (pour exchange code) + chart au timeframe demandé.
+    // 1) Yahoo : quote (exchange code) + bars au même intervalle que le chart,
+    //    avec une fenêtre suffisamment large pour TOUJOURS avoir des données
+    //    (notamment 1m/5m × ≥ 5 jours pour couvrir le dernier vendredi en
+    //    weekend). getChartCustom bypasse parseRange pour permettre cette
+    //    combinaison (interval, lookbackMs) qui n'existe pas dans VALID_RANGES.
     //    Promise.all → parallèle, gain ~200-500ms vs séquentiel.
     let symbol;
     let yahooCandles = [];
     try {
       const [quote, chart] = await Promise.all([
         yc.getQuote(ticker),
-        yc.getChart(ticker, range).catch(err => {
-          // Yahoo peut throw sur les timeframes courts en weekend — on
-          // tolère et on tombera sur le path "indicateurs unavailable".
-          console.warn('[!ema9] Yahoo getChart(' + range + ') failed: ' + (err && err.message));
+        yc.getChartCustom(ticker, cfg.interval, cfg.lookbackMs).catch(err => {
+          console.warn('[!ema9] Yahoo getChartCustom(' + cfg.interval + ') failed: '
+            + (err && err.message));
           return null;
         }),
       ]);
@@ -586,16 +624,34 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
       return;
     }
 
-    // 2) Compute EMA9 + VWAP localement (computeIndicators retourne aussi
-    //    rsi/ema20/lastPrice mais on n'en a pas besoin ici). Si Yahoo n'a
-    //    pas retourné de bars (cas weekend sur timeframe court), ind reste
-    //    null et on affichera juste le chart avec un message d'info.
+    // 2) Indicateurs :
+    //    - EMA9 = computé sur TOUTE la série (la convergence exponentielle
+    //      utilise les bars historiques pour seed, donc plus précis).
+    //    - VWAP = computé sur la dernière session ET seulement (session-
+    //      anchored, ce qui matche le default du study VWAP de chart-img).
+    //    Pour `1d` (bars daily), pas de notion de "session intraday" → on
+    //    laisse computeIndicators sur toute la série (VWAP cumulative sur
+    //    le mois est la meilleure approximation disponible).
     let ind = null;
     if (yahooCandles.length > 0) {
-      const bars = yahooCandles
+      const allBars = yahooCandles
         .filter(q => Number.isFinite(q.close))
         .map(q => ({ t: q.date, o: q.open, h: q.high, l: q.low, c: q.close, v: q.volume }));
-      ind = computeIndicators(bars);
+      const indFull = computeIndicators(allBars);
+
+      let vwap = indFull.vwap;
+      // Pour les timeframes intraday : VWAP session-anchored = VWAP des bars
+      // de la dernière date ET seulement.
+      if (cfg.interval !== '1d' && allBars.length > 0) {
+        const lastDate = formatDateET(new Date(allBars[allBars.length - 1].t));
+        const lastSessionBars = allBars.filter(b => formatDateET(new Date(b.t)) === lastDate);
+        if (lastSessionBars.length > 0) {
+          const sessionInd = computeIndicators(lastSessionBars);
+          if (Number.isFinite(sessionInd.vwap)) vwap = sessionInd.vwap;
+        }
+      }
+
+      ind = { ema9: indFull.ema9, vwap };
     }
 
     // 3) Chart-img : studies = juste VWAP + EMA(9) au timeframe demandé.
@@ -604,7 +660,7 @@ function registerMarketCommands(client, { yahooClient, chartImgClient } = {}) {
     //    n'a rien retourné côté indicateurs textuels.
     let buffer;
     try {
-      buffer = await cic.getChart(symbol, range, {
+      buffer = await cic.getChart(symbol, cfg.chartImg, {
         studies: [
           { name: 'VWAP' },
           { name: 'Moving Average Exponential', input: { length: 9, source: 'close' } },

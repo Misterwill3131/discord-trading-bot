@@ -193,12 +193,15 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
   // suivant → le rectangle se termine en gros à la fin du jour gappé,
   // ce qui visuellement met l'accent sur le jour spécifique du gap.
   const MARGIN_BEFORE_NEXT_MS = 10 * 60 * 60 * 1000;
-  // Cap nb de rectangles : chart-img a une limite (HTTP 422 "too many
-  // drawings" sinon). Sur 3M daily, presque chaque jour a un gap → 60+
-  // rectangles potentiels. On garde les top N par |gapPct| (les plus
-  // significatifs visuellement) puis on les trie chronologiquement pour
-  // construire la chaîne de rectangles correctement.
-  const MAX_RECTANGLES = 10;
+  // Cap nb de rectangles : chart-img limite à 10 paramètres TOTAL par requête
+  // (studies + drawings combinés). Erreur observée :
+  //   HTTP 403: {"message":"Exceed Max Usage Parameter Limit (10)"}
+  // On a 1 study (Volume) + N rectangles → max 9 rectangles pour rester à 10.
+  // Sur 3M daily, presque chaque jour a un gap → 60+ rectangles potentiels.
+  // On garde les top N par |gapPct| (les plus significatifs visuellement)
+  // puis on les trie chronologiquement pour construire la chaîne de
+  // rectangles correctement.
+  const MAX_RECTANGLES = 9;
   let renderedGaps = gaps;
   if (gaps.length > MAX_RECTANGLES) {
     renderedGaps = gaps.slice()

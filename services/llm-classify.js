@@ -273,11 +273,209 @@ async function classify(text, { model = DEFAULT_MODEL, timeoutMs = DEFAULT_TIMEO
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// MODE EXTRACTION : pour les watchlists multi-tickers
+// ─────────────────────────────────────────────────────────────────────
+// La regex single-signal échoue sur les posts du type "WL for 11.05"
+// avec 10 tickers détaillés — elle aggrège les prix de plusieurs tickers
+// dans un embed Frankenstein. Solution : LLM en mode extraction qui
+// retourne un ARRAY de signaux, un par ticker actionnable.
+//
+// Cache séparé du mode classify : on hash avec préfixe "extract:" pour
+// éviter collision PK sur le même texte.
+
+const EXTRACT_SYSTEM_PROMPT = `Tu extrais des signaux de trading depuis un message multi-tickers (typiquement une watchlist analyste matinale type "WL for [date]").
+
+Pour CHAQUE ticker mentionné, détermine s'il a un setup actionnable clair :
+- "X break" / "X to break" / "needs to break X" / "X break needed for Y" → entry trigger = X, target = Y
+- "X has to hold for Y" / "X must hold above Y" → support level (PAS un entry actionnable seul)
+- "above X we have Y" → confirmation level + target
+- "Alerted at X" → historique passé (À IGNORER comme entry, pas un signal nouveau)
+- Listes "X...Y...Z" après un trigger = targets multiples (prendre le PREMIER comme target principal)
+
+Retourne UNIQUEMENT les tickers ayant :
+- Un entry trigger CLAIR (break/breakout level)
+- ET au moins 1 target derrière
+
+Skip ceux qui sont juste "watch", "hold above support" sans entrée nette, ou en mode coaching.
+
+Format de sortie OBLIGATOIRE — JSON ARRAY strict, AUCUN texte avant ou après :
+[
+  { "ticker": "HPAI", "side": "long", "entry": 1.50, "target": 1.57, "stop": null, "confidence": 0.9 },
+  { "ticker": "GCTS", "side": "long", "entry": 1.86, "target": 1.95, "stop": null, "confidence": 0.85 }
+]
+
+Si AUCUN signal actionnable extractible : retourne [] (array vide).
+
+Règles strictes :
+- ticker : majuscules, sans le $
+- side : "long" par défaut, "short" si le contexte l'indique clairement (puts, bearish, breakdown)
+- entry : le PRIX de déclenchement (break level)
+- target : le PREMIER prix mentionné après l'entry comme objectif
+- stop : null sauf si "sl X" / "stop X" explicite
+- confidence : 0.85+ si setup très clair, 0.7-0.84 si plausible, < 0.7 si tu hésites (sera filtré)`;
+
+const EXTRACT_FEW_SHOT = [
+  // — Watchlist du cas réel rapporté par l'utilisateur (HPAI message) —
+  {
+    user: `WL for 11.05:
+
+\$HPAI AI/small-float momentum and sympathy buying around artificial intelligence names.
+\$1.50 break needed for 1.57 highs test and then 1.93.
+
+\$MRAM Strong earnings, AI memory/semiconductor hype.
+Consolidating nicely above VWAP. \$33s have to hold if VWAP doesn't. Above we have 38...44.58...55.27.
+
+\$GCTS Biotech momentum/speculative rebound.
+Nice close on Friday in AH. 1.86 has to break for 1.95 retest and then 2.13...2.30.
+
+\$AEHL china pump low-float trading activity.
+1.45 break takes it to 2.03 retest.
+
+\$FLNC Energy storage/battery sector strength.
+25 break needed for 27.00 retest and then 28.51 and 31.23. Alerted at 17.30.
+
+\$INOD Continued AI/data-labeling momentum.
+82.70 has to hold and 91.88 retested for 103.58+ Alerted at 59.00.`,
+    assistant: '[{"ticker":"HPAI","side":"long","entry":1.50,"target":1.57,"stop":null,"confidence":0.9},{"ticker":"GCTS","side":"long","entry":1.86,"target":1.95,"stop":null,"confidence":0.85},{"ticker":"AEHL","side":"long","entry":1.45,"target":2.03,"stop":null,"confidence":0.85},{"ticker":"FLNC","side":"long","entry":25,"target":27.00,"stop":null,"confidence":0.9}]',
+  },
+  // — Watchlist sans setup actionnable (que du watch/hold) —
+  {
+    user: `Watching today:
+\$AAPL above 200 looks good for upside
+\$MSFT consolidating, watch the range
+\$NVDA needs to reclaim 130 to be interesting`,
+    assistant: '[]',
+  },
+  // — Mix de setups clairs et hold-only —
+  {
+    user: `\$XYZ 5.50 break for 6.20 then 6.80
+\$ABC just watching, no clear setup
+\$DEF 12 break needed, target 14.50 sl 11`,
+    assistant: '[{"ticker":"XYZ","side":"long","entry":5.50,"target":6.20,"stop":null,"confidence":0.9},{"ticker":"DEF","side":"long","entry":12,"target":14.50,"stop":11,"confidence":0.95}]',
+  },
+];
+
+function buildExtractMessages(text) {
+  const out = [];
+  for (const ex of EXTRACT_FEW_SHOT) {
+    out.push({ role: 'user', content: ex.user });
+    out.push({ role: 'assistant', content: ex.assistant });
+  }
+  out.push({ role: 'user', content: String(text) });
+  return out;
+}
+
+// Valide un array de signaux extraits. Filtre ceux sans entry+target+ticker.
+function parseExtraction(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  let arr;
+  try { arr = JSON.parse(cleaned); } catch { return null; }
+  if (!Array.isArray(arr)) return null;
+
+  const numOrNull = v => (v === null || v === undefined) ? null
+                       : (Number.isFinite(Number(v)) ? Number(v) : null);
+  const strOrNull = v => (v === null || v === undefined || v === '') ? null
+                       : String(v).toUpperCase().slice(0, 8);
+
+  const out = [];
+  for (const sig of arr) {
+    if (!sig || typeof sig !== 'object') continue;
+    const ticker = strOrNull(sig.ticker);
+    const entry = numOrNull(sig.entry);
+    const target = numOrNull(sig.target);
+    if (!ticker || !Number.isFinite(entry) || !Number.isFinite(target)) continue;
+    out.push({
+      ticker,
+      side: (sig.side === 'short') ? 'short' : 'long',
+      entry,
+      target,
+      stop: numOrNull(sig.stop),
+      confidence: Math.max(0, Math.min(1, numOrNull(sig.confidence) ?? 0.5)),
+    });
+  }
+  return out;
+}
+
+// Hash dédié au mode extract (préfixe pour éviter collision PK avec le
+// cache classify).
+function hashExtractText(text) {
+  return crypto.createHash('sha256')
+    .update('extract:' + String(text || '').trim())
+    .digest('hex');
+}
+
+// Extrait les signaux multi-tickers d'un message. Renvoie :
+//   { signals: [...], cached, latencyMs, model } ou null si désactivé /
+//   API indispo / réponse invalide.
+async function extractMultiSignals(text, { model = DEFAULT_MODEL, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  if (!isEnabled()) return null;
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return null;
+
+  const versionedModel = `${model}#${PROMPT_VERSION}#extract`;
+  const hash = hashExtractText(trimmed);
+
+  const cached = db.llmClassifyGet(hash);
+  if (cached && cached.model === versionedModel) {
+    // Stocké dans entities (réutilise le champ JSON) pour économiser
+    // une migration de schéma. La clé "signals" différencie du format
+    // classify.
+    return {
+      signals:   cached.entities?.signals || [],
+      cached:    true,
+      latencyMs: 0,
+      model:     cached.model,
+    };
+  }
+
+  const client = getClient();
+  if (!client) return null;
+
+  const t0 = Date.now();
+  try {
+    const response = await client.messages.create({
+      model,
+      max_tokens: 1500,           // multi-signal → output plus large
+      temperature: 0,
+      system: [
+        { type: 'text', text: EXTRACT_SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } },
+      ],
+      messages: buildExtractMessages(trimmed),
+    }, { timeout: timeoutMs });
+
+    const rawText = response?.content?.[0]?.type === 'text'
+      ? response.content[0].text
+      : null;
+    const signals = parseExtraction(rawText);
+    if (signals === null) {
+      console.warn(
+        `[llm-classify] extract: invalid JSON — raw="${(rawText || '').slice(0, 100)}"`
+      );
+      return null;
+    }
+
+    db.llmClassifyPut(hash, trimmed, 'extract', { signals }, versionedModel);
+    const latencyMs = Date.now() - t0;
+    return { signals, cached: false, latencyMs, model: versionedModel };
+  } catch (err) {
+    const latencyMs = Date.now() - t0;
+    console.warn(
+      `[llm-classify] extract API error after ${latencyMs}ms — ${err.message?.slice(0, 200)}`
+    );
+    return null;
+  }
+}
+
 module.exports = {
   classify,
+  extractMultiSignals,
   isEnabled,
   hashText,
+  hashExtractText,
   parseClassification,    // exposé pour tests
+  parseExtraction,        // exposé pour tests
   DEFAULT_MODEL,
   PROMPT_VERSION,
   VALID_TYPES,

@@ -29,7 +29,7 @@ function isUnknownTicker(err) {
   );
 }
 
-// Détecte TOUS les gaps overnight dans la fenêtre de bars (5D typiquement).
+// Détecte TOUS les gaps overnight dans la fenêtre de bars (3M daily typiquement).
 // Pour chaque paire de jours ET consécutifs, calcule le gap entre la
 // dernière bougie du jour précédent et la première bougie du jour suivant.
 //
@@ -98,7 +98,7 @@ function computeGapFromBars(bars) {
   return gaps.length > 0 ? gaps[gaps.length - 1] : null;
 }
 
-// !gap chart TICKER — fetch quote pour le code exchange, fetch 5D pour
+// !gap chart TICKER — fetch quote pour le code exchange, fetch 3M daily pour
 // calculer le gap, render PNG via chart-img, reply avec attach + caption.
 // Marche n'importe quand (anchor sur les bars, pas sur Date.now()).
 async function handleGapChart(message, args, { yahoo, chartImg }) {
@@ -135,16 +135,14 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
     return message.reply('❌ Yahoo Finance unavailable, try again in a few minutes').catch(() => {});
   }
 
-  // 2) Yahoo 5D — pour détecter TOUS les gaps de la fenêtre.
-  //    On ne filtre PAS aux regular hours : convention trader que le gap est
-  //    entre la dernière bougie ~20h ET (after-hours close) et la première
-  //    bougie ~04h ET (pre-market open). chart-img sera configuré ci-dessous
-  //    avec `session: 'extended'` pour afficher cette même fenêtre, donc
-  //    nos timestamps anchor (extended-hours bars) sont visibles sur le chart.
+  // 2) Yahoo 3M — bougies daily sur 3 mois pour détecter TOUS les gaps de la
+  //    fenêtre. Chaque bar = 1 jour de trading complet, donc gap = différence
+  //    entre la close du jour N et l'open du jour N+1 (le concept "overnight
+  //    gap" classique sur daily timeframe).
   let gaps = [];
   let allBars = [];
   try {
-    const chart = await yahoo.getChart(ticker, '5D');
+    const chart = await yahoo.getChart(ticker, '3M');
     const quotes = (chart && chart.quotes) || [];
     allBars = quotes
       .filter(q => Number.isFinite(q.close))
@@ -155,14 +153,18 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
     gaps = computeAllGapsFromBars(allBars);
   } catch (err) {
     // Non-fatal : le chart chart-img reste utile sans annotations.
-    console.warn('[gap] Yahoo 5D failed for ' + ticker + ': ' + (err && err.message));
+    console.warn('[gap] Yahoo 3M failed for ' + ticker + ': ' + (err && err.message));
   }
 
   // 3) Render chart via chart-img.
-  //    Range '5D' = 15m bars sur 5 jours.
+  //    Range '3M' = bougies daily sur 3 mois (~66 bars).
   //    Override studies = SEULEMENT Volume (pas de VWAP/EMAs/MAs des
   //    DEFAULT_STUDIES). Pour `!gap chart` on veut un chart minimal qui
   //    laisse les zones de gap respirer.
+  //
+  //    Pas besoin de `session: 'extended'` ou `timezone: 'America/New_York'`
+  //    sur du daily : chaque bougie représente déjà une session entière, et
+  //    l'axe X montre des dates (pas des heures intraday).
   //
   //    Pour CHAQUE gap on dessine un rectangle ambré qui s'étend jusqu'au
   //    PROCHAIN gap (et le dernier va jusqu'au bord droit du chart). Cette
@@ -171,29 +173,25 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
   //    et permet de voir comment le prix s'est comporté dans chaque tranche.
   //
   //    Format de chaque rectangle :
-  //      - X gauche : `todayOpenTimestamp` (1er bar de la session post-gap)
+  //      - X gauche : `todayOpenTimestamp` (timestamp du bar daily du jour gappé)
   //      - X droit  : `todayOpenTimestamp` du gap suivant, OU `latestBarTimestamp`
   //                   pour le dernier (= bord droit du chart)
   //      - Y : [prevSessionClose, todayOpen] = la zone de prix gappée
-  //      - Label = le % du gap centré (ex: "+0.28%", "-1.45%") — chiffre
-  //        directement sur le rectangle pour identifier visuellement
-  //        l'amplitude de chaque gap sans avoir à lire la caption.
+  //      - Label = le % du gap centré (ex: "+0.28%", "-1.45%")
   //      - Couleur amber/dark-goldenrod (alpha 0.2, lineWidth 1 — discret
   //        mais visible)
   const symbol = resolveSymbol(ticker, quote.exchange);
   const chartOpts = {
-    studies:  [{ name: 'Volume' }],
-    session:  'extended',                // affiche pre-market + after-hours
-    timezone: 'America/New_York',        // X-axis labels en ET (cohérent avec ouverture/fermeture)
+    studies: [{ name: 'Volume' }],
   };
   const lastBarT = allBars.length > 0
     ? allBars[allBars.length - 1].t
     : null;
   // Marge avant le gap suivant : 10h. Permet aux rectangles de respirer
   // visuellement (un espace blanc entre 2 zones gappées) au lieu de se
-  // toucher bord à bord. Math.max protège contre le cas dégénéré où
-  // 2 gaps seraient à < 10h l'un de l'autre (improbable sur du daily mais
-  // évite un rectangle inversé).
+  // toucher bord à bord. Sur daily timeframe, 10h = ~½ jour avant le bar
+  // suivant → le rectangle se termine en gros à la fin du jour gappé,
+  // ce qui visuellement met l'accent sur le jour spécifique du gap.
   const MARGIN_BEFORE_NEXT_MS = 10 * 60 * 60 * 1000;
   if (gaps.length > 0 && lastBarT !== null) {
     chartOpts.rectangles = gaps.map((g, i) => {
@@ -219,7 +217,7 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
   }
   let png;
   try {
-    png = await chartImg.getChart(symbol, '5D', chartOpts);
+    png = await chartImg.getChart(symbol, '3M', chartOpts);
   } catch (err) {
     console.error('[gap] chart-img error for ' + symbol + ': ' + (err && err.message));
     return message.reply('❌ Chart rendering failed, try again in a few minutes').catch(() => {});
@@ -236,7 +234,7 @@ async function handleGapChart(message, args, { yahoo, chartImg }) {
     captionLines[0] = `${arrow} **$${ticker}** — overnight gap ${direction} ${sign}${latest.gapPct.toFixed(2)}%`;
     captionLines.push(`Open ${fmtPrice(latest.todayOpen)} vs prev session close ${fmtPrice(latest.prevSessionClose)}`);
     if (gaps.length > 1) {
-      captionLines.push(`(${gaps.length} gaps detected in last 5 days — see chart)`);
+      captionLines.push(`(${gaps.length} gaps detected in last 3 months — see chart)`);
     }
   }
 

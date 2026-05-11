@@ -577,9 +577,21 @@ async function postLLMAudit(clientSaas, embed) {
 // Construit l'embed audit pour une décision classify. `result` est l'objet
 // renvoyé par llmClassify.classify(). `action` décrit ce qui a été fait
 // après ('DROP', 'EXIT broadcast', 'ENTRY broadcast', 'passthrough', etc.).
+// Mapping type technique → label français pour l'affichage audit.
+// Le type technique (entry/exit/ipo/passthrough/ignore) reste dans les
+// logs et le cache pour cohérence ; seul l'affichage audit est traduit.
+const TYPE_FR = {
+  entry:       'Entrée',
+  exit:        'Sortie',
+  ipo:         'IPO',
+  passthrough: 'Passthrough',
+  ignore:      'Ignoré',
+};
+
 function buildClassifyAuditEmbed({ message, result, action, broadcastSummary }) {
   const conf = result.entities?.confidence ?? 0;
   const type = result.type;
+  const typeFr = TYPE_FR[type] || type;
   const isDrop = action === 'DROP' || type === 'ignore';
   const color = isDrop ? AUDIT_COLOR_DROP : AUDIT_COLOR_CLASSIFY;
 
@@ -593,13 +605,13 @@ function buildClassifyAuditEmbed({ message, result, action, broadcastSummary }) 
 
   const eb = new EmbedBuilder()
     .setColor(color)
-    .setTitle(`🤖 LLM classify — ${type} (conf ${conf.toFixed(2)})`)
+    .setTitle(`🤖 LLM classifie — ${typeFr} (conf ${conf.toFixed(2)})`)
     .setDescription('```\n' + truncateText(message.content || '', 300) + '\n```')
     .addFields(
-      { name: 'Cached', value: result.cached ? '✓' : '✗', inline: true },
-      { name: 'Latency', value: `${result.latencyMs}ms`, inline: true },
+      { name: 'En cache', value: result.cached ? '✓' : '✗', inline: true },
+      { name: 'Latence', value: `${result.latencyMs}ms`, inline: true },
       { name: 'Ticker', value: result.entities?.ticker || '—', inline: true },
-      { name: 'Action', value: action || (isDrop ? 'DROP' : '—'), inline: false },
+      { name: 'Action', value: action || (isDrop ? 'REJETÉ' : '—'), inline: false },
     );
 
   // N'ajoute le field Template QUE s'il diffère du texte original
@@ -614,8 +626,8 @@ function buildClassifyAuditEmbed({ message, result, action, broadcastSummary }) 
 
   if (broadcastSummary) {
     eb.addFields({
-      name: 'Broadcast',
-      value: `ok=${broadcastSummary.ok} skip=${broadcastSummary.skip} err=${broadcastSummary.error}`,
+      name: 'Diffusion',
+      value: `ok=${broadcastSummary.ok} ignoré=${broadcastSummary.skip} erreur=${broadcastSummary.error}`,
       inline: false,
     });
   }
@@ -634,14 +646,17 @@ function buildExtractAuditEmbed({ message, result, signalActions }) {
   const acted = (signalActions || []).length;
   const color = acted > 0 ? AUDIT_COLOR_EXTRACT : AUDIT_COLOR_DROP;
 
+  const signalWord = total > 1 ? 'signaux' : 'signal';
+  const titleSuffix = acted < total ? ` (${acted} diffusé${acted > 1 ? 's' : ''})` : '';
+
   const eb = new EmbedBuilder()
     .setColor(color)
-    .setTitle(`🤖 LLM extract — ${total} signal${total > 1 ? 's' : ''} ${acted < total ? `(${acted} broadcast)` : ''}`)
+    .setTitle(`🤖 LLM extrait — ${total} ${signalWord}${titleSuffix}`)
     .setDescription('```\n' + truncateText(message.content || '', 300) + '\n```')
     .addFields(
-      { name: 'Cached', value: result.cached ? '✓' : '✗', inline: true },
-      { name: 'Latency', value: `${result.latencyMs}ms`, inline: true },
-      { name: 'Extracted', value: String(total), inline: true },
+      { name: 'En cache', value: result.cached ? '✓' : '✗', inline: true },
+      { name: 'Latence', value: `${result.latencyMs}ms`, inline: true },
+      { name: 'Extraits', value: String(total), inline: true },
     );
 
   // Détail signal par signal. Tronqué si > 10 pour rester sous la limite
@@ -653,10 +668,10 @@ function buildExtractAuditEmbed({ message, result, signalActions }) {
       const stopStr = (s.stop != null) ? ` sl=${s.stop}` : '';
       return `${flag} $${s.ticker} ${s.entry}→${s.target}${stopStr} (conf ${s.confidence.toFixed(2)})`;
     });
-    if (total > 10) lines.push(`… +${total - 10} more`);
-    eb.addFields({ name: 'Signals', value: lines.join('\n').slice(0, 1024), inline: false });
+    if (total > 10) lines.push(`… +${total - 10} de plus`);
+    eb.addFields({ name: 'Signaux', value: lines.join('\n').slice(0, 1024), inline: false });
   } else {
-    eb.addFields({ name: 'Result', value: '_(no actionable signals extracted)_', inline: false });
+    eb.addFields({ name: 'Résultat', value: '_(aucun signal exploitable extrait)_', inline: false });
   }
 
   eb.setFooter({ text: `msg=${message.id} · ${result.model}` })
@@ -678,18 +693,18 @@ async function tryLLMFallback(clientSaas, message) {
   // Audit helper local : on capture l'action effective et le résumé
   // broadcast (s'il y en a un) puis on poste l'embed audit en fin de
   // fonction. Évite de dupliquer le code postLLMAudit dans chaque branche.
-  let auditAction = 'DROP';
+  let auditAction = 'REJETÉ';
   let auditBroadcast = null;
 
   if (conf < LLM_CONFIDENCE_THRESHOLD) {
-    auditAction = `DROP (conf ${conf.toFixed(2)} < ${LLM_CONFIDENCE_THRESHOLD})`;
+    auditAction = `REJETÉ (conf ${conf.toFixed(2)} < ${LLM_CONFIDENCE_THRESHOLD})`;
     await postLLMAudit(clientSaas, buildClassifyAuditEmbed({
       message, result, action: auditAction, broadcastSummary: null,
     }));
     return;
   }
   if (type === 'ignore') {
-    auditAction = 'DROP (ignore)';
+    auditAction = 'REJETÉ (ignore)';
     await postLLMAudit(clientSaas, buildClassifyAuditEmbed({
       message, result, action: auditAction, broadcastSummary: null,
     }));
@@ -720,7 +735,7 @@ async function tryLLMFallback(clientSaas, message) {
       `zone=${entities.low}-${entities.high} → ok=${r.ok} skip=${r.skip} err=${r.error}`
     );
     await postLLMAudit(clientSaas, buildClassifyAuditEmbed({
-      message, result, action: `EXIT broadcast (${entities.low}–${entities.high})`, broadcastSummary: r,
+      message, result, action: `Diffusion SORTIE (${entities.low}–${entities.high})`, broadcastSummary: r,
     }));
     return;
   }
@@ -746,7 +761,7 @@ async function tryLLMFallback(clientSaas, message) {
       `→ ok=${r.ok} skip=${r.skip} err=${r.error}`
     );
     await postLLMAudit(clientSaas, buildClassifyAuditEmbed({
-      message, result, action: `ENTRY broadcast (${entities.entry}→${entities.target})`, broadcastSummary: r,
+      message, result, action: `Diffusion ENTRÉE (${entities.entry}→${entities.target})`, broadcastSummary: r,
     }));
     return;
   }
@@ -759,7 +774,7 @@ async function tryLLMFallback(clientSaas, message) {
       `[saas/relay] passthrough (LLM) msg=${message.id} → ok=${r.ok} skip=${r.skip} err=${r.error}`
     );
     await postLLMAudit(clientSaas, buildClassifyAuditEmbed({
-      message, result, action: 'passthrough broadcast (raw)', broadcastSummary: r,
+      message, result, action: 'Diffusion passthrough (brut)', broadcastSummary: r,
     }));
     return;
   }
@@ -770,7 +785,7 @@ async function tryLLMFallback(clientSaas, message) {
   // dégradé qu'on préfère ignorer plutôt que d'envoyer un embed bancal.
   console.log(`[saas/relay] LLM type=${type} not routed (no handler) msg=${message.id}`);
   await postLLMAudit(clientSaas, buildClassifyAuditEmbed({
-    message, result, action: `DROP (no handler for type=${type})`, broadcastSummary: null,
+    message, result, action: `REJETÉ (aucun handler pour type=${type})`, broadcastSummary: null,
   }));
 }
 

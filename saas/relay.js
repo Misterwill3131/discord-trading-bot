@@ -12,6 +12,7 @@
 // de retry pour l'instant — Discord rate-limit est géré par discord.js.
 // ─────────────────────────────────────────────────────────────────────
 
+const { EmbedBuilder } = require('discord.js');
 const db = require('../db/sqlite');
 const pg = require('../db/postgres');
 const licenses = require('./licenses');
@@ -494,8 +495,6 @@ async function tryMultiSignalExtraction(clientSaas, message) {
     `cached=${cached} latency=${latencyMs}ms model=${model}`
   );
 
-  if (signals.length === 0) return;
-
   // Filtrage : seulement les signaux avec confidence ≥ threshold
   const valid = signals.filter(s => s.confidence >= LLM_CONFIDENCE_THRESHOLD);
   if (valid.length < signals.length) {
@@ -503,12 +502,12 @@ async function tryMultiSignalExtraction(clientSaas, message) {
       `[saas/relay] MULTI-SIGNAL filtered ${signals.length - valid.length} low-conf signals`
     );
   }
-  if (valid.length === 0) return;
 
   // Broadcast un embed par signal extrait. Build un DTO synthétique
   // basé sur le DTO racine (préserve note/ts_minute/source_message_id)
   // mais avec ticker/entry/target/stop écrasés par les valeurs LLM.
   const baseDto = buildSignalDTO(message);
+  const signalActions = [];
   let totalOk = 0, totalErr = 0;
   for (const sig of valid) {
     const syntheticDto = {
@@ -523,6 +522,7 @@ async function tryMultiSignalExtraction(clientSaas, message) {
     db.dailyAlertLogInsert({
       ticker: sig.ticker, alert_type: 'entry', source_message_id: String(message.id),
     });
+    signalActions.push({ ticker: sig.ticker, action: 'broadcast', broadcastSummary: r });
     totalOk += r.ok;
     totalErr += r.error;
     console.log(
@@ -534,6 +534,116 @@ async function tryMultiSignalExtraction(clientSaas, message) {
     `[saas/relay] MULTI-SIGNAL msg=${message.id} broadcast=${valid.length} ` +
     `totalOk=${totalOk} totalErr=${totalErr}`
   );
+
+  // Audit channel — best-effort, no-op si non configuré.
+  await postLLMAudit(clientSaas, buildExtractAuditEmbed({ message, result, signalActions }));
+}
+
+// Clé KV settings où on lit le channel d'audit LLM (configuré via
+// /saas llm-audit). Si absent → audit silencieux (no-op).
+const SETTINGS_KEY_LLM_AUDIT_CHANNEL = 'saas_llm_audit_channel';
+
+// Couleurs d'embed pour l'audit (visuellement distinctes par mode/résultat).
+const AUDIT_COLOR_CLASSIFY = 0x06b6d4; // cyan
+const AUDIT_COLOR_EXTRACT  = 0xa855f7; // purple
+const AUDIT_COLOR_DROP     = 0x6b7280; // gray
+const AUDIT_COLOR_ERROR    = 0xef4444; // red
+
+// Tronque un texte pour l'embed (Description limite 4096 chars, on est large).
+function truncateText(s, max = 300) {
+  if (!s) return '_(empty)_';
+  const t = String(s).replace(/\s+/g, ' ').trim();
+  return t.length <= max ? t : t.slice(0, max - 1) + '…';
+}
+
+// Poste un embed audit dans le channel configuré. Best-effort : tout
+// échec est silencieux (jamais bloquant pour le pipeline relay).
+async function postLLMAudit(clientSaas, embed) {
+  try {
+    const channelId = db.getSetting(SETTINGS_KEY_LLM_AUDIT_CHANNEL, null);
+    if (!channelId) return; // audit désactivé
+    if (!clientSaas?.isReady?.()) return;
+    const channel = await clientSaas.channels.fetch(channelId).catch(() => null);
+    if (!channel || !channel.isTextBased?.()) return;
+    await channel.send({
+      embeds: [embed],
+      allowedMentions: { parse: [] }, // strip toute mention résiduelle
+    });
+  } catch (err) {
+    console.warn('[saas/relay] postLLMAudit failed:', err.message?.slice(0, 200));
+  }
+}
+
+// Construit l'embed audit pour une décision classify. `result` est l'objet
+// renvoyé par llmClassify.classify(). `action` décrit ce qui a été fait
+// après ('DROP', 'EXIT broadcast', 'ENTRY broadcast', 'passthrough', etc.).
+function buildClassifyAuditEmbed({ message, result, action, broadcastSummary }) {
+  const conf = result.entities?.confidence ?? 0;
+  const type = result.type;
+  const isDrop = action === 'DROP' || type === 'ignore';
+  const color = isDrop ? AUDIT_COLOR_DROP : AUDIT_COLOR_CLASSIFY;
+
+  const eb = new EmbedBuilder()
+    .setColor(color)
+    .setTitle(`🤖 LLM classify — ${type} (conf ${conf.toFixed(2)})`)
+    .setDescription('```\n' + truncateText(message.content || '', 300) + '\n```')
+    .addFields(
+      { name: 'Cached', value: result.cached ? '✓' : '✗', inline: true },
+      { name: 'Latency', value: `${result.latencyMs}ms`, inline: true },
+      { name: 'Ticker', value: result.entities?.ticker || '—', inline: true },
+      { name: 'Action', value: action || (isDrop ? 'DROP' : '—'), inline: false },
+    );
+
+  if (broadcastSummary) {
+    eb.addFields({
+      name: 'Broadcast',
+      value: `ok=${broadcastSummary.ok} skip=${broadcastSummary.skip} err=${broadcastSummary.error}`,
+      inline: false,
+    });
+  }
+
+  eb.setFooter({ text: `msg=${message.id} · ${result.model}` })
+    .setTimestamp(message.createdAt || new Date());
+  return eb;
+}
+
+// Construit l'embed audit pour une décision extract (multi-signal).
+// `result` est l'objet renvoyé par llmClassify.extractMultiSignals().
+// `signalActions` est un array { ticker, action, broadcastSummary } avec
+// le résultat de chaque broadcast.
+function buildExtractAuditEmbed({ message, result, signalActions }) {
+  const total = result.signals.length;
+  const acted = (signalActions || []).length;
+  const color = acted > 0 ? AUDIT_COLOR_EXTRACT : AUDIT_COLOR_DROP;
+
+  const eb = new EmbedBuilder()
+    .setColor(color)
+    .setTitle(`🤖 LLM extract — ${total} signal${total > 1 ? 's' : ''} ${acted < total ? `(${acted} broadcast)` : ''}`)
+    .setDescription('```\n' + truncateText(message.content || '', 300) + '\n```')
+    .addFields(
+      { name: 'Cached', value: result.cached ? '✓' : '✗', inline: true },
+      { name: 'Latency', value: `${result.latencyMs}ms`, inline: true },
+      { name: 'Extracted', value: String(total), inline: true },
+    );
+
+  // Détail signal par signal. Tronqué si > 10 pour rester sous la limite
+  // de 1024 chars du field value.
+  if (total > 0) {
+    const lines = result.signals.slice(0, 10).map((s, i) => {
+      const action = signalActions?.[i];
+      const flag = action ? (action.broadcastSummary?.ok > 0 ? '✅' : '⚠️') : '⏭️';
+      const stopStr = (s.stop != null) ? ` sl=${s.stop}` : '';
+      return `${flag} $${s.ticker} ${s.entry}→${s.target}${stopStr} (conf ${s.confidence.toFixed(2)})`;
+    });
+    if (total > 10) lines.push(`… +${total - 10} more`);
+    eb.addFields({ name: 'Signals', value: lines.join('\n').slice(0, 1024), inline: false });
+  } else {
+    eb.addFields({ name: 'Result', value: '_(no actionable signals extracted)_', inline: false });
+  }
+
+  eb.setFooter({ text: `msg=${message.id} · ${result.model}` })
+    .setTimestamp(message.createdAt || new Date());
+  return eb;
 }
 
 async function tryLLMFallback(clientSaas, message) {
@@ -547,8 +657,26 @@ async function tryLLMFallback(clientSaas, message) {
     `conf=${conf.toFixed(2)} cached=${cached} latency=${latencyMs}ms model=${model}`
   );
 
-  if (conf < LLM_CONFIDENCE_THRESHOLD) return;
-  if (type === 'ignore') return;
+  // Audit helper local : on capture l'action effective et le résumé
+  // broadcast (s'il y en a un) puis on poste l'embed audit en fin de
+  // fonction. Évite de dupliquer le code postLLMAudit dans chaque branche.
+  let auditAction = 'DROP';
+  let auditBroadcast = null;
+
+  if (conf < LLM_CONFIDENCE_THRESHOLD) {
+    auditAction = `DROP (conf ${conf.toFixed(2)} < ${LLM_CONFIDENCE_THRESHOLD})`;
+    await postLLMAudit(clientSaas, buildClassifyAuditEmbed({
+      message, result, action: auditAction, broadcastSummary: null,
+    }));
+    return;
+  }
+  if (type === 'ignore') {
+    auditAction = 'DROP (ignore)';
+    await postLLMAudit(clientSaas, buildClassifyAuditEmbed({
+      message, result, action: auditAction, broadcastSummary: null,
+    }));
+    return;
+  }
 
   if (!clientSaas.isReady?.()) {
     console.warn('[saas/relay] clientSaas not ready — skipping LLM-routed broadcast');
@@ -573,6 +701,9 @@ async function tryLLMFallback(clientSaas, message) {
       `[saas/relay] EXIT (LLM) msg=${message.id} ticker=${entities.ticker} ` +
       `zone=${entities.low}-${entities.high} → ok=${r.ok} skip=${r.skip} err=${r.error}`
     );
+    await postLLMAudit(clientSaas, buildClassifyAuditEmbed({
+      message, result, action: `EXIT broadcast (${entities.low}–${entities.high})`, broadcastSummary: r,
+    }));
     return;
   }
 
@@ -596,6 +727,9 @@ async function tryLLMFallback(clientSaas, message) {
       `entry=${entities.entry} target=${entities.target} stop=${entities.stop} ` +
       `→ ok=${r.ok} skip=${r.skip} err=${r.error}`
     );
+    await postLLMAudit(clientSaas, buildClassifyAuditEmbed({
+      message, result, action: `ENTRY broadcast (${entities.entry}→${entities.target})`, broadcastSummary: r,
+    }));
     return;
   }
 
@@ -606,6 +740,9 @@ async function tryLLMFallback(clientSaas, message) {
     console.log(
       `[saas/relay] passthrough (LLM) msg=${message.id} → ok=${r.ok} skip=${r.skip} err=${r.error}`
     );
+    await postLLMAudit(clientSaas, buildClassifyAuditEmbed({
+      message, result, action: 'passthrough broadcast (raw)', broadcastSummary: r,
+    }));
     return;
   }
 
@@ -614,6 +751,9 @@ async function tryLLMFallback(clientSaas, message) {
   // regex IPO fast-path n'a pas attrapé, c'est probablement un format
   // dégradé qu'on préfère ignorer plutôt que d'envoyer un embed bancal.
   console.log(`[saas/relay] LLM type=${type} not routed (no handler) msg=${message.id}`);
+  await postLLMAudit(clientSaas, buildClassifyAuditEmbed({
+    message, result, action: `DROP (no handler for type=${type})`, broadcastSummary: null,
+  }));
 }
 
 function register({ clientSource, clientSaas, sourceGuildId, sourceChannelIds }) {

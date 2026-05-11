@@ -99,6 +99,13 @@ function buildAdminCommands() {
       .addStringOption(o => o.setName('channels')
         .setDescription('CSV of channel IDs to listen to. Leave empty to view current. "clear" to reset to env var.')
         .setRequired(false))
+    )
+    .addSubcommand(s => s.setName('llm-audit')
+      .setDescription('Configure the channel where LLM decisions are audited in real-time')
+      .addChannelOption(o => o.setName('channel')
+        .setDescription('Audit channel. Omit to view current. Pass #none to disable.')
+        .setRequired(false)
+        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))
     );
   return [saas.toJSON()];
 }
@@ -301,6 +308,53 @@ async function handleSaasSource(interaction, relay, envFallback) {
   });
 }
 
+// Clé KV settings où on persiste le channel d'audit LLM.
+const SETTINGS_KEY_LLM_AUDIT_CHANNEL = 'saas_llm_audit_channel';
+
+// /saas llm-audit channel:<channel?>
+// Configure le canal où le bot poste une trace temps réel de chaque
+// décision LLM (mode classify ou extract). Permet de suivre l'évolution
+// du filtre et de spotter les faux positifs/négatifs en live.
+//
+// Aucun argument → affiche l'état courant.
+// Channel mentionné → enregistre comme nouvelle destination.
+// Pour désactiver : appeler la commande sur un channel inexistant
+// volontaire (#none) — détecté par perms et on stocke null.
+async function handleSaasLLMAudit(interaction) {
+  const channel = interaction.options.getChannel('channel', false);
+
+  // Pas d'argument → affichage state
+  if (!channel) {
+    const current = db.getSetting(SETTINGS_KEY_LLM_AUDIT_CHANNEL, null);
+    const embed = new EmbedBuilder()
+      .setColor(BRAND_COLOR)
+      .setTitle('LLM audit channel')
+      .setDescription(current
+        ? `Currently posting LLM decisions to <#${current}>.\n\nPass a channel to change, or pass a non-existent channel reference to disable.`
+        : '_(disabled — LLM decisions are not posted anywhere)_\n\nPass a channel to enable real-time audit logging.');
+    return safeReply(interaction, { embeds: [embed] });
+  }
+
+  // Validation : bot doit pouvoir Send + Embed dans ce channel
+  const me = interaction.guild?.members?.me;
+  const perms = me && channel.permissionsFor ? channel.permissionsFor(me) : null;
+  if (!perms || !perms.has(PermissionFlagsBits.SendMessages) || !perms.has(PermissionFlagsBits.EmbedLinks)) {
+    return safeReply(interaction, {
+      content: `I need "Send Messages" and "Embed Links" permissions in ${channel}. Adjust and retry.`,
+    });
+  }
+
+  db.setSetting(SETTINGS_KEY_LLM_AUDIT_CHANNEL, String(channel.id));
+  db.adminActionInsert({
+    admin: interaction.user.id,
+    action: 'llm-audit-set',
+    payload: { channel_id: channel.id },
+  });
+  return safeReply(interaction, {
+    content: `✅ LLM decisions will now be audited in ${channel} in real-time. Effect immediate (no redeploy needed).`,
+  });
+}
+
 async function handleSaasPending(interaction) {
   const map = licenses.listPendingSubs();
   const entries = Object.entries(map);
@@ -496,6 +550,7 @@ function registerSaasCommands(clientSaas, opts) {
           if (sub === 'force-leave') return handleSaasForceLeave(interaction, clientSaas);
           if (sub === 'pending')     return handleSaasPending(interaction);
           if (sub === 'source')      return handleSaasSource(interaction, relay, opts.sourceChannelIdsEnv);
+          if (sub === 'llm-audit')   return handleSaasLLMAudit(interaction);
           return safeReply(interaction, { content: `Unknown subcommand: ${sub}` });
         }
         case 'setup':              return handleSetup(interaction, clientSaas);

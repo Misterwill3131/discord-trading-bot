@@ -85,8 +85,25 @@ test('hashText: longueur 64 (SHA-256 hex)', () => {
   assert.strictEqual(hashText('foo').length, 64);
 });
 
-test('hashText: textes différents → hash différents', () => {
-  assert.notStrictEqual(hashText('CRE 2.80-3.91'), hashText('CRE 2.80-3.92'));
+test('hashText: textes structurellement différents → hash différents', () => {
+  // Templates différents : "CRE 2.80-3.91" vs "BUY $AAPL NOW" → hashes différents
+  assert.notStrictEqual(hashText('CRE 2.80-3.91'), hashText('BUY $AAPL NOW'));
+});
+
+test('hashText: même template → même hash (template-based caching)', () => {
+  // Tickers différents mais même structure prose → même hash
+  assert.strictEqual(
+    hashText('Added too! Best sympathy to HSPT with far lower float'),
+    hashText('Added too! Best sympathy to AAPL with far lower float')
+  );
+});
+
+test('hashText: prix différents mais même structure → même hash', () => {
+  // Templates "$T entry N target N sl N" identiques → cache partagé
+  assert.strictEqual(
+    hashText('$AAPL entry 150 target 160 sl 145'),
+    hashText('$TSLA entry 250 target 270 sl 245')
+  );
 });
 
 test('hashText: input null/undefined safe', () => {
@@ -289,4 +306,55 @@ test('FORBIDDEN_API_PARAMS contient les vecteurs d\'accès externe connus', () =
   for (const param of ['tools', 'tool_choice', 'mcp_servers', 'thinking', 'documents', 'attachments']) {
     assert.ok(FORBIDDEN_API_PARAMS.includes(param), `should forbid ${param}`);
   }
+});
+
+// ── abstractTemplate (cache template-based) ─────────────────────────
+
+const { abstractTemplate } = require('./llm-classify');
+
+test('abstractTemplate: prose avec ticker all-caps → ticker abstrait en T', () => {
+  assert.strictEqual(
+    abstractTemplate('Added too! Best sympathy to HSPT with far lower float'),
+    'added too! best sympathy to t with far lower float'
+  );
+});
+
+test('abstractTemplate: $TICKER toujours abstrait en $T (même en all-caps)', () => {
+  assert.strictEqual(abstractTemplate('BUY $AAPL NOW'), 'buy $t now');
+});
+
+test('abstractTemplate: message all-caps ne perd pas ses tickers standalone', () => {
+  // En mode shouty (all caps), on n'abstrait QUE les $TICKER pour
+  // préserver le sens des mots ("DGNX" reste "dgnx", pas "t").
+  assert.strictEqual(abstractTemplate('DGNX 4.80-5.59'), 'dgnx p-p');
+});
+
+test('abstractTemplate: décimaux → P, entiers → N (ordre important)', () => {
+  assert.strictEqual(abstractTemplate('$X 4.80 to 5'), '$t p to n');
+});
+
+test('abstractTemplate: empty/null safe', () => {
+  assert.strictEqual(abstractTemplate(''), '');
+  assert.strictEqual(abstractTemplate(null), '');
+  assert.strictEqual(abstractTemplate(undefined), '');
+});
+
+test('abstractTemplate: variations de coaching → même template', () => {
+  const a = abstractTemplate('Added too! Best sympathy to HSPT with far lower float');
+  const b = abstractTemplate('Added too! Best sympathy to AAPL with far lower float');
+  const c = abstractTemplate('Added too! Best sympathy to XYZ with far lower float');
+  assert.strictEqual(a, b);
+  assert.strictEqual(b, c);
+});
+
+test('abstractTemplate: structures distinctes restent distinctes', () => {
+  const coaching = abstractTemplate('Added too! Best sympathy to HSPT with far lower float');
+  const signal = abstractTemplate('$AAPL entry 150 target 160 sl 145');
+  assert.notStrictEqual(coaching, signal);
+});
+
+test('abstractTemplate: case mixed normalisé en lowercase', () => {
+  const out = abstractTemplate('Mixed CASE prose with $XYZ');
+  assert.ok(/^[a-z\s\$\d\-\.\!\?]+$/i.test(out));
+  assert.ok(out.includes('$t'));
 });

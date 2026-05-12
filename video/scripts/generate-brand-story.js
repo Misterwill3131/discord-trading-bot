@@ -40,7 +40,24 @@ const TEMPLATE_PATH = path.join(VIDEO_DIR, 'templates', 'brand-story-default.jso
 const OUTPUT_IMG_DIR = path.join(VIDEO_DIR, 'public', 'brand-story');
 const OUTPUT_MP4_DIR = path.join(VIDEO_DIR, 'out');
 
+// ─── CLI args ───────────────────────────────────────────────────
+// --force          : regénère toutes les scènes même si les PNG existent
+// --scenes=1,3,5   : ne génère/render QUE ces scènes (skip les autres)
+// --no-render      : génère les images mais skip le Remotion render
+function parseArgs() {
+  const args = process.argv.slice(2);
+  const force = args.includes('--force');
+  const noRender = args.includes('--no-render');
+  const scenesArg = args.find(a => a.startsWith('--scenes='));
+  const specificScenes = scenesArg
+    ? scenesArg.replace('--scenes=', '').split(',').map(s => parseInt(s.trim(), 10)).filter(n => n > 0)
+    : null;
+  return { force, noRender, specificScenes };
+}
+
 async function main() {
+  const { force, noRender, specificScenes } = parseArgs();
+
   // ── 1. Load template ────────────────────────────────────────────
   const template = JSON.parse(fs.readFileSync(TEMPLATE_PATH, 'utf-8'));
   const scenes = template.scenes;
@@ -48,6 +65,9 @@ async function main() {
     throw new Error('Template scenes array missing or empty');
   }
   console.log(`[gen-brand-story] Loaded ${scenes.length} scenes from ${TEMPLATE_PATH}`);
+  if (force) console.log('[gen-brand-story] --force : re-génère toutes les scènes (ignore cache disque).');
+  if (specificScenes) console.log(`[gen-brand-story] --scenes=${specificScenes.join(',')} : génère uniquement ces scènes.`);
+  if (noRender) console.log('[gen-brand-story] --no-render : skip Remotion render à la fin.');
 
   // ── 2. Prepare output dirs ──────────────────────────────────────
   fs.mkdirSync(OUTPUT_IMG_DIR, { recursive: true });
@@ -96,19 +116,46 @@ async function main() {
   }
 
   const results = [];
+  let actuallyGenerated = 0;
   for (let i = 0; i < scenes.length; i++) {
     const sceneNum = i + 1;
+    const outputPath = path.join(OUTPUT_IMG_DIR, `scene${sceneNum}.png`);
+
+    // Skip si --scenes=X,Y,Z filter set et cette scène pas dedans.
+    if (specificScenes && !specificScenes.includes(sceneNum)) {
+      // Vérifie quand même que le fichier existe pour le render final.
+      if (fs.existsSync(outputPath)) {
+        const size = fs.statSync(outputPath).size;
+        console.log(`  ⊘ Scene ${sceneNum}: skipped (--scenes filter), reusing ${(size / 1024).toFixed(0)} KB on disk`);
+        results.push({ ok: true, sceneNum, outputPath, bytes: size, cached: true });
+      } else {
+        console.warn(`  ⚠ Scene ${sceneNum}: skipped (--scenes filter) MAIS pas de PNG sur disque — render va fail`);
+        results.push({ ok: false, sceneNum, error: 'skipped and no cached file' });
+      }
+      continue;
+    }
+
+    // Skip si le fichier existe déjà (sauf --force).
+    if (!force && fs.existsSync(outputPath)) {
+      const size = fs.statSync(outputPath).size;
+      console.log(`  ⊘ Scene ${sceneNum}: déjà sur disque (${(size / 1024).toFixed(0)} KB), use --force pour regen`);
+      results.push({ ok: true, sceneNum, outputPath, bytes: size, cached: true });
+      continue;
+    }
+
+    // Génère
     const sceneStart = Date.now();
     const r = await generateWithRetry(scenes[i], sceneNum);
     const elapsed = ((Date.now() - sceneStart) / 1000).toFixed(1);
     if (r.ok) {
       console.log(`  ✓ Scene ${sceneNum}: ${(r.bytes / 1024).toFixed(0)} KB in ${elapsed}s`);
+      actuallyGenerated++;
     } else {
       console.error(`  ✗ Scene ${sceneNum} failed (${elapsed}s): ${r.error}`);
     }
     results.push(r);
     // Petite pause entre les requêtes pour pas saturer (Pollinations only).
-    if (provider === 'pollinations' && i < scenes.length - 1) {
+    if (provider === 'pollinations' && i < scenes.length - 1 && actuallyGenerated > 0) {
       await new Promise(r => setTimeout(r, 1500));
     }
   }
@@ -141,6 +188,12 @@ async function main() {
   fs.writeFileSync(propsPath, JSON.stringify(inputProps, null, 2));
 
   // ── 5. Render via Remotion CLI ─────────────────────────────────
+  if (noRender) {
+    console.log('[gen-brand-story] --no-render set : skip Remotion render. Images dispo dans video/public/brand-story/');
+    console.log('[gen-brand-story] Re-run sans --no-render pour rendre le MP4.');
+    return;
+  }
+
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const outMp4 = path.join(OUTPUT_MP4_DIR, `tob-brand-story-${timestamp}.mp4`);
 

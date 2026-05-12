@@ -24,14 +24,16 @@ const { fontFamily } = loadInter('normal', { weights: ['700', '900'] });
 
 const sceneSchema = z.object({
   imagePath: z.string().describe('Path Remotion staticFile (ex: "brand-story/scene1.png")'),
-  caption: z.string().describe('Texte narratif principal — 1 ligne courte percutante'),
-  subCaption: z.string().nullable().optional().describe('2e ligne contextuelle plus petite (date, montant, détail). Optionnel.'),
+  caption: z.string().describe('Titre visible à l\'écran — court et percutant (ex: "The Downward Spiral")'),
+  subCaption: z.string().nullable().optional().describe('2e ligne contextuelle plus petite (date, montant, URL). Optionnel.'),
+  narration: z.string().nullable().optional().describe('Texte TTS-only (body paragraph plus long). Fallback sur caption+subCaption si absent.'),
+  durationFrames: z.number().min(60).max(600).nullable().optional().describe('Override durée scène (défaut = global sceneDurationFrames). Permet de varier la longueur selon le narration.'),
   audioPath: z.string().nullable().optional().describe('Path TTS audio file (ex: "brand-story/scene1.mp3"). Null/undefined = silent.'),
 });
 
 export const tobBrandStorySchema = z.object({
   scenes: z.array(sceneSchema).min(1).max(10),
-  sceneDurationFrames: z.number().min(60).max(300).default(150),
+  sceneDurationFrames: z.number().min(60).max(600).default(180),
   accentColor: zColor().default('#fbbf24'),
   captionStyle: z.enum(['bold', 'subtle']).default('bold'),
   outroSeed: z.string().default('brand-story'),
@@ -42,7 +44,14 @@ export type TobBrandStoryProps = z.infer<typeof tobBrandStorySchema>;
 const OUTRO_FRAMES = 90;
 
 export function computeBrandStoryTotalFrames(props: TobBrandStoryProps): number {
-  return props.scenes.length * props.sceneDurationFrames + OUTRO_FRAMES;
+  // Per-scene durationFrames override le sceneDurationFrames global.
+  // Permet aux scènes avec narration longue (ex: scène 1 = 28 mots) d'avoir
+  // ~10s alors que les scènes courtes ont 6-7s.
+  const scenesTotal = props.scenes.reduce(
+    (sum, s) => sum + (s.durationFrames || props.sceneDurationFrames),
+    0
+  );
+  return scenesTotal + OUTRO_FRAMES;
 }
 
 // ── Caption : pop-in word-by-word avec spring individuel ──
@@ -224,13 +233,14 @@ export const TobBrandStory: React.FC<TobBrandStoryProps> = ({
   return (
     <AbsoluteFill style={{ backgroundColor: '#000', fontFamily }}>
       {scenes.map((scene, i) => {
+        const sceneDur = scene.durationFrames || sceneDurationFrames;
         const startFrame = cursor;
-        cursor += sceneDurationFrames;
+        cursor += sceneDur;
         return (
           <Sequence
             key={i}
             from={startFrame}
-            durationInFrames={sceneDurationFrames}
+            durationInFrames={sceneDur}
           >
             <SceneRender
               imagePath={scene.imagePath}

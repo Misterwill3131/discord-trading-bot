@@ -204,11 +204,12 @@ async function main() {
 
     const ttsSceneStart = Date.now();
     try {
-      // TTS lit caption + subCaption (si présent) en une seule lecture.
-      // Donne plus de substance à la narration que juste la caption courte.
-      const ttsText = scenes[i].subCaption
-        ? `${scenes[i].caption} ${scenes[i].subCaption}`
-        : scenes[i].caption;
+      // TTS texte priorité : scene.narration (body paragraph long, dédié au
+      // voice-over) > caption + subCaption combiné > caption seule.
+      // La narration permet d'avoir un texte TTS plus long et dramatique
+      // que la caption visuelle courte ("The Downward Spiral.").
+      const ttsText = scenes[i].narration
+        || (scenes[i].subCaption ? `${scenes[i].caption} ${scenes[i].subCaption}` : scenes[i].caption);
       const r = await generateTTS({
         text: ttsText,
         outputPath: audioPath,
@@ -248,12 +249,18 @@ async function main() {
         imagePath: `brand-story/scene${sceneNum}.png`,
         caption: scene.caption,
         subCaption: scene.subCaption || null,
+        // narration n'est pas utilisé par la composition Remotion (TTS-only),
+        // mais on le passe quand même pour debug / future extension.
+        narration: scene.narration || null,
+        // durationFrames per-scene override le global. Permet aux scènes avec
+        // narration longue d'avoir ~10s vs 6-7s pour les courtes.
+        durationFrames: scene.durationFrames || null,
         // audioPath optionnel : null si le TTS a fail pour cette scène,
         // composition skip l'Audio dans ce cas.
         audioPath: audioExists ? audioRel : null,
       };
     }),
-    sceneDurationFrames: template.props?.sceneDurationFrames || 150,
+    sceneDurationFrames: template.props?.sceneDurationFrames || 180,
     accentColor: template.props?.accentColor || '#fbbf24',
     captionStyle: template.props?.captionStyle || 'bold',
     outroSeed: `brand-story-${Date.now()}`,  // outro picker varie à chaque render

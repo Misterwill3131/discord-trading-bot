@@ -2,23 +2,17 @@
 // utils/gen-tts.js — Client TTS (text-to-speech) multi-provider
 // ─────────────────────────────────────────────────────────────────────
 // API unifiée : generateTTS({ text, outputPath, voice })
-// Provider sélectionné via env TTS_PROVIDER :
-//   - 'edge'    (default)  Microsoft Edge TTS via msedge-tts npm (gratuit,
-//                          voix neural Azure haute qualité)
-//   - 'google'             Google Translate TTS (gratuit, voix robotique)
-//                          Fallback automatique si msedge-tts manque.
-//   - 'openai'             OpenAI TTS direct (paid, $0.015/1k chars)
+// Provider sélectionné via env TTS_PROVIDER (sinon auto-detect) :
+//   - 'elevenlabs'  Best quality. Auto-default si ELEVENLABS_API_KEY set.
+//                   Free tier 10k chars/mois (≈50 renders brand-story).
+//   - 'edge'        Microsoft Edge TTS via msedge-tts npm (gratuit,
+//                   voix neural Azure). Cassé en 2025 → fallback Google.
+//   - 'google'      Google Translate TTS (gratuit, voix robotique).
+//                   Fallback ultime quand rien d'autre marche.
+//   - 'openai'      OpenAI TTS direct (paid, $0.015/1k chars).
 //
-// Voices (Edge — high quality, recommandé) :
-//   en-US-DavisNeural        warm, intelligent (default)
-//   en-US-RogerNeural        mature, authoritative
-//   en-US-TonyNeural         smooth, mid-deep
-//   en-US-GuyNeural          newscaster, clean
-//   en-US-ChristopherNeural  deep, professional
-//   en-US-AriaNeural         feminine clear
-//   en-US-JennyNeural        feminine warm
-//
-// Voices (Google Translate — basique fallback) : tl=en, en-US, en-GB, fr...
+// Default auto-detect : ElevenLabs si clé set, sinon Edge (qui fallback
+// Google). User n'a pas à set TTS_PROVIDER explicitement.
 // ─────────────────────────────────────────────────────────────────────
 
 const fs = require('fs');
@@ -126,6 +120,94 @@ async function generateViaGoogleTranslate({ text, outputPath, lang = 'en' }) {
   return { outputPath, mimeType: 'audio/mpeg', bytes: buffer.length, provider: 'google' };
 }
 
+// ─── ElevenLabs TTS (free tier 10k chars/mois, top quality) ──────────
+// Sign-up : https://elevenlabs.io → Profile → API Keys → Generate
+// Add to video/.env.local : ELEVENLABS_API_KEY=sk_...
+//
+// Voices stable IDs (vérifiés en mai 2026, ne devraient pas changer) :
+//   pNInz6obpgDQGcFmaJgB   Adam — mid-deep américain, default
+//   VR6AewLTigWG4xSOukaG   Arnold — mature mature, intense
+//   ErXwobaYiN019PkySvjV   Antoni — american warm
+//   TxGEqnHWrfWFTfGW9XjX   Josh — young energetic
+//   yoZ06aMxZJJ28mfd3POQ   Sam — mid male
+//   flq6f7yk4E4fJM5XTYuZ   Michael — mature, slow
+//   21m00Tcm4TlvDq8ikWAM   Rachel — féminin warm
+//   MF3mGyEYCl7XYWbV9V6O   Elli — féminin jeune
+//   AZnzlk1XvdvUeBnXmlld   Domi — féminin energetic
+//
+// L'utilisateur peut aussi passer un voice ID direct (string commençant
+// par alphanumérique) au lieu d'un nom mappé.
+
+const ELEVENLABS_VOICE_MAP = {
+  // OpenAI-style names mapped to ElevenLabs voice IDs
+  onyx:    'VR6AewLTigWG4xSOukaG',  // Arnold — mature, deep (fit struggle→triumph)
+  alloy:   'pNInz6obpgDQGcFmaJgB',  // Adam
+  echo:    'TxGEqnHWrfWFTfGW9XjX',  // Josh
+  fable:   'ErXwobaYiN019PkySvjV',  // Antoni
+  nova:    '21m00Tcm4TlvDq8ikWAM',  // Rachel
+  shimmer: 'MF3mGyEYCl7XYWbV9V6O',  // Elli
+  // Named ElevenLabs voices (case-insensitive convenience)
+  adam:    'pNInz6obpgDQGcFmaJgB',
+  arnold:  'VR6AewLTigWG4xSOukaG',
+  antoni:  'ErXwobaYiN019PkySvjV',
+  josh:    'TxGEqnHWrfWFTfGW9XjX',
+  sam:     'yoZ06aMxZJJ28mfd3POQ',
+  michael: 'flq6f7yk4E4fJM5XTYuZ',
+  rachel:  '21m00Tcm4TlvDq8ikWAM',
+  elli:    'MF3mGyEYCl7XYWbV9V6O',
+  domi:    'AZnzlk1XvdvUeBnXmlld',
+};
+
+function resolveElevenLabsVoice(voice) {
+  if (!voice) return ELEVENLABS_VOICE_MAP.onyx;  // Arnold default
+  const lower = String(voice).toLowerCase();
+  if (ELEVENLABS_VOICE_MAP[lower]) return ELEVENLABS_VOICE_MAP[lower];
+  // Si pas dans la map, assume que c'est déjà un voice ID direct
+  return voice;
+}
+
+async function generateViaElevenLabs({ text, outputPath, voice, apiKey, modelId }) {
+  const useKey = apiKey || process.env.ELEVENLABS_API_KEY;
+  if (!useKey) {
+    throw new Error('ELEVENLABS_API_KEY env var required. Sign up at elevenlabs.io → API Keys.');
+  }
+
+  const voiceId = resolveElevenLabsVoice(voice);
+  const model = modelId || 'eleven_multilingual_v2';  // Best quality, multi-lingual
+
+  const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+    method: 'POST',
+    headers: {
+      'xi-api-key': useKey,
+      'Content-Type': 'application/json',
+      'Accept': 'audio/mpeg',
+    },
+    body: JSON.stringify({
+      text,
+      model_id: model,
+      voice_settings: {
+        stability: 0.5,         // Mid — laisse de la variation expressive
+        similarity_boost: 0.75, // High — fidèle à la voix originale
+        style: 0.0,             // 0 = neutral, plus haut = plus expressif
+        use_speaker_boost: true,
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const txt = await res.text();
+    // 401 = clé invalide, 402 = quota dépassé (free tier 10k chars/mois)
+    throw new Error(`ElevenLabs TTS ${res.status}: ${txt.slice(0, 300)}`);
+  }
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (buffer.length < 200) {
+    throw new Error(`ElevenLabs TTS: fichier trop petit (${buffer.length} bytes), probable failure`);
+  }
+  fs.writeFileSync(outputPath, buffer);
+  return { outputPath, mimeType: 'audio/mpeg', bytes: buffer.length, provider: 'elevenlabs', voice: voiceId };
+}
+
 // ─── OpenAI TTS (paid, premium quality) ──────────────────────────────
 async function generateViaOpenAI({ text, outputPath, voice = 'onyx', model = 'tts-1', apiKey }) {
   const useKey = apiKey || process.env.OPENAI_API_KEY;
@@ -157,18 +239,32 @@ async function generateViaOpenAI({ text, outputPath, voice = 'onyx', model = 'tt
  * @param {string} [opts.provider]   - 'edge' | 'google' | 'openai' (default env TTS_PROVIDER || 'edge')
  * @returns {Promise<{outputPath, mimeType, bytes, provider, voice?}>}
  */
+// Auto-detect le best provider disponible :
+//   1. TTS_PROVIDER env var explicit → utilise celui-là
+//   2. ELEVENLABS_API_KEY set → ElevenLabs (top quality)
+//   3. OPENAI_API_KEY set → OpenAI (premium paid)
+//   4. Default → Edge (qui fallback Google si Edge cassé)
+function pickProvider(explicit) {
+  if (explicit) return explicit;
+  if (process.env.TTS_PROVIDER) return process.env.TTS_PROVIDER;
+  if (process.env.ELEVENLABS_API_KEY) return 'elevenlabs';
+  if (process.env.OPENAI_API_KEY) return 'openai';
+  return 'edge';
+}
+
 async function generateTTS(opts) {
-  const provider = opts.provider || process.env.TTS_PROVIDER || 'edge';
+  const provider = pickProvider(opts.provider);
   const args = { ...opts };
 
   if (!args.text || typeof args.text !== 'string') throw new Error('text (string) required');
   if (!args.outputPath) throw new Error('outputPath required');
 
+  if (provider === 'elevenlabs') return generateViaElevenLabs(args);
   if (provider === 'edge') return generateViaEdge(args);
   if (provider === 'google') return generateViaGoogleTranslate(args);
   if (provider === 'openai') return generateViaOpenAI(args);
 
-  throw new Error(`Unknown TTS_PROVIDER: '${provider}' (supported: edge, google, openai)`);
+  throw new Error(`Unknown TTS_PROVIDER: '${provider}' (supported: elevenlabs, edge, google, openai)`);
 }
 
 module.exports = { generateTTS };

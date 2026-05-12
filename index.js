@@ -49,6 +49,7 @@ const { registerProfitRoutes } = require('./routes/profits');
 const { registerConfigRoutes } = require('./routes/config');
 const { registerDbViewerRoutes } = require('./routes/db-viewer');
 const { registerBackupLogRoutes } = require('./routes/backup-log');
+const { registerDbSnapshotRoutes } = require('./routes/db-snapshot');
 const imageState = require('./state/images');
 const { messageLog } = require('./state/messages');
 
@@ -170,6 +171,9 @@ registerDbViewerRoutes(app, requireAuth);
 
 // Backup log (historique des 30 derniers runs en mémoire).
 registerBackupLogRoutes(app, requireAuth);
+
+// DB snapshot download (VACUUM INTO + stream, auth-protected).
+registerDbSnapshotRoutes(app, requireAuth);
 
 // Profits : injection du channelId avant d'enregistrer les routes.
 profitCounter.setProfitsChannelId(PROFITS_CHANNEL_ID);

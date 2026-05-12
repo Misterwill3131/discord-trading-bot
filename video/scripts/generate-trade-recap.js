@@ -46,7 +46,9 @@ function parseArgs() {
   const dateArg = args.find(a => a.startsWith('--date='));
   const date = dateArg ? dateArg.slice('--date='.length) : new Date().toISOString().slice(0, 10);
   const maxArg = args.find(a => a.startsWith('--max-alerts='));
-  const maxAlerts = maxArg ? parseInt(maxArg.slice('--max-alerts='.length), 10) : 30;
+  // Default 10 alertes — à 1.8s par alerte = 18s de parade. Au-delà la vidéo
+  // devient trop longue. User peut bumper via --max-alerts=20 pour ~36s parade.
+  const maxAlerts = maxArg ? parseInt(maxArg.slice('--max-alerts='.length), 10) : 10;
   return { noDb, noRender, date, maxAlerts };
 }
 

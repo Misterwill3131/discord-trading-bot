@@ -51,6 +51,13 @@ export const tobTradeRecapSchema = z.object({
   trades: z.array(tradeSchema).min(1).max(80),
   longTermInvestment: longTermSchema.nullable().optional(),
   alertImages: z.array(alertImageSchema).default([]),
+  // Durée d'affichage de chaque alerte dans la parade (en secondes).
+  // 1.8s par alerte = un viewer a le temps de lire ticker + prix + auteur.
+  // 12 alertes × 1.8s = 21.6s — laisser ce nombre raisonnable (< 30s).
+  secondsPerAlert: z.number().min(0.5).max(5).default(1.8),
+  // Si pas d'alertes, on tient la scène 4s minimum (placeholder texte)
+  // pour éviter un cut trop sec entre table et stats.
+  alertsFallbackSeconds: z.number().min(1).max(10).default(4),
   accentColor: zColor().default('#fbbf24'),
   successColor: zColor().default('#10b981'),
   errorColor: zColor().default('#ef4444'),
@@ -61,15 +68,24 @@ export const tobTradeRecapSchema = z.object({
 export type TobTradeRecapProps = z.infer<typeof tobTradeRecapSchema>;
 
 // ── Durées des phases (frames @ 30fps) ──────────────────────────────
+const FPS = 30;
 const FRAMES_INTRO = 90;          // 3s
 const FRAMES_TABLE = 360;         // 12s — large pour 41 lignes (peut tenir +)
-const FRAMES_ALERTS = 360;        // 12s — TikTok-style scroll
 const FRAMES_STATS = 120;         // 4s
 const FRAMES_LONGTERM = 90;       // 3s
 const FRAMES_OUTRO = 90;          // 3s
 
-export function computeTradeRecapTotalFrames(_props: TobTradeRecapProps): number {
-  return FRAMES_INTRO + FRAMES_TABLE + FRAMES_ALERTS + FRAMES_STATS + FRAMES_LONGTERM + FRAMES_OUTRO;
+// La durée de la phase alerts est dynamique : nb d'alertes × secondsPerAlert.
+// Si pas d'alertes : fallback fixed pour le placeholder texte.
+function computeAlertsFrames(props: TobTradeRecapProps): number {
+  const n = props.alertImages?.length || 0;
+  if (n === 0) return Math.round((props.alertsFallbackSeconds || 4) * FPS);
+  const perAlert = props.secondsPerAlert || 1.8;
+  return Math.round(n * perAlert * FPS);
+}
+
+export function computeTradeRecapTotalFrames(props: TobTradeRecapProps): number {
+  return FRAMES_INTRO + FRAMES_TABLE + computeAlertsFrames(props) + FRAMES_STATS + FRAMES_LONGTERM + FRAMES_OUTRO;
 }
 
 // ─── Helpers : calculs stats trades ──────────────────────────────────
@@ -677,18 +693,20 @@ const LongTermPhase: React.FC<{
 };
 
 // ─── Composition principale ─────────────────────────────────────────
-export const TobTradeRecap: React.FC<TobTradeRecapProps> = ({
-  dateLabel, trades, longTermInvestment, alertImages,
-  accentColor, successColor, errorColor, bgColor, outroSeed,
-}) => {
+export const TobTradeRecap: React.FC<TobTradeRecapProps> = (props) => {
+  const {
+    dateLabel, trades, longTermInvestment, alertImages,
+    accentColor, successColor, errorColor, bgColor, outroSeed,
+  } = props;
   // Pré-calcul de toutes les trades + summary une seule fois (mémoize ?)
   const computed = trades.map(computeTrade);
   const summary = computeSummary(computed);
+  const alertsFrames = computeAlertsFrames(props);
 
   let cursor = 0;
   const introFrom = cursor; cursor += FRAMES_INTRO;
   const tableFrom = cursor; cursor += FRAMES_TABLE;
-  const alertsFrom = cursor; cursor += FRAMES_ALERTS;
+  const alertsFrom = cursor; cursor += alertsFrames;
   const statsFrom = cursor; cursor += FRAMES_STATS;
   const longTermFrom = cursor; cursor += FRAMES_LONGTERM;
   const outroFrom = cursor;
@@ -709,7 +727,7 @@ export const TobTradeRecap: React.FC<TobTradeRecapProps> = ({
         />
       </Sequence>
 
-      <Sequence from={alertsFrom} durationInFrames={FRAMES_ALERTS}>
+      <Sequence from={alertsFrom} durationInFrames={alertsFrames}>
         <AlertsParadePhase
           alertImages={alertImages}
           accentColor={accentColor}

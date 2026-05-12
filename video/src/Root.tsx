@@ -178,6 +178,8 @@ export const Root = () => {
           ],
           longTermInvestment: { ticker: '$DXYZ', entryPrice: 30, currentPrice: 71 },
           alertImages: [],
+          secondsPerAlert: 1.8,
+          alertsFallbackSeconds: 4,
           accentColor: '#fbbf24' as const,
           successColor: '#10b981' as const,
           errorColor: '#ef4444' as const,

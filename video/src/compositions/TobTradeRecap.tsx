@@ -51,12 +51,14 @@ export const tobTradeRecapSchema = z.object({
   trades: z.array(tradeSchema).min(1).max(80),
   longTermInvestment: longTermSchema.nullable().optional(),
   alertImages: z.array(alertImageSchema).default([]),
-  // Durée d'affichage de chaque alerte dans la parade (en secondes).
-  // 1.8s par alerte = un viewer a le temps de lire ticker + prix + auteur.
-  // 12 alertes × 1.8s = 21.6s — laisser ce nombre raisonnable (< 30s).
-  secondsPerAlert: z.number().min(0.5).max(5).default(1.8),
-  // Si pas d'alertes, on tient la scène 4s minimum (placeholder texte)
-  // pour éviter un cut trop sec entre table et stats.
+  // Délai (en s) entre l'apparition de 2 alertes successives. 1.0s = 1 alerte
+  // par seconde. Plus la valeur est basse, plus le feed se remplit vite.
+  // Feed-style : les alertes s'empilent verticalement, scroll up quand
+  // l'écran est plein. Les vieilles fade out en haut.
+  secondsPerAlert: z.number().min(0.3).max(3).default(1.0),
+  // Hold final après la dernière alerte apparue (lecture confortable).
+  alertsHoldEndSeconds: z.number().min(0).max(10).default(3),
+  // Placeholder si 0 alertes — évite cut sec entre table et stats.
   alertsFallbackSeconds: z.number().min(1).max(10).default(4),
   accentColor: zColor().default('#fbbf24'),
   successColor: zColor().default('#10b981'),
@@ -75,13 +77,18 @@ const FRAMES_STATS = 120;         // 4s
 const FRAMES_LONGTERM = 90;       // 3s
 const FRAMES_OUTRO = 90;          // 3s
 
-// La durée de la phase alerts est dynamique : nb d'alertes × secondsPerAlert.
-// Si pas d'alertes : fallback fixed pour le placeholder texte.
+// Durée de la phase alerts en mode "feed" :
+//   (N-1) × secondsPerAlert × 30   ← dernière alerte apparaît à ce frame
+//   + APPEAR_FRAMES                ← 12 frames pour le fade-in final
+//   + alertsHoldEndSeconds × 30    ← hold pour lire le résultat
+// Si pas d'alertes : fallback fixed.
+const APPEAR_FRAMES = 12;
 function computeAlertsFrames(props: TobTradeRecapProps): number {
   const n = props.alertImages?.length || 0;
   if (n === 0) return Math.round((props.alertsFallbackSeconds || 4) * FPS);
-  const perAlert = props.secondsPerAlert || 1.8;
-  return Math.round(n * perAlert * FPS);
+  const perAlert = props.secondsPerAlert || 1.0;
+  const holdEnd = props.alertsHoldEndSeconds ?? 3;
+  return Math.round((n - 1) * perAlert * FPS + APPEAR_FRAMES + holdEnd * FPS);
 }
 
 export function computeTradeRecapTotalFrames(props: TobTradeRecapProps): number {
@@ -370,51 +377,60 @@ const CheckMark: React.FC<{ hit: boolean; successColor: string; errorColor: stri
   </div>
 );
 
-// ─── Phase 3 : AlertsParade — TikTok-style scroll des PNG alertes ───
+// ─── Phase 3 : AlertsParade — feed-style accumulation Discord ───────
+// Les alertes s'empilent verticalement : la 1ère apparaît en haut, la 2e
+// 1s plus tard juste en dessous, etc. Quand l'écran est plein, la stack
+// scroll up smooth pour laisser place aux nouvelles ; les vieilles fade
+// out en haut. Hold sur l'état final pour laisser le viewer lire.
 const AlertsParadePhase: React.FC<{
   alertImages: { imagePath: string; ticker?: string | null }[];
   accentColor: string;
   bgColor: string;
-}> = ({ alertImages, accentColor, bgColor }) => {
+  secondsPerAlert: number;
+}> = ({ alertImages, accentColor, bgColor, secondsPerAlert }) => {
   const frame = useCurrentFrame();
-  const { durationInFrames } = useVideoConfig();
+  const { fps } = useVideoConfig();
 
   if (alertImages.length === 0) {
-    // Fallback : placeholder texte si pas d'alertes
     return (
       <AbsoluteFill style={{ backgroundColor: bgColor, fontFamily, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ color: accentColor, fontSize: 40, fontWeight: 700, opacity: 0.5 }}>
-          Pas d'alertes à afficher
+          Pas d&apos;alertes à afficher
         </div>
       </AbsoluteFill>
     );
   }
 
-  // Frames par alerte : durée totale ÷ nombre d'alertes
-  const framesPerAlert = Math.floor(durationInFrames / alertImages.length);
-  const currentAlertIndex = Math.min(
-    Math.floor(frame / framesPerAlert),
-    alertImages.length - 1
-  );
-  const localFrame = frame - currentAlertIndex * framesPerAlert;
+  // ── Layout constants ──
+  // L'aire utile va de y=HEADER_BOTTOM jusqu'à y=SCREEN_HEIGHT - BOTTOM_MARGIN.
+  const SCREEN_HEIGHT = 1920;
+  const HEADER_BOTTOM = 180;          // sous le titre "TODAY'S ALERTS"
+  const BOTTOM_MARGIN = 80;
+  const USABLE_HEIGHT = SCREEN_HEIGHT - HEADER_BOTTOM - BOTTOM_MARGIN;  // ~1660px
+  const ALERT_MAX_HEIGHT = 180;       // height max d'une carte d'alerte
+  const ALERT_SPACING = 16;
+  const STEP_Y = ALERT_MAX_HEIGHT + ALERT_SPACING;  // 196px
+  const MAX_VISIBLE = Math.floor(USABLE_HEIGHT / STEP_Y);  // ~8 alertes
 
-  // Slide-up animation : nouvelle alerte entre depuis le bas, ancienne sort par le haut
-  const SLIDE_DURATION = 8;  // ~0.27s slide in/out
-  const slideInProgress = interpolate(localFrame, [0, SLIDE_DURATION], [0, 1], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp',
-  });
-  const slideOutProgress = interpolate(localFrame, [framesPerAlert - SLIDE_DURATION, framesPerAlert], [0, 1], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp',
-  });
-  // Offset Y : +1920 (off-screen bottom) → 0 (visible) → -1920 (off-screen top)
-  const translateY = (1 - slideInProgress) * 1920 - slideOutProgress * 1920;
-  const opacity = slideInProgress * (1 - slideOutProgress);
+  const framesPerAlert = Math.max(1, Math.round(secondsPerAlert * fps));
+  const APPEAR = 12;  // fade-in 0.4s
+
+  // ── Scroll offset (smooth interpolation) ──
+  // Quand la position fractionnaire dépasse MAX_VISIBLE-1, on commence
+  // à scroller pour faire de la place aux nouvelles alertes.
+  const fractionalIndex = frame / framesPerAlert;
+  const overflow = Math.max(0, fractionalIndex - (MAX_VISIBLE - 1));
+  const scrollOffset = overflow * STEP_Y;
+
+  // Nombre d'alertes apparues (pour le counter affiché)
+  const revealedCount = Math.min(
+    Math.floor(frame / framesPerAlert) + 1,
+    alertImages.length
+  );
 
   return (
     <AbsoluteFill style={{ backgroundColor: bgColor, fontFamily, overflow: 'hidden' }}>
-      {/* Header */}
+      {/* Header sticky */}
       <div style={{
         position: 'absolute', top: 40, left: 0, right: 0,
         textAlign: 'center', zIndex: 10,
@@ -423,34 +439,74 @@ const AlertsParadePhase: React.FC<{
           TODAY&apos;S ALERTS
         </div>
         <div style={{ fontSize: 24, fontWeight: 600, color: '#94a3b8', marginTop: 4 }}>
-          {currentAlertIndex + 1} / {alertImages.length}
+          {revealedCount} / {alertImages.length}
         </div>
       </div>
 
-      {/* Alert image */}
+      {/* Stack d'alertes — position absolute par index */}
+      <div style={{ position: 'absolute', top: HEADER_BOTTOM, left: 0, right: 0, height: USABLE_HEIGHT }}>
+        {alertImages.map((alert, i) => {
+          const appearAtFrame = i * framesPerAlert;
+          const localFrame = frame - appearAtFrame;
+          if (localFrame < 0) return null;  // pas encore apparu
+
+          // Fade-in + petit slide-up depuis +30px
+          const fadeIn = interpolate(localFrame, [0, APPEAR], [0, 1], {
+            extrapolateLeft: 'clamp',
+            extrapolateRight: 'clamp',
+          });
+          const slideY = interpolate(localFrame, [0, APPEAR], [30, 0], {
+            extrapolateLeft: 'clamp',
+            extrapolateRight: 'clamp',
+          });
+
+          // Position finale dans le container (avant scroll)
+          const naturalY = i * STEP_Y;
+          const finalY = naturalY - scrollOffset + slideY;
+
+          // Fade-out quand l'alerte scroll au-dessus du top (finalY < 0)
+          const fadeOut = finalY < -ALERT_MAX_HEIGHT
+            ? 0
+            : finalY < 0
+              ? Math.max(0, 1 + finalY / ALERT_MAX_HEIGHT)
+              : 1;
+
+          const opacity = fadeIn * fadeOut;
+          if (opacity <= 0) return null;
+
+          return (
+            <div key={i} style={{
+              position: 'absolute',
+              top: finalY,
+              left: '5%',
+              width: '90%',
+              opacity,
+            }}>
+              <Img
+                src={staticFile(alert.imagePath)}
+                style={{
+                  width: '100%',
+                  maxHeight: ALERT_MAX_HEIGHT,
+                  objectFit: 'contain',
+                  borderRadius: 12,
+                  boxShadow: '0 6px 24px rgba(0,0,0,0.5), 0 0 16px rgba(251,191,36,0.08)',
+                }}
+              />
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Gradient overlay au top pour fade visuel des alertes qui scroll out */}
       <div style={{
         position: 'absolute',
-        top: '50%',
-        left: '50%',
-        transform: `translate(-50%, calc(-50% + ${translateY}px))`,
-        opacity,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: '90%',
-        height: '70%',
-      }}>
-        <Img
-          src={staticFile(alertImages[currentAlertIndex].imagePath)}
-          style={{
-            maxWidth: '100%',
-            maxHeight: '100%',
-            objectFit: 'contain',
-            borderRadius: 16,
-            boxShadow: '0 12px 64px rgba(0,0,0,0.6), 0 0 32px rgba(251,191,36,0.15)',
-          }}
-        />
-      </div>
+        top: HEADER_BOTTOM - 10,
+        left: 0, right: 0,
+        height: 40,
+        background: `linear-gradient(180deg, ${bgColor} 0%, transparent 100%)`,
+        pointerEvents: 'none',
+        zIndex: 5,
+      }} />
     </AbsoluteFill>
   );
 };
@@ -696,6 +752,7 @@ const LongTermPhase: React.FC<{
 export const TobTradeRecap: React.FC<TobTradeRecapProps> = (props) => {
   const {
     dateLabel, trades, longTermInvestment, alertImages,
+    secondsPerAlert,
     accentColor, successColor, errorColor, bgColor, outroSeed,
   } = props;
   // Pré-calcul de toutes les trades + summary une seule fois (mémoize ?)
@@ -732,6 +789,7 @@ export const TobTradeRecap: React.FC<TobTradeRecapProps> = (props) => {
           alertImages={alertImages}
           accentColor={accentColor}
           bgColor={bgColor}
+          secondsPerAlert={secondsPerAlert}
         />
       </Sequence>
 

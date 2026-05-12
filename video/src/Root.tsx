@@ -5,6 +5,7 @@ import { BoomProof, boomProofSchema } from './compositions/BoomProof';
 import { BoomEntry, boomEntrySchema } from './compositions/BoomEntry';
 import { BoomRecap, boomRecapSchema, computeTotalFrames } from './compositions/BoomRecap';
 import { TobBrandStory, tobBrandStorySchema, computeBrandStoryTotalFrames } from './compositions/TobBrandStory';
+import { TobTradeRecap, tobTradeRecapSchema, computeTradeRecapTotalFrames } from './compositions/TobTradeRecap';
 
 const signalAlertDefaults: SignalAlertProps = {
   ticker: 'TSLA',
@@ -157,6 +158,34 @@ export const Root = () => {
         }}
         calculateMetadata={({ props }) => ({
           durationInFrames: computeBrandStoryTotalFrames(props as any),
+        })}
+      />
+      <Composition
+        id="TobTradeRecap"
+        component={TobTradeRecap}
+        fps={30}
+        width={1080}
+        height={1920}
+        schema={tobTradeRecapSchema}
+        defaultProps={{
+          dateLabel: 'TODAY',
+          trades: [
+            { ticker: '$XOS',  entryPrice: 2.49,  hodPrice: 2.90 },
+            { ticker: '$HAO',  entryPrice: 0.046, hodPrice: 0.071 },
+            { ticker: '$DXYZ', entryPrice: 30,    hodPrice: 71 },
+            { ticker: '$LABT', entryPrice: 3.17,  hodPrice: 3.16 },
+            { ticker: '$ERNA', entryPrice: 7.91,  hodPrice: 14.80 },
+          ],
+          longTermInvestment: { ticker: '$DXYZ', entryPrice: 30, currentPrice: 71 },
+          alertImages: [],
+          accentColor: '#fbbf24' as const,
+          successColor: '#10b981' as const,
+          errorColor: '#ef4444' as const,
+          bgColor: '#0a0a0f' as const,
+          outroSeed: 'trade-recap-preview',
+        }}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: computeTradeRecapTotalFrames(props as any),
         })}
       />
     </>

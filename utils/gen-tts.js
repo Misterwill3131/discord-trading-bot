@@ -45,62 +45,62 @@ function resolveEdgeVoice(voice) {
 }
 
 // ─── Microsoft Edge TTS (haute qualité, gratuit) ─────────────────────
+// ⚠️ Microsoft a ajouté un Sec-MS-GEC token en 2025 qui breaks msedge-tts
+// 1.3.4 (Connect Error sur le WebSocket). On essaie Edge en premier, mais
+// si ÇA FAIL pour n'importe quelle raison, on fallback automatiquement
+// vers Google Translate TTS (robotique mais reliable).
 async function generateViaEdge({ text, outputPath, voice }) {
   let MsEdgeTTS, OUTPUT_FORMAT;
   try {
     ({ MsEdgeTTS, OUTPUT_FORMAT } = require('msedge-tts'));
   } catch (err) {
-    if (err.code === 'MODULE_NOT_FOUND') {
-      console.warn('[gen-tts] msedge-tts non installé. Fallback Google Translate TTS (voix robotique).');
-      console.warn('[gen-tts] Pour haute qualité : npm install (au root du repo) puis re-run.');
+    if (err && err.code === 'MODULE_NOT_FOUND') {
+      console.warn('[gen-tts] msedge-tts non installé → fallback Google Translate TTS.');
       return generateViaGoogleTranslate({ text, outputPath });
     }
-    throw err;
+    console.warn('[gen-tts] msedge-tts require error → fallback Google Translate TTS.');
+    return generateViaGoogleTranslate({ text, outputPath });
   }
 
-  const edgeVoice = resolveEdgeVoice(voice);
-  const tts = new MsEdgeTTS();
-  await tts.setMetadata(edgeVoice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+  // Wrappe tout dans un try/catch large car msedge-tts peut throw des
+  // strings au lieu d'Errors (cas observé: "Connect Error: [object Object]").
+  try {
+    const edgeVoice = resolveEdgeVoice(voice);
+    const tts = new MsEdgeTTS();
+    await tts.setMetadata(edgeVoice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
 
-  // toFile() écrit le fichier — retourne { audioFilePath } selon la version.
-  // On gère les 2 cas (toFile et toStream) pour robustesse.
-  let saved = false;
-  if (typeof tts.toFile === 'function') {
-    const result = await tts.toFile(outputPath, text);
-    saved = true;
-    // Certaines versions de msedge-tts retournent { audioFilePath: ... }
-    // qui peut être différent du outputPath demandé — sanity check.
-    if (result && result.audioFilePath && result.audioFilePath !== outputPath) {
-      // Move/rename if needed
-      try {
-        fs.renameSync(result.audioFilePath, outputPath);
-      } catch { /* ignore, on assume toFile a bien écrit */ }
+    if (typeof tts.toFile === 'function') {
+      const result = await tts.toFile(outputPath, text);
+      if (result && result.audioFilePath && result.audioFilePath !== outputPath) {
+        try { fs.renameSync(result.audioFilePath, outputPath); } catch { /* ignore */ }
+      }
+    } else if (typeof tts.toStream === 'function') {
+      const stream = tts.toStream(text);
+      const chunks = [];
+      await new Promise((resolve, reject) => {
+        stream.on('data', (c) => chunks.push(c));
+        stream.on('end', resolve);
+        stream.on('error', reject);
+      });
+      fs.writeFileSync(outputPath, Buffer.concat(chunks));
+    } else {
+      throw new Error('msedge-tts: ni toFile() ni toStream() disponible');
     }
-  } else if (typeof tts.toStream === 'function') {
-    // Stream path (older versions)
-    const stream = tts.toStream(text);
-    const chunks = [];
-    await new Promise((resolve, reject) => {
-      stream.on('data', (c) => chunks.push(c));
-      stream.on('end', resolve);
-      stream.on('error', reject);
-    });
-    fs.writeFileSync(outputPath, Buffer.concat(chunks));
-    saved = true;
-  } else {
-    throw new Error('msedge-tts: ni toFile() ni toStream() disponible (mauvaise version ?)');
-  }
 
-  if (!saved || !fs.existsSync(outputPath)) {
-    throw new Error('Edge TTS: fichier de sortie non créé');
-  }
+    if (!fs.existsSync(outputPath)) throw new Error('Edge TTS: fichier non créé');
+    const bytes = fs.statSync(outputPath).size;
+    if (bytes < 100) throw new Error(`Edge TTS: fichier trop petit (${bytes} bytes)`);
 
-  const bytes = fs.statSync(outputPath).size;
-  if (bytes < 100) {
-    throw new Error(`Edge TTS: fichier trop petit (${bytes} bytes) — probable failure`);
+    return { outputPath, mimeType: 'audio/mpeg', bytes, provider: 'edge', voice: edgeVoice };
+  } catch (err) {
+    // msedge-tts peut throw des strings, des objects, ou des Errors.
+    // On extrait une message string lisible peu importe.
+    const errMsg = typeof err === 'string'
+      ? err
+      : (err && err.message) || JSON.stringify(err) || 'unknown';
+    console.warn(`[gen-tts] Edge TTS failed (${errMsg.slice(0, 100)}) → fallback Google Translate.`);
+    return generateViaGoogleTranslate({ text, outputPath });
   }
-
-  return { outputPath, mimeType: 'audio/mpeg', bytes, provider: 'edge', voice: edgeVoice };
 }
 
 // ─── Google Translate TTS (fallback gratuit, voix robotique) ─────────

@@ -41,6 +41,41 @@ const TEMPLATE_PATH = path.join(VIDEO_DIR, 'templates', 'brand-story-default.jso
 const OUTPUT_IMG_DIR = path.join(VIDEO_DIR, 'public', 'brand-story');
 const OUTPUT_MP4_DIR = path.join(VIDEO_DIR, 'out');
 
+// ─── ffprobe helper (auto-measure MP3 duration) ──────────────────
+// Remotion bundle ffprobe dans le package compositor-{platform}. Cherche le
+// binaire pour la plateforme courante. Retourne null si introuvable
+// (fallback : on garde les durationFrames du template tels quels).
+function findFfprobe() {
+  const key = `${process.platform}-${process.arch}`;
+  const pkgMap = {
+    'win32-x64': '@remotion/compositor-win32-x64-msvc',
+    'linux-x64': '@remotion/compositor-linux-x64-gnu',
+    'linux-arm64': '@remotion/compositor-linux-arm64-gnu',
+    'darwin-x64': '@remotion/compositor-darwin-x64',
+    'darwin-arm64': '@remotion/compositor-darwin-arm64',
+  };
+  const pkg = pkgMap[key];
+  if (!pkg) return null;
+  const ext = process.platform === 'win32' ? '.exe' : '';
+  try {
+    const pkgJson = require.resolve(`${pkg}/package.json`);
+    const ffprobePath = path.join(path.dirname(pkgJson), `ffprobe${ext}`);
+    if (fs.existsSync(ffprobePath)) return ffprobePath;
+  } catch { /* ignore */ }
+  return null;
+}
+
+function probeAudioDurationSeconds(ffprobePath, filePath) {
+  try {
+    const out = execSync(
+      `"${ffprobePath}" -v error -show_entries format=duration -of csv=p=0 "${filePath}"`,
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+    );
+    const dur = parseFloat(out.trim());
+    return isFinite(dur) && dur > 0 ? dur : null;
+  } catch { return null; }
+}
+
 // ─── CLI args ───────────────────────────────────────────────────
 // --force          : regénère toutes les scènes même si les PNG existent
 // --scenes=1,3,5   : ne génère/render QUE ces scènes (skip les autres)
@@ -237,14 +272,51 @@ async function main() {
   const ttsElapsed = ((Date.now() - ttsStartedAt) / 1000).toFixed(1);
   console.log(`[gen-brand-story] TTS generation done in ${ttsElapsed}s`);
 
+  // ── 3.7. Mesure auto des durées MP3 (cale chaque scène sur son audio) ──
+  // Sans ça, si une narration dure 5s mais que durationFrames=300 (10s),
+  // on a 5s de silence entre les scènes. ffprobe lit la vraie durée des
+  // MP3s générés et override durationFrames pour avoir audio + 0.6s buffer.
+  const ffprobePath = findFfprobe();
+  const measuredDurations = {};
+  if (ffprobePath) {
+    console.log('[gen-brand-story] Probing MP3 durations to auto-fit scene length…');
+    for (let i = 0; i < scenes.length; i++) {
+      const sceneNum = i + 1;
+      const mp3Path = path.join(OUTPUT_IMG_DIR, `scene${sceneNum}.mp3`);
+      if (!fs.existsSync(mp3Path)) continue;
+      const dur = probeAudioDurationSeconds(ffprobePath, mp3Path);
+      if (dur) {
+        measuredDurations[sceneNum] = dur;
+        console.log(`  📏 Scene ${sceneNum}: audio = ${dur.toFixed(2)}s`);
+      } else {
+        console.warn(`  ⚠ Scene ${sceneNum}: probe failed, fallback to template duration`);
+      }
+    }
+  } else {
+    console.warn('[gen-brand-story] ffprobe introuvable — using template durationFrames as-is (espace entre scènes possible).');
+  }
+
   // ── 4. Build Remotion input props (scenes with imagePath + audioPath) ──
   // Le Remotion bundler résoudra les paths via staticFile() au render time.
   // On passe juste les paths relatifs au public dir.
+  const FPS = 30;
+  const AUDIO_TAIL_FRAMES = 18;  // 0.6s post-audio buffer (couvre fade-out 12f + petit blanc)
   const inputProps = {
     scenes: scenes.map((scene, i) => {
       const sceneNum = i + 1;
       const audioRel = `brand-story/scene${sceneNum}.mp3`;
       const audioExists = fs.existsSync(path.join(OUTPUT_IMG_DIR, `scene${sceneNum}.mp3`));
+      // Priorité durationFrames :
+      //   1. Mesure ffprobe (audio_sec × 30 + 18 frames) — match parfait
+      //   2. Template scene.durationFrames — fallback si pas de mesure
+      //   3. null → composition utilise sceneDurationFrames global
+      const measured = measuredDurations[sceneNum];
+      // Clamp [60, 600] pour rester dans le range Zod schema. Short MP3 cache
+      // (<2s) → bump à 60 (2s min visible). Long narration (>20s) → cap à 600.
+      const dynamicDuration = measured
+        ? Math.max(60, Math.min(600, Math.ceil(measured * FPS) + AUDIO_TAIL_FRAMES))
+        : null;
+      const finalDuration = dynamicDuration || scene.durationFrames || null;
       return {
         imagePath: `brand-story/scene${sceneNum}.png`,
         caption: scene.caption,
@@ -252,9 +324,7 @@ async function main() {
         // narration n'est pas utilisé par la composition Remotion (TTS-only),
         // mais on le passe quand même pour debug / future extension.
         narration: scene.narration || null,
-        // durationFrames per-scene override le global. Permet aux scènes avec
-        // narration longue d'avoir ~10s vs 6-7s pour les courtes.
-        durationFrames: scene.durationFrames || null,
+        durationFrames: finalDuration,
         // audioPath optionnel : null si le TTS a fail pour cette scène,
         // composition skip l'Audio dans ce cas.
         audioPath: audioExists ? audioRel : null,
@@ -265,6 +335,13 @@ async function main() {
     captionStyle: template.props?.captionStyle || 'bold',
     outroSeed: `brand-story-${Date.now()}`,  // outro picker varie à chaque render
   };
+
+  // Affiche le récap des durées finales pour debug
+  const totalFrames = inputProps.scenes.reduce(
+    (sum, s) => sum + (s.durationFrames || inputProps.sceneDurationFrames),
+    0
+  );
+  console.log(`[gen-brand-story] Total video: ${(totalFrames / FPS).toFixed(1)}s (+ 3s outro) = ${((totalFrames + 90) / FPS).toFixed(1)}s`);
 
   // Write inputProps to temp JSON file for Remotion render (cleaner than --props)
   const propsPath = path.join(OUTPUT_MP4_DIR, '.brand-story-props.json');

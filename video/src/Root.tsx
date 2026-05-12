@@ -4,6 +4,7 @@ import { SignalAlert, SignalAlertProps } from './compositions/SignalAlert';
 import { BoomProof, boomProofSchema } from './compositions/BoomProof';
 import { BoomEntry, boomEntrySchema } from './compositions/BoomEntry';
 import { BoomRecap, boomRecapSchema, computeTotalFrames } from './compositions/BoomRecap';
+import { TobBrandStory, tobBrandStorySchema, computeBrandStoryTotalFrames } from './compositions/TobBrandStory';
 
 const signalAlertDefaults: SignalAlertProps = {
   ticker: 'TSLA',
@@ -131,6 +132,31 @@ export const Root = () => {
         defaultProps={boomRecapDefaults}
         calculateMetadata={({ props }) => ({
           durationInFrames: computeTotalFrames(props as any),
+        })}
+      />
+      <Composition
+        id="TobBrandStory"
+        component={TobBrandStory}
+        fps={30}
+        width={1080}
+        height={1920}
+        schema={tobBrandStorySchema}
+        defaultProps={{
+          scenes: [
+            { imagePath: 'brand-story/scene1.png', caption: 'Down again. -$3,200 this week.' },
+            { imagePath: 'brand-story/scene2.png', caption: 'Same mistakes. Different chart.' },
+            { imagePath: 'brand-story/scene3.png', caption: 'Stuck in the same trap.' },
+            { imagePath: 'brand-story/scene4.png', caption: 'Then he found the Temple.' },
+            { imagePath: 'brand-story/scene5.png', caption: 'Different rules. Different game.' },
+            { imagePath: 'brand-story/scene6.png', caption: 'Join the pride.' },
+          ],
+          sceneDurationFrames: 150,
+          accentColor: '#fbbf24',
+          captionStyle: 'bold' as const,
+          outroSeed: 'brand-story-preview',
+        }}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: computeBrandStoryTotalFrames(props as any),
         })}
       />
     </>

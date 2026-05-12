@@ -1,0 +1,36 @@
+{
+  "name": "TOB Brand Story (Default)",
+  "composition": "TobBrandStory",
+  "description": "Pitch marketing storytelling : trader struggling → discovers TOB → success. 6 scènes Imagen 4 + Ken Burns + captions + outro lion. ~33s. Pour socials TikTok/Reels.",
+  "scenes": [
+    {
+      "caption": "Down again. -$3,200 this week.",
+      "prompt": "Photorealistic cinematic 9:16 vertical, late-night home office, dim cool blue lighting from three computer monitors. Over-shoulder shot of a young man in a dark hoodie hunched over a mechanical keyboard. The monitors show stock charts dominated by red candlesticks falling. Empty energy drink cans and a crumpled coffee cup on the desk. His hands grip his head in frustration. Mood: defeat, exhaustion, isolation. Cinematic color grade with deep blue shadows and red monitor reflections. No visible face."
+    },
+    {
+      "caption": "Same mistakes. Different chart.",
+      "prompt": "Photorealistic cinematic 9:16 vertical, same dim home office. Close-up of a clenched fist coming down on a desk, slight motion blur. In the background out of focus, a computer monitor shows a -50% loss indicator in red. Mechanical keyboard slightly knocked aside. High contrast intense lighting. Mood: suppressed rage, frustration. Color grade: cold blue blacks with red accent from the screen glow. Detailed skin texture on the fist, dramatic shadow."
+    },
+    {
+      "caption": "Stuck in the same trap.",
+      "prompt": "Photorealistic cinematic 9:16 vertical, same dim home office, time-lapse feel. A large wall clock prominently showing 3:47 AM. Multiple empty energy drink cans scattered on the desk, pill bottles, crumpled receipts. Young man in dark hoodie slumped backward in office chair, exhausted, eyes closed, head tilted up. Multiple monitors showing red declining charts in the background. Washed out faded color grade, subtle film grain, low saturation. Mood: trapped in a doom loop, isolation, addiction. No clear face shown."
+    },
+    {
+      "caption": "Then he found the Temple.",
+      "prompt": "Photorealistic cinematic 9:16 vertical, same dim home office. Close-up over-shoulder of a smartphone held in hand. The phone screen shows a Discord notification with the channel name 'Temple of Boom' highlighted, surrounded by a subtle green glow. The green light from the phone reflects softly on the person's chin and lower face (no eyes visible). The first warm light in an otherwise cold blue room. Mood: a crack of hope in the darkness, curiosity. Detailed phone screen UI, realistic Discord-style interface."
+    },
+    {
+      "caption": "Different rules. Different game.",
+      "prompt": "Photorealistic cinematic 9:16 vertical, same home office but completely transformed: brighter, organized, clean modern setup. Same hooded trader (back of head/over-shoulder view, no face) now standing tall confidently at the desk. All three monitors showing bright GREEN candlestick charts ripping upward, account balance visible showing +50%, +100%, +150%. A large window in the background shows warm golden hour sunlight streaming in. Confident posture, hands typing decisively on the keyboard. Mood: mastery, focus, competence. Color grade: warm gold and green tones, cinematic depth of field."
+    },
+    {
+      "caption": "Join the pride.",
+      "prompt": "Photorealistic cinematic 9:16 vertical, wide ultra-cinematic shot of a sleek modern home office. The trader (back view, hoodie down now, faint smile visible from side angle but no clear face) leans back relaxed in a premium office chair. All monitors green and glowing. Through a large floor-to-ceiling window: a stunning city skyline at golden hour sunset, towers glowing orange and gold. Polished organized space with subtle luxury accents — clean desk, minimalist decor. Cinematic depth of field, soft bokeh on the city lights. Mood: success, arrival, hard-earned victory. Color grade: warm gold and amber, premium feel."
+    }
+  ],
+  "props": {
+    "sceneDurationFrames": 150,
+    "accentColor": "#fbbf24",
+    "captionStyle": "bold"
+  }
+}

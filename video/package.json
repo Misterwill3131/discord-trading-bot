@@ -14,6 +14,7 @@
     "template:create": "node scripts/create-template.js",
     "editor": "node editor/server.js",
     "regen:brand-promo-cards": "node scripts/generate-brand-promo-cards.js",
+    "generate:brand-story": "node scripts/generate-brand-story.js",
     "worker": "tsx scripts/render-worker.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

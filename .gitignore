@@ -24,3 +24,9 @@ boom.db-wal
 boom.db-shm
 video/node_modules/
 video/out/
+
+# Brand story images générées à la demande par scripts/generate-brand-story.js
+# (Imagen 4 API call, ~$0.24 par génération). Re-générées chaque run, pas
+# besoin de les commit. Le template JSON contient les prompts qui définissent
+# le contenu visuel — c'est la "source of truth".
+video/public/brand-story/

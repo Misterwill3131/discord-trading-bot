@@ -3,17 +3,21 @@
 // video/scripts/generate-brand-story.js — Pipeline génération brand story
 // ─────────────────────────────────────────────────────────────────────
 // 1. Charge les 6 prompts depuis video/templates/brand-story-default.json
-// 2. Appelle Imagen 4 en parallèle pour chaque scène
-// 3. Download les PNGs dans video/public/brand-story/scene{1..6}.png
+// 2. Appelle le provider d'images (default: Pollinations.ai gratuit, Flux model)
+//    en parallèle pour chaque scène
+// 3. Download les PNG/JPEG dans video/public/brand-story/scene{1..6}.png
 // 4. Lance Remotion render → MP4 final dans video/out/
 //
 // Usage :
 //   cd video && npm run generate:brand-story
 //
-// Env vars requises (dans video/.env.local) :
-//   GEMINI_API_KEY — clé API Gemini (paid tier, créée sur aistudio.google.com/apikey)
+// Variables d'env optionnelles (dans video/.env.local) :
+//   IMAGE_PROVIDER  — 'pollinations' (default, gratuit) ou 'imagen' (paid)
+//   GEMINI_API_KEY  — uniquement si IMAGE_PROVIDER=imagen
 //
-// Coût estimé : ~$0.24 par génération (6 images × $0.04 Imagen 4 Standard)
+// Coût estimé :
+//   - Pollinations (default) : GRATUIT, ~10-30s/image
+//   - Imagen 4 (paid)        : ~$0.24 par génération (6×$0.04), ~5-10s/image
 // ─────────────────────────────────────────────────────────────────────
 
 const fs = require('fs');
@@ -49,8 +53,12 @@ async function main() {
   fs.mkdirSync(OUTPUT_IMG_DIR, { recursive: true });
   fs.mkdirSync(OUTPUT_MP4_DIR, { recursive: true });
 
-  // ── 3. Generate all scenes in parallel via Imagen 4 ────────────
-  console.log(`[gen-brand-story] Generating ${scenes.length} images via Imagen 4 (parallel)...`);
+  // ── 3. Generate all scenes in parallel via image provider ─────
+  const provider = process.env.IMAGE_PROVIDER || 'pollinations';
+  console.log(`[gen-brand-story] Generating ${scenes.length} images via ${provider} (parallel)...`);
+  if (provider === 'pollinations') {
+    console.log('[gen-brand-story]   Pollinations (Flux, gratuit) — peut prendre 10-30s par image.');
+  }
   const startedAt = Date.now();
 
   const results = await Promise.all(

@@ -1,4 +1,4 @@
-import { AbsoluteFill, Img, Sequence, interpolate, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
+import { AbsoluteFill, Img, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
 import { z } from 'zod';
 import { zColor } from '@remotion/zod-types';
 import { loadFont as loadInter } from '@remotion/google-fonts/Inter';
@@ -43,20 +43,61 @@ export function computeBrandStoryTotalFrames(props: TobBrandStoryProps): number 
   return props.scenes.length * props.sceneDurationFrames + OUTRO_FRAMES;
 }
 
-// ── Caption : fade-in word reveal sur les ~25 premières frames ──
-const CaptionOverlay: React.FC<{ text: string; accentColor: string; style: 'bold' | 'subtle' }> = ({
-  text, accentColor, style,
-}) => {
+// ── Caption : pop-in word-by-word avec spring individuel ──
+// Chaque mot apparaît un par un avec son propre spring bounce.
+// Pas de typing cursor, pas de pulse global — chaque mot a sa propre
+// micro-animation indépendante (scale 0 → ~1.1 → 1.0, opacity 0 → 1).
+const START_DELAY_FRAMES = 8;       // delay avant le premier mot
+const WORD_STAGGER_FRAMES = 5;      // gap entre 2 mots successifs
+const SPRING_DURATION = 22;         // frames pour le spring complet
+
+const WordPopIn: React.FC<{
+  word: string;
+  startFrame: number;
+  fontSize: number;
+  fontWeight: number;
+}> = ({ word, startFrame, fontSize, fontWeight }) => {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const localFrame = frame - startFrame;
 
-  // Word-by-word reveal : 1 mot toutes les 5 frames après 8f de delay
+  // Spring config : damping bas + stiffness mid → bounce visible mais pas
+  // hystérique. Atteint ~1.1 max puis settle à 1.0 en ~22 frames.
+  const popProgress = spring({
+    frame: localFrame,
+    fps,
+    config: { damping: 9, stiffness: 140 },
+    durationInFrames: SPRING_DURATION,
+  });
+  const scale = popProgress;
+
+  // Fade-in rapide sur les 5 premières frames du mot
+  const opacity = interpolate(localFrame, [0, 5], [0, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+
+  return (
+    <span
+      style={{
+        display: 'inline-block',
+        transform: `scale(${scale})`,
+        opacity,
+        margin: '0 8px 0 0',
+        fontSize,
+        fontWeight,
+        // transformOrigin: 'center' par défaut, garde l'alignement du baseline
+      }}
+    >
+      {word}
+    </span>
+  );
+};
+
+const CaptionOverlay: React.FC<{ text: string; accentColor: string; style: 'bold' | 'subtle' }> = ({
+  text, style,
+}) => {
   const words = text.split(' ');
-  const wordsRevealed = Math.max(0, Math.floor((frame - 8) / 5));
-  const visible = words.slice(0, Math.min(wordsRevealed, words.length)).join(' ');
-
-  // Subtle bounce sur le dernier mot révélé
-  const bounceScale = interpolate(frame % 5, [0, 2, 5], [0.95, 1.05, 1.0], { extrapolateRight: 'clamp' });
-
   const fontSize = style === 'bold' ? 72 : 56;
   const fontWeight = style === 'bold' ? 900 : 700;
 
@@ -68,18 +109,20 @@ const CaptionOverlay: React.FC<{ text: string; accentColor: string; style: 'bold
       right: 60,
       textAlign: 'center',
       color: '#fff',
-      fontSize,
-      fontWeight,
       fontFamily,
       letterSpacing: -1,
       lineHeight: 1.15,
       textShadow: '0 6px 24px rgba(0,0,0,0.9), 0 2px 8px rgba(0,0,0,0.7)',
-      transform: `scale(${bounceScale})`,
     }}>
-      {visible}
-      {wordsRevealed > 0 && wordsRevealed < words.length && (
-        <span style={{ color: accentColor, opacity: 0.7 }}>|</span>
-      )}
+      {words.map((word, i) => (
+        <WordPopIn
+          key={i}
+          word={word}
+          startFrame={START_DELAY_FRAMES + i * WORD_STAGGER_FRAMES}
+          fontSize={fontSize}
+          fontWeight={fontWeight}
+        />
+      ))}
     </div>
   );
 };

@@ -207,9 +207,10 @@ async function main() {
 
   // ── 3.5. Generate TTS audio per scene ──────────────────────────
   // Une voix lit chaque narration (ou caption+subCaption) pendant la scène.
-  // Voice default = ID direct ElevenLabs custom narrator picked par user.
-  // Override via template.props.voice (raw ID ou alias) ou env TTS_VOICE.
-  const voice = process.env.TTS_VOICE || template.props?.voice || 'fVVjLtJgnQI61CoImgHU';
+  // Voice default : 'onyx' (= Arnold sur ElevenLabs, pre-made, free tier OK).
+  // Library voices marchent que sur paid plan ElevenLabs.
+  // Override via template.props.voice (alias ou raw ID) ou env TTS_VOICE.
+  const voice = process.env.TTS_VOICE || template.props?.voice || 'onyx';
   const ttsProvider = process.env.TTS_PROVIDER || 'pollinations';
   console.log(`[gen-brand-story] Generating ${scenes.length} TTS clips via ${ttsProvider} (voice=${voice}, sequential)...`);
   const ttsStartedAt = Date.now();

@@ -53,32 +53,65 @@ async function main() {
   fs.mkdirSync(OUTPUT_IMG_DIR, { recursive: true });
   fs.mkdirSync(OUTPUT_MP4_DIR, { recursive: true });
 
-  // ── 3. Generate all scenes in parallel via image provider ─────
+  // ── 3. Generate all scenes via image provider ─────────────────
+  // Pollinations free tier limite à 1 request en parallèle par IP (429
+  // sinon). On fait donc SÉQUENTIEL — 1 image à la fois, retry sur 429
+  // avec backoff. Total ~1-2 min pour 6 images (vs ~30s parallel idéal).
+  // Pour Imagen (paid) le parallel marcherait mais on fait pareil ici
+  // pour simplicité du code.
   const provider = process.env.IMAGE_PROVIDER || 'pollinations';
-  console.log(`[gen-brand-story] Generating ${scenes.length} images via ${provider} (parallel)...`);
+  console.log(`[gen-brand-story] Generating ${scenes.length} images via ${provider} (sequential)...`);
   if (provider === 'pollinations') {
-    console.log('[gen-brand-story]   Pollinations (Flux, gratuit) — peut prendre 10-30s par image.');
+    console.log('[gen-brand-story]   Pollinations (Flux, gratuit) — séquentiel à cause du rate-limit free tier.');
+    console.log('[gen-brand-story]   ~10-30s par image, total ~1-3 min pour 6 images.');
   }
   const startedAt = Date.now();
 
-  const results = await Promise.all(
-    scenes.map(async (scene, i) => {
-      const sceneNum = i + 1;
-      const outputPath = path.join(OUTPUT_IMG_DIR, `scene${sceneNum}.png`);
+  // Helper retry sur 429 avec backoff exponentiel (5s, 15s, 30s).
+  async function generateWithRetry(scene, sceneNum) {
+    const outputPath = path.join(OUTPUT_IMG_DIR, `scene${sceneNum}.png`);
+    const delays = [5000, 15000, 30000];  // 3 retries max
+    let lastErr;
+    for (let attempt = 0; attempt <= delays.length; attempt++) {
       try {
         const r = await generateImage({
           prompt: scene.prompt,
           outputPath,
           aspectRatio: '9:16',
         });
-        console.log(`  ✓ Scene ${sceneNum}: ${(r.bytes / 1024).toFixed(0)} KB saved to ${outputPath}`);
-        return { ok: true, sceneNum, outputPath };
+        return { ok: true, sceneNum, outputPath, bytes: r.bytes };
       } catch (err) {
-        console.error(`  ✗ Scene ${sceneNum} failed: ${err.message}`);
+        lastErr = err;
+        const is429 = /429/.test(err.message) || /too many requests/i.test(err.message);
+        if (attempt < delays.length && is429) {
+          const wait = delays[attempt];
+          console.log(`  ⏳ Scene ${sceneNum} rate-limited, retry in ${wait / 1000}s (attempt ${attempt + 1}/${delays.length + 1})...`);
+          await new Promise(r => setTimeout(r, wait));
+          continue;
+        }
         return { ok: false, sceneNum, error: err.message };
       }
-    })
-  );
+    }
+    return { ok: false, sceneNum, error: lastErr.message };
+  }
+
+  const results = [];
+  for (let i = 0; i < scenes.length; i++) {
+    const sceneNum = i + 1;
+    const sceneStart = Date.now();
+    const r = await generateWithRetry(scenes[i], sceneNum);
+    const elapsed = ((Date.now() - sceneStart) / 1000).toFixed(1);
+    if (r.ok) {
+      console.log(`  ✓ Scene ${sceneNum}: ${(r.bytes / 1024).toFixed(0)} KB in ${elapsed}s`);
+    } else {
+      console.error(`  ✗ Scene ${sceneNum} failed (${elapsed}s): ${r.error}`);
+    }
+    results.push(r);
+    // Petite pause entre les requêtes pour pas saturer (Pollinations only).
+    if (provider === 'pollinations' && i < scenes.length - 1) {
+      await new Promise(r => setTimeout(r, 1500));
+    }
+  }
 
   const failed = results.filter(r => !r.ok);
   if (failed.length > 0) {

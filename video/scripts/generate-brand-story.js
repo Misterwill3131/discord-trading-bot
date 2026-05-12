@@ -34,6 +34,7 @@ require('dotenv').config({
 });
 
 const { generateImage } = require('../../utils/gen-image');
+const { generateTTS } = require('../../utils/gen-tts');
 
 const VIDEO_DIR = path.join(__dirname, '..');
 const TEMPLATE_PATH = path.join(VIDEO_DIR, 'templates', 'brand-story-default.json');
@@ -169,14 +170,83 @@ async function main() {
   const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
   console.log(`[gen-brand-story] All ${scenes.length} scenes generated in ${elapsedSec}s`);
 
-  // ── 4. Build Remotion input props (scenes with imagePath) ──────
+  // ── 3.5. Generate TTS audio per scene ──────────────────────────
+  // Une voix lit chaque caption pendant la scène correspondante.
+  // Voice default : 'onyx' (deep masculin) — fit le pitch trader struggling.
+  // Override via template.props.voice ou env TTS_VOICE.
+  const voice = process.env.TTS_VOICE || template.props?.voice || 'onyx';
+  const ttsProvider = process.env.TTS_PROVIDER || 'pollinations';
+  console.log(`[gen-brand-story] Generating ${scenes.length} TTS clips via ${ttsProvider} (voice=${voice}, sequential)...`);
+  const ttsStartedAt = Date.now();
+
+  const ttsResults = [];
+  for (let i = 0; i < scenes.length; i++) {
+    const sceneNum = i + 1;
+    const audioPath = path.join(OUTPUT_IMG_DIR, `scene${sceneNum}.mp3`);
+
+    // Same skip-logic que pour les images
+    if (specificScenes && !specificScenes.includes(sceneNum)) {
+      if (fs.existsSync(audioPath)) {
+        console.log(`  ⊘ Scene ${sceneNum} TTS: skipped (--scenes filter), reusing audio on disk`);
+        ttsResults.push({ ok: true, sceneNum, audioPath, cached: true });
+      } else {
+        console.warn(`  ⚠ Scene ${sceneNum} TTS: skipped + pas de MP3 sur disque — audio manquant dans la vidéo`);
+        ttsResults.push({ ok: false, sceneNum, error: 'skipped and no cached file' });
+      }
+      continue;
+    }
+    if (!force && fs.existsSync(audioPath)) {
+      const size = fs.statSync(audioPath).size;
+      console.log(`  ⊘ Scene ${sceneNum} TTS: déjà sur disque (${(size / 1024).toFixed(0)} KB)`);
+      ttsResults.push({ ok: true, sceneNum, audioPath, bytes: size, cached: true });
+      continue;
+    }
+
+    const ttsSceneStart = Date.now();
+    try {
+      const r = await generateTTS({
+        text: scenes[i].caption,
+        outputPath: audioPath,
+        voice,
+      });
+      const elapsed = ((Date.now() - ttsSceneStart) / 1000).toFixed(1);
+      console.log(`  ✓ Scene ${sceneNum} TTS: ${(r.bytes / 1024).toFixed(0)} KB in ${elapsed}s`);
+      ttsResults.push({ ok: true, sceneNum, audioPath, bytes: r.bytes });
+    } catch (err) {
+      const elapsed = ((Date.now() - ttsSceneStart) / 1000).toFixed(1);
+      console.error(`  ✗ Scene ${sceneNum} TTS failed (${elapsed}s): ${err.message}`);
+      ttsResults.push({ ok: false, sceneNum, error: err.message });
+    }
+
+    // Pause entre les requêtes (Pollinations 1-concurrent-req limit)
+    if (ttsProvider === 'pollinations' && i < scenes.length - 1) {
+      await new Promise(r => setTimeout(r, 1500));
+    }
+  }
+
+  const ttsFailed = ttsResults.filter(r => !r.ok);
+  if (ttsFailed.length > 0) {
+    console.warn(`[gen-brand-story] ${ttsFailed.length}/${scenes.length} TTS failed — vidéo aura des scènes silencieuses sur ces clips.`);
+  }
+  const ttsElapsed = ((Date.now() - ttsStartedAt) / 1000).toFixed(1);
+  console.log(`[gen-brand-story] TTS generation done in ${ttsElapsed}s`);
+
+  // ── 4. Build Remotion input props (scenes with imagePath + audioPath) ──
   // Le Remotion bundler résoudra les paths via staticFile() au render time.
   // On passe juste les paths relatifs au public dir.
   const inputProps = {
-    scenes: scenes.map((scene, i) => ({
-      imagePath: `brand-story/scene${i + 1}.png`,
-      caption: scene.caption,
-    })),
+    scenes: scenes.map((scene, i) => {
+      const sceneNum = i + 1;
+      const audioRel = `brand-story/scene${sceneNum}.mp3`;
+      const audioExists = fs.existsSync(path.join(OUTPUT_IMG_DIR, `scene${sceneNum}.mp3`));
+      return {
+        imagePath: `brand-story/scene${sceneNum}.png`,
+        caption: scene.caption,
+        // audioPath optionnel : null si le TTS a fail pour cette scène,
+        // composition skip l'Audio dans ce cas.
+        audioPath: audioExists ? audioRel : null,
+      };
+    }),
     sceneDurationFrames: template.props?.sceneDurationFrames || 150,
     accentColor: template.props?.accentColor || '#fbbf24',
     captionStyle: template.props?.captionStyle || 'bold',

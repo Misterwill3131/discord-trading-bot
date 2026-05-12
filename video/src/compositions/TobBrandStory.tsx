@@ -1,4 +1,4 @@
-import { AbsoluteFill, Img, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
+import { AbsoluteFill, Audio, Img, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
 import { z } from 'zod';
 import { zColor } from '@remotion/zod-types';
 import { loadFont as loadInter } from '@remotion/google-fonts/Inter';
@@ -25,6 +25,7 @@ const { fontFamily } = loadInter('normal', { weights: ['700', '900'] });
 const sceneSchema = z.object({
   imagePath: z.string().describe('Path Remotion staticFile (ex: "brand-story/scene1.png")'),
   caption: z.string().describe('Texte narratif overlay (1 ligne courte)'),
+  audioPath: z.string().nullable().optional().describe('Path TTS audio file (ex: "brand-story/scene1.mp3"). Null/undefined = silent.'),
 });
 
 export const tobBrandStorySchema = z.object({
@@ -133,7 +134,8 @@ const SceneRender: React.FC<{
   caption: string;
   accentColor: string;
   captionStyle: 'bold' | 'subtle';
-}> = ({ imagePath, caption, accentColor, captionStyle }) => {
+  audioPath?: string | null;
+}> = ({ imagePath, caption, accentColor, captionStyle, audioPath }) => {
   const frame = useCurrentFrame();
   const { durationInFrames } = useVideoConfig();
 
@@ -152,6 +154,11 @@ const SceneRender: React.FC<{
 
   return (
     <AbsoluteFill style={{ backgroundColor: '#000', overflow: 'hidden' }}>
+      {/* Audio TTS de la caption — joue pendant la scène. Si audioPath null
+          ou undefined (TTS a échoué pour cette scène), pas d'audio joué. */}
+      {audioPath && (
+        <Audio src={staticFile(audioPath)} volume={1.0} />
+      )}
       <Img
         src={staticFile(imagePath)}
         style={{
@@ -194,6 +201,7 @@ export const TobBrandStory: React.FC<TobBrandStoryProps> = ({
               caption={scene.caption}
               accentColor={accentColor}
               captionStyle={captionStyle}
+              audioPath={scene.audioPath}
             />
           </Sequence>
         );

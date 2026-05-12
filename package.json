@@ -18,5 +18,8 @@
     "pg": "^8.20.0",
     "stripe": "^17.7.0",
     "yahoo-finance2": "^3.14.0"
+  },
+  "optionalDependencies": {
+    "msedge-tts": "^1.3.4"
   }
 }

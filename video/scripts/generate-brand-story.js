@@ -204,8 +204,13 @@ async function main() {
 
     const ttsSceneStart = Date.now();
     try {
+      // TTS lit caption + subCaption (si présent) en une seule lecture.
+      // Donne plus de substance à la narration que juste la caption courte.
+      const ttsText = scenes[i].subCaption
+        ? `${scenes[i].caption} ${scenes[i].subCaption}`
+        : scenes[i].caption;
       const r = await generateTTS({
-        text: scenes[i].caption,
+        text: ttsText,
         outputPath: audioPath,
         voice,
       });
@@ -242,6 +247,7 @@ async function main() {
       return {
         imagePath: `brand-story/scene${sceneNum}.png`,
         caption: scene.caption,
+        subCaption: scene.subCaption || null,
         // audioPath optionnel : null si le TTS a fail pour cette scène,
         // composition skip l'Audio dans ce cas.
         audioPath: audioExists ? audioRel : null,

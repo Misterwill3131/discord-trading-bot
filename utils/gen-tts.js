@@ -166,14 +166,17 @@ function resolveElevenLabsVoice(voice) {
   return voice;
 }
 
-async function generateViaElevenLabs({ text, outputPath, voice, apiKey, modelId }) {
+async function generateViaElevenLabs({ text, outputPath, voice, apiKey, modelId, speed }) {
   const useKey = apiKey || process.env.ELEVENLABS_API_KEY;
   if (!useKey) {
     throw new Error('ELEVENLABS_API_KEY env var required. Sign up at elevenlabs.io → API Keys.');
   }
 
   const voiceId = resolveElevenLabsVoice(voice);
-  const model = modelId || 'eleven_multilingual_v2';  // Best quality, multi-lingual
+  // Turbo v2.5 : plus rapide à générer + plus naturel sur du dialogue court
+  // que le multilingual classique. Supporte aussi le param `speed`.
+  const model = modelId || process.env.ELEVENLABS_MODEL || 'eleven_turbo_v2_5';
+  const targetSpeed = speed || parseFloat(process.env.ELEVENLABS_SPEED || '1.15');
 
   const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
     method: 'POST',
@@ -186,10 +189,18 @@ async function generateViaElevenLabs({ text, outputPath, voice, apiKey, modelId 
       text,
       model_id: model,
       voice_settings: {
-        stability: 0.5,         // Mid — laisse de la variation expressive
-        similarity_boost: 0.75, // High — fidèle à la voix originale
-        style: 0.0,             // 0 = neutral, plus haut = plus expressif
+        // Stability bas (0.35) = plus de variation expressive, ton naturel.
+        // 0.5+ = robotique/monotone. Pour pitch marketing, low stability gagne.
+        stability: 0.35,
+        // Similarity boost élevé pour rester fidèle au timbre de la voix.
+        similarity_boost: 0.85,
+        // Style >0 = plus expressif/dramatique (utile pour le narratif émotionnel).
+        // ⚠️ Style >0 ralentit légèrement la génération, mais qualité ++.
+        style: 0.4,
         use_speaker_boost: true,
+        // Speed 1.0 = normal, 1.15 = +15% rapide (paraît plus naturel/punchy
+        // pour des captions courtes, évite le ton "audiobook posé").
+        speed: targetSpeed,
       },
     }),
   });

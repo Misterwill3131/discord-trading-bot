@@ -24,7 +24,8 @@ const { fontFamily } = loadInter('normal', { weights: ['700', '900'] });
 
 const sceneSchema = z.object({
   imagePath: z.string().describe('Path Remotion staticFile (ex: "brand-story/scene1.png")'),
-  caption: z.string().describe('Texte narratif overlay (1 ligne courte)'),
+  caption: z.string().describe('Texte narratif principal — 1 ligne courte percutante'),
+  subCaption: z.string().nullable().optional().describe('2e ligne contextuelle plus petite (date, montant, détail). Optionnel.'),
   audioPath: z.string().nullable().optional().describe('Path TTS audio file (ex: "brand-story/scene1.mp3"). Null/undefined = silent.'),
 });
 
@@ -95,17 +96,35 @@ const WordPopIn: React.FC<{
   );
 };
 
-const CaptionOverlay: React.FC<{ text: string; accentColor: string; style: 'bold' | 'subtle' }> = ({
-  text, style,
-}) => {
+const CaptionOverlay: React.FC<{
+  text: string;
+  subText?: string | null;
+  accentColor: string;
+  style: 'bold' | 'subtle';
+}> = ({ text, subText, accentColor, style }) => {
+  const frame = useCurrentFrame();
   const words = text.split(' ');
   const fontSize = style === 'bold' ? 72 : 56;
   const fontWeight = style === 'bold' ? 900 : 700;
 
+  // SubCaption apparaît APRÈS le main caption (tous les words révélés).
+  // Calcul du frame où ça commence = end of main caption animation.
+  const subStartFrame = START_DELAY_FRAMES + words.length * WORD_STAGGER_FRAMES + 5;
+  const subLocalFrame = frame - subStartFrame;
+  const subOpacity = interpolate(subLocalFrame, [0, 12], [0, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+  // Slide-up subtle pour la subCaption
+  const subTranslateY = interpolate(subLocalFrame, [0, 12], [20, 0], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+
   return (
     <div style={{
       position: 'absolute',
-      bottom: 200,
+      bottom: subText ? 240 : 200,  // monte un peu plus haut si subCaption pour respirer
       left: 60,
       right: 60,
       textAlign: 'center',
@@ -115,15 +134,31 @@ const CaptionOverlay: React.FC<{ text: string; accentColor: string; style: 'bold
       lineHeight: 1.15,
       textShadow: '0 6px 24px rgba(0,0,0,0.9), 0 2px 8px rgba(0,0,0,0.7)',
     }}>
-      {words.map((word, i) => (
-        <WordPopIn
-          key={i}
-          word={word}
-          startFrame={START_DELAY_FRAMES + i * WORD_STAGGER_FRAMES}
-          fontSize={fontSize}
-          fontWeight={fontWeight}
-        />
-      ))}
+      <div>
+        {words.map((word, i) => (
+          <WordPopIn
+            key={i}
+            word={word}
+            startFrame={START_DELAY_FRAMES + i * WORD_STAGGER_FRAMES}
+            fontSize={fontSize}
+            fontWeight={fontWeight}
+          />
+        ))}
+      </div>
+      {subText && (
+        <div style={{
+          marginTop: 20,
+          fontSize: Math.round(fontSize * 0.55),  // ~40px si fontSize=72
+          fontWeight: 600,
+          color: accentColor,
+          opacity: subOpacity,
+          transform: `translateY(${subTranslateY}px)`,
+          letterSpacing: 0,
+          textShadow: '0 4px 16px rgba(0,0,0,0.85)',
+        }}>
+          {subText}
+        </div>
+      )}
     </div>
   );
 };
@@ -132,10 +167,11 @@ const CaptionOverlay: React.FC<{ text: string; accentColor: string; style: 'bold
 const SceneRender: React.FC<{
   imagePath: string;
   caption: string;
+  subCaption?: string | null;
   accentColor: string;
   captionStyle: 'bold' | 'subtle';
   audioPath?: string | null;
-}> = ({ imagePath, caption, accentColor, captionStyle, audioPath }) => {
+}> = ({ imagePath, caption, subCaption, accentColor, captionStyle, audioPath }) => {
   const frame = useCurrentFrame();
   const { durationInFrames } = useVideoConfig();
 
@@ -174,7 +210,7 @@ const SceneRender: React.FC<{
         background: 'linear-gradient(180deg, transparent 50%, rgba(0,0,0,0.6) 85%, rgba(0,0,0,0.85) 100%)',
         opacity,
       }} />
-      <CaptionOverlay text={caption} accentColor={accentColor} style={captionStyle} />
+      <CaptionOverlay text={caption} subText={subCaption} accentColor={accentColor} style={captionStyle} />
     </AbsoluteFill>
   );
 };
@@ -199,6 +235,7 @@ export const TobBrandStory: React.FC<TobBrandStoryProps> = ({
             <SceneRender
               imagePath={scene.imagePath}
               caption={scene.caption}
+              subCaption={scene.subCaption}
               accentColor={accentColor}
               captionStyle={captionStyle}
               audioPath={scene.audioPath}

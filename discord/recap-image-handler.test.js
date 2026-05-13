@@ -6,6 +6,7 @@ const {
   pickImageAttachment,
   buildRecapJobPayload,
   buildAlertImagesBase64,
+  nyDateKeyToUtcRange,
 } = require('./recap-image-handler');
 
 // ── pickImageAttachment ────────────────────────────────────────────
@@ -82,11 +83,26 @@ test('buildRecapJobPayload defaults alertImagesBase64 to [] when missing', () =>
   assert.deepStrictEqual(data.alertImagesBase64, []);
 });
 
+// ── nyDateKeyToUtcRange ────────────────────────────────────────────
+test('nyDateKeyToUtcRange returns 24h window starting at NY midnight (EDT)', () => {
+  // 2026-05-13 est en EDT (UTC-4). NY 00:00 = UTC 04:00.
+  const [start, end] = nyDateKeyToUtcRange('2026-05-13');
+  assert.strictEqual(start, '2026-05-13T04:00:00.000Z');
+  assert.strictEqual(end, '2026-05-14T04:00:00.000Z');
+});
+
+test('nyDateKeyToUtcRange uses UTC-5 (EST) in winter', () => {
+  // 2026-01-15 est en EST (UTC-5). NY 00:00 = UTC 05:00.
+  const [start, end] = nyDateKeyToUtcRange('2026-01-15');
+  assert.strictEqual(start, '2026-01-15T05:00:00.000Z');
+  assert.strictEqual(end, '2026-01-16T05:00:00.000Z');
+});
+
 // ── buildAlertImagesBase64 ─────────────────────────────────────────
 test('buildAlertImagesBase64 returns [] when DB query throws', async () => {
   const result = await buildAlertImagesBase64({
     deps: {
-      getMessagesByDateKey: () => { throw new Error('DB locked'); },
+      getMessagesByTsRange: () => { throw new Error('DB locked'); },
       generateImage: () => Promise.resolve(Buffer.from('')),
       dateKey: '2026-05-13',
     },
@@ -94,24 +110,41 @@ test('buildAlertImagesBase64 returns [] when DB query throws', async () => {
   assert.deepStrictEqual(result, []);
 });
 
-test('buildAlertImagesBase64 filters to type=entry and limits', async () => {
+test('buildAlertImagesBase64 queries DB with NY-tz UTC range, not raw date substring', async () => {
+  let capturedFrom = null;
+  let capturedTo = null;
+  await buildAlertImagesBase64({
+    deps: {
+      getMessagesByTsRange: (from, to) => { capturedFrom = from; capturedTo = to; return []; },
+      generateImage: () => Promise.resolve(Buffer.from('p')),
+      dateKey: '2026-05-13',
+    },
+  });
+  // Doit envoyer la fenêtre [04:00 UTC, +24h] pour 2026-05-13 (EDT).
+  assert.strictEqual(capturedFrom, '2026-05-13T04:00:00.000Z');
+  assert.strictEqual(capturedTo, '2026-05-14T04:00:00.000Z');
+});
+
+test('buildAlertImagesBase64 filters to type=entry, reverses order (chronological), and limits', async () => {
+  // getMessagesByTsRange retourne DESC — la fonction doit re-inverser
+  // pour ordre chronologique (alerte 1 = plus ancienne).
   const messages = [
+    { type: 'entry', author: 'C', content: '$NVDA 2', ts: '2026-05-13T15:00:00-04:00', ticker: 'NVDA' },
+    { type: 'exit',  author: 'B', content: '$TSLA out', ts: '2026-05-13T14:00:00-04:00', ticker: 'TSLA' },
     { type: 'entry', author: 'A', content: '$TSLA 1', ts: '2026-05-13T13:00:00-04:00', ticker: 'TSLA' },
-    { type: 'exit',  author: 'B', content: '$TSLA out', ts: '2026-05-13T15:00:00-04:00', ticker: 'TSLA' },
-    { type: 'entry', author: 'C', content: '$NVDA 2', ts: '2026-05-13T13:05:00-04:00', ticker: 'NVDA' },
   ];
   const result = await buildAlertImagesBase64({
     maxAlerts: 5,
     deps: {
-      getMessagesByDateKey: () => messages,
+      getMessagesByTsRange: () => messages,
       generateImage: (author, content) => Promise.resolve(Buffer.from(`PNG-${author}-${content}`)),
       dateKey: '2026-05-13',
     },
   });
   assert.strictEqual(result.length, 2);
+  // Première alerte chronologique = TSLA (13:00) avant NVDA (15:00).
   assert.strictEqual(result[0].ticker, 'TSLA');
   assert.strictEqual(result[1].ticker, 'NVDA');
-  // base64 of "PNG-A-$TSLA 1" should decode back
   assert.strictEqual(Buffer.from(result[0].base64, 'base64').toString(), 'PNG-A-$TSLA 1');
 });
 
@@ -122,7 +155,7 @@ test('buildAlertImagesBase64 honors maxAlerts cap', async () => {
   const result = await buildAlertImagesBase64({
     maxAlerts: 4,
     deps: {
-      getMessagesByDateKey: () => messages,
+      getMessagesByTsRange: () => messages,
       generateImage: () => Promise.resolve(Buffer.from('p')),
       dateKey: '2026-05-13',
     },
@@ -139,18 +172,20 @@ test('buildAlertImagesBase64 skips alerts whose render fails', async () => {
   let i = 0;
   const result = await buildAlertImagesBase64({
     deps: {
-      getMessagesByDateKey: () => messages,
+      getMessagesByTsRange: () => messages,
       generateImage: () => {
         i++;
         if (i === 2) throw new Error('canvas oops');
         return Promise.resolve(Buffer.from('ok'));
       },
-      dateKey: 't',
+      dateKey: '2026-05-13',
     },
   });
   assert.strictEqual(result.length, 2);
-  assert.strictEqual(result[0].ticker, 'A');
-  assert.strictEqual(result[1].ticker, 'C');
+  // Après filtre+reverse, les 3 entries originales deviennent [C, B, A].
+  // L'item 2 (B) fail, donc on garde [C, A].
+  assert.strictEqual(result[0].ticker, 'C');
+  assert.strictEqual(result[1].ticker, 'A');
 });
 
 // ── handleRecapImageMessage ────────────────────────────────────────

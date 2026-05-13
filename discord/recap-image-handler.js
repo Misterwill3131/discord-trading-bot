@@ -27,7 +27,7 @@ const path = require('path');
 const fetch = require('node-fetch');
 
 const { parseRecapImage } = require('../utils/parse-recap-image');
-const { enqueueRenderJob, getMessagesByDateKey } = require('../db/sqlite');
+const { enqueueRenderJob, getMessagesByTsRange } = require('../db/sqlite');
 const { generateImage } = require('../canvas/proof');
 
 // Default 12 alertes : le feed-style scroll-up à ~8 visibles, on en montre
@@ -75,29 +75,58 @@ async function downloadToTemp(url, contentType, originalName) {
   return tmpPath;
 }
 
-// Date courante en America/New_York au format YYYY-MM-DD — sert de clef
-// pour getMessagesByDateKey(). On reste sur NY car les alertes sont indexées
-// par jour de trading NY (cf db/sqlite.js).
+// Date courante en America/New_York au format YYYY-MM-DD.
 function todayNyDateKey() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
 }
 
+// Convertit "YYYY-MM-DD" (date NY) en [startUtcIso, endUtcIso] couvrant
+// minuit NY à minuit NY le lendemain.
+//
+// Pourquoi : les messages sont stockés en UTC (`new Date().toISOString()`),
+// donc un substr(ts, 1, 10) sur la date NY ramènerait des messages de la
+// veille soir (heures NY 20-24h) qui sont en UTC le jour suivant. Cette
+// fonction calcule la vraie fenêtre 00h00 NY → 00h00 NY (next-day) en UTC,
+// en tenant compte du DST EDT/EST.
+function nyDateKeyToUtcRange(nyDateKey) {
+  const [y, m, d] = nyDateKey.split('-').map(Number);
+  // Probe à midi NY ce jour-là pour déterminer EDT (-4) vs EST (-5).
+  // Midi est safely past tout shift DST qui peut se produire à 2 AM.
+  const probeUtc = new Date(Date.UTC(y, m - 1, d, 17, 0, 0));
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    timeZoneName: 'short',
+  }).formatToParts(probeUtc);
+  const tzName = (parts.find(p => p.type === 'timeZoneName') || {}).value || 'EST';
+  const offsetHours = tzName === 'EDT' ? 4 : 5;
+  // 00h00 NY ce jour → UTC offsetHours
+  const startIso = new Date(Date.UTC(y, m - 1, d, offsetHours, 0, 0)).toISOString();
+  const endIso = new Date(Date.UTC(y, m - 1, d + 1, offsetHours, 0, 0)).toISOString();
+  return [startIso, endIso];
+}
+
 // Génère les PNG base64 des alertes du jour pour le AlertsParadePhase.
 // Renvoie `[]` si DB indispo, aucune alerte entry, ou canvas KO.
-// `deps` permet de mocker getMessagesByDateKey/generateImage en test.
+// `deps` permet de mocker getMessagesByTsRange/generateImage en test.
 async function buildAlertImagesBase64({ maxAlerts = DEFAULT_MAX_ALERTS, deps = {} } = {}) {
-  const _getMessagesByDateKey = deps.getMessagesByDateKey || getMessagesByDateKey;
+  const _getMessagesByTsRange = deps.getMessagesByTsRange || getMessagesByTsRange;
   const _generateImage = deps.generateImage || generateImage;
   const dateKey = deps.dateKey || todayNyDateKey();
+  const [startIso, endIso] = nyDateKeyToUtcRange(dateKey);
 
   let messages = [];
   try {
-    messages = _getMessagesByDateKey(dateKey) || [];
+    messages = _getMessagesByTsRange(startIso, endIso) || [];
   } catch (err) {
     console.warn(`[recap-image-handler] DB query failed for ${dateKey}: ${err.message}`);
     return [];
   }
-  const entryAlerts = messages.filter(m => m.type === 'entry').slice(0, maxAlerts);
+  // getMessagesByTsRange retourne DESC — on inverse pour avoir l'ordre
+  // chronologique de la journée (alerte 1 = plus ancienne).
+  const entryAlerts = messages
+    .filter(m => m.type === 'entry')
+    .reverse()
+    .slice(0, maxAlerts);
   if (entryAlerts.length === 0) return [];
 
   const out = [];
@@ -255,4 +284,5 @@ module.exports = {
   buildRecapJobPayload,
   buildAlertImagesBase64,
   todayNyDateKey,
+  nyDateKeyToUtcRange,
 };

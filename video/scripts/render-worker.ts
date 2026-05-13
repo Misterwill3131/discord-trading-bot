@@ -160,33 +160,36 @@ export async function fetchChartForJob(job: RenderJob): Promise<string | null> {
   // Entry : flèche up + label 'When alerted' (pointe depuis le bas vers
   // le prix d'entrée). Exit : flèche down + label = exit price formaté
   // (pointe depuis le haut vers le prix de sortie).
+  //
+  // Offset 2% pour décaler les flèches HORS de la candle (sinon le body
+  // de l'arrow se superpose à la candle au moment du trade) :
+  //   - Entry (Up): price - 2% → body BELOW la candle
+  //   - Exit  (Down): price + 2% → body ABOVE la candle
   const arrows: Array<{
     datetime: string;
     price: number;
     text?: string;
     direction?: 'up' | 'down';
     fontBold?: boolean;
-    color?: string;
   }> = [];
+  const ARROW_OFFSET = 0.02;
 
   if (Number.isFinite(job.entryPrice)) {
     arrows.push({
       datetime: job.entryTimestamp,
-      price: job.entryPrice as number,
+      price: (job.entryPrice as number) * (1 - ARROW_OFFSET),
       text: 'When alerted',
       direction: 'up',
       fontBold: true,
-      color: 'rgb(59,130,246)',  // bleu accent
     });
   }
   if (Number.isFinite(job.exitPrice)) {
     arrows.push({
       datetime: job.exitTimestamp,
-      price: job.exitPrice as number,
+      price: (job.exitPrice as number) * (1 + ARROW_OFFSET),
       text: fmtPrice(job.exitPrice as number),
       direction: 'down',
       fontBold: true,
-      color: 'rgb(16,185,129)',  // vert profit
     });
   }
 

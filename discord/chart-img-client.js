@@ -192,34 +192,62 @@ function buildRectangleDrawing(rect) {
   return drawing;
 }
 
-// Construit le drawing Callout — texte ancré à un point (datetime, price)
-// avec une "flèche" pointant vers ce point. Use case : marquer l'entry
-// price d'un trade sur le chart vidéo avec un label "When alerted", ou
-// l'exit price avec sa valeur.
+// Construit le drawing Callout — texte avec flèche pointant vers un prix.
+// Use case : marquer l'entry price ('When alerted') ou exit price ('$X.XX')
+// sur le chart vidéo BoomProof.
 //
-// Schéma input (cf https://doc.chart-img.com/#callout) :
-//   datetime  (ISO 8601) — position X (temps)
-//   price     (number)   — position Y (prix)
-//   text      (string)   — contenu de la bulle
+// Schéma input (chart-img v2 — partage le shape start/end de Rectangle/Fib) :
+//   startDatetime (ISO 8601) — pointe de la flèche : temps
+//   startPrice    (number)   — pointe de la flèche : prix exact
+//   endDatetime   (ISO 8601) — position de la box texte : temps (offset)
+//   endPrice      (number)   — position de la box texte : prix (offset)
+//   text          (string)   — contenu de la bulle
 //
-// override (optionnel) :
-//   textColor       — couleur du texte (rgb/rgba)
-//   backgroundColor — fond de la bulle
-//   borderColor     — bordure
-//   fontSize        — typique 10-20
-//   fontBold        — bool
+// Helpers d'input du caller :
+//   datetime/price (anchor) — auto-construit start/end avec un offset par
+//     défaut (start = anchor, end = anchor + 5% bar offset). Backward-compat
+//     avec l'ancienne signature pour les call sites simples.
 //
-// Renvoie null si un champ requis est invalide (typage défensif).
+// Override (optionnel) : textColor, backgroundColor, borderColor, fontSize,
+// fontBold.
+//
+// Renvoie null si un champ requis est invalide.
 function buildCalloutDrawing(callout) {
   if (!callout) return null;
-  const { datetime, price, text } = callout;
-  if (typeof datetime !== 'string') return null;
-  if (!Number.isFinite(price)) return null;
+
+  // Mode start/end explicit (advanced) — laisse le caller piloter la box.
+  let startDatetime = callout.startDatetime;
+  let startPrice    = callout.startPrice;
+  let endDatetime   = callout.endDatetime;
+  let endPrice      = callout.endPrice;
+
+  // Mode simple : caller passe datetime + price (anchor) — on calcule
+  // automatiquement endDatetime/endPrice pour positionner la box texte.
+  // L'offset par défaut place la box légèrement à droite et au-dessus
+  // de la pointe pour rester lisible sans encombrer la candle.
+  if (!startDatetime && typeof callout.datetime === 'string') {
+    startDatetime = callout.datetime;
+    startPrice    = callout.price;
+    // End offset : +20 minutes (lisible sur 1D 5m candles) + 3% prix.
+    if (typeof startDatetime === 'string' && Number.isFinite(startPrice)) {
+      try {
+        const startMs = new Date(startDatetime).getTime();
+        endDatetime = new Date(startMs + 20 * 60 * 1000).toISOString();
+        endPrice    = startPrice * 1.03;
+      } catch { /* invalid date, leave undefined */ }
+    }
+  }
+
+  const { text } = callout;
+  if (typeof startDatetime !== 'string') return null;
+  if (typeof endDatetime !== 'string')   return null;
+  if (!Number.isFinite(startPrice))      return null;
+  if (!Number.isFinite(endPrice))        return null;
   if (typeof text !== 'string' || text.length === 0) return null;
 
   const drawing = {
     name: 'Callout',
-    input: { datetime, price, text },
+    input: { startDatetime, startPrice, endDatetime, endPrice, text },
   };
 
   const override = {};
@@ -379,7 +407,11 @@ function createChartImgClient({
         ).join(',')
       : '';
     const calloutKey = (Array.isArray(opts.callouts) && opts.callouts.length > 0)
-      ? '|CO:' + opts.callouts.map(c => c.datetime + '@' + c.price + '#' + c.text).join(',')
+      ? '|CO:' + opts.callouts.map(c => {
+          const dt = c.startDatetime || c.datetime;
+          const pr = c.startPrice ?? c.price;
+          return dt + '@' + pr + '#' + c.text;
+        }).join(',')
       : '';
     const studiesKey = Array.isArray(opts.studies)
       ? '|S:' + JSON.stringify(opts.studies)

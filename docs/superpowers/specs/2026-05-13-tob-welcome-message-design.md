@@ -16,9 +16,14 @@ When a new person subscribes to TOB via Whop or Launchpass, post a welcome messa
 
 ## 2. Detection mechanism
 
-Whop and Launchpass both grant access to TOB by assigning **the same Discord role** to the new member (via their own bots/integrations on Discord). The role attribution is observable through Discord's `guildMemberUpdate` gateway event.
+Whop and Launchpass both grant access to TOB by assigning **the same Discord role** to the subscriber (via their own bots/integrations on Discord). The role attribution is observable through Discord's `guildMemberUpdate` gateway event.
 
-We listen to `guildMemberUpdate` on the main bot and detect when the subscriber role transitions from "absent on old member" to "present on new member".
+The trigger is the **role attribution**, not the server join. This is important because two distinct scenarios both lead to a valid welcome:
+
+- **Scenario A — New member.** Person pays first, then OAuth-joins the server. They join without the role (`guildMemberAdd`), then Whop/Launchpass assigns the role moments later (`guildMemberUpdate`).
+- **Scenario B — Existing member.** Person was already on the server (free member, friend, lapsed subscriber re-paying). They pay, and Whop/Launchpass assigns the role to the existing member (`guildMemberUpdate`).
+
+In both cases the signal is the same: `oldMember` does not have the role, `newMember` does. Listening only to `guildMemberAdd` would miss scenario B entirely.
 
 Rejected alternatives:
 - **Listening to Whop/Launchpass bot messages in the alerts channel.** Fragile — depends on the exact message format of third-party bots which may change without notice.

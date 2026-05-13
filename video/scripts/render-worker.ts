@@ -196,7 +196,10 @@ export async function fetchChartForJob(job: RenderJob): Promise<string | null> {
     const buf = await client.getChart(symbol, '1D', {
       studies: [],          // pas d'indicateurs (clean look)
       arrows,               // Arrow Mark Up/Down avec text labels
-      session: 'extended',  // pre-market + after-hours
+      // 'regular' (9:30-16:00 ET) plutôt que 'extended' — évite l'ombrage
+      // darker visuellement bruyant sur les vidéos BoomProof. Trade-off :
+      // trades pre-market (rares) ne seront pas visibles sur le chart.
+      session: 'regular',
       timezone: 'America/New_York',
     });
     return buf.toString('base64');

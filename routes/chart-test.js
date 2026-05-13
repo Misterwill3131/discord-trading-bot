@@ -100,7 +100,10 @@ function registerChartTestRoutes(app, requireAuth) {
       const buf = await client.getChart(symbol, String(range), {
         studies: [],
         arrows,
-        session: 'extended',
+        // 'regular' (9:30-16:00 ET) plutôt que 'extended' pour éviter
+        // l'ombrage darker sur pre/after-market (visuellement bruyant
+        // dans la vidéo). Trade-off : trades pre-market non visibles.
+        session: 'regular',
         timezone: 'America/New_York',
       });
       const elapsedMs = Date.now() - startedAt;

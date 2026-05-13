@@ -161,9 +161,8 @@ export async function fetchChartForJob(job: RenderJob): Promise<string | null> {
   // le prix d'entrée). Exit : flèche down + label = exit price formaté
   // (pointe depuis le haut vers le prix de sortie).
   //
-  // Offset 0.5% — décale juste à côté de la candle (≈ 1 candle-height).
-  // Évite le chevauchement body-candle tout en restant lisuellement
-  // attaché à la candle correspondante.
+  // Offset 0.3% — flèches collées à la candle, à peine décalées pour
+  // éviter le chevauchement direct avec le body.
   const arrows: Array<{
     datetime: string;
     price: number;
@@ -171,7 +170,7 @@ export async function fetchChartForJob(job: RenderJob): Promise<string | null> {
     direction?: 'up' | 'down';
     fontBold?: boolean;
   }> = [];
-  const ARROW_OFFSET = 0.005;
+  const ARROW_OFFSET = 0.003;
 
   if (Number.isFinite(job.entryPrice)) {
     arrows.push({

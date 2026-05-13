@@ -70,9 +70,9 @@ function registerChartTestRoutes(app, requireAuth) {
       return '$' + n.toFixed(4);
     };
 
-    // Offset 0.5% — flèches juste à côté de la candle (1 candle-height environ).
-    // 2% donnait des flèches trop éloignées du prix.
-    const ARROW_OFFSET = 0.005;
+    // Offset 0.3% — flèches collées à la candle, à peine décalées pour
+    // éviter le chevauchement direct avec le body.
+    const ARROW_OFFSET = 0.003;
     const arrows = [];
     if (Number.isFinite(entryPriceNum)) {
       arrows.push({

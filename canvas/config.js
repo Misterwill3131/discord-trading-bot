@@ -50,7 +50,7 @@ const CUSTOM_AVATARS = {
 // "@nom". Sinon la chaîne brute reste affichée.
 const CUSTOM_ROLES = {
   '1497256488274624565': { name: 'Swing',    color: '#3498db' },
-  '1330929339134640179': { name: 'Momentum', color: '#5865f2' },
+  '1330929339134640179': { name: 'Momentum', color: '#2ecc71' },
 };
 
 // Mentions spéciales Discord (@everyone, @here). Rendues comme pill avec

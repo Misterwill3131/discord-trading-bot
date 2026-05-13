@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'vitest';
-import { jobPropsToRemotion, buildCaption, formatTimeNY, loadTemplateProps, prepareRecapAlertImages } from './render-worker';
+import { jobPropsToRemotion, buildCaption, buildTobTradeRecapCaption, formatTimeNY, loadTemplateProps, prepareRecapAlertImages } from './render-worker';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -63,29 +63,66 @@ describe('buildCaption', () => {
     expect(cap).toContain('Exit');
   });
 
-  test('TobTradeRecap caption mentions trade + long-term counts', () => {
+  test('TobTradeRecap caption mentions trade count, stats, top picks, long-term', () => {
     const job = {
       ...sampleJob,
       composition: 'TobTradeRecap',
       pnl: 'TODAY',
       recap_data: JSON.stringify({
         dateLabel: 'TODAY',
-        trades: Array.from({ length: 7 }, () => ({ ticker: '$X', entryPrice: 1, hodPrice: 2 })),
-        longTermInvestments: [{ ticker: '$DXYZ', entryPrice: 30, currentPrice: 71 }],
+        trades: [
+          { ticker: '$XOS', entryPrice: 2.49, hodPrice: 2.90 },
+          { ticker: '$HAO', entryPrice: 0.046, hodPrice: 0.071 },
+          { ticker: '$DXYZ', entryPrice: 30, hodPrice: 71 },
+          { ticker: '$LABT', entryPrice: 3.17, hodPrice: 3.10 },
+        ],
+        longTermInvestments: [
+          { ticker: '$RVI', entryPrice: 0.50, currentPrice: 1.16 },
+          { ticker: '$REA', entryPrice: 1.21, currentPrice: 1.91 },
+        ],
       }),
     };
     const cap = buildCaption(job);
     expect(cap).toContain('TOB Trade Recap');
     expect(cap).toContain('TODAY');
-    expect(cap).toContain('7 trades');
-    expect(cap).toContain('1 long-term');
+    expect(cap).toContain('4 trades');
+    expect(cap).toContain('3/4 green');
+    expect(cap).toContain('Top picks');
+    expect(cap).toContain('$DXYZ');
+    expect(cap).toContain('+136.7%');
+    expect(cap).toContain('All trades');
+    expect(cap).toContain('Long-term');
+    expect(cap).toContain('$RVI');
+    expect(cap).toContain('+132.0%');
   });
 
   test('TobTradeRecap caption stays usable when recap_data missing', () => {
     const job = { ...sampleJob, composition: 'TobTradeRecap', pnl: 'TODAY' };
     const cap = buildCaption(job);
     expect(cap).toContain('TOB Trade Recap');
-    expect(cap).toContain('0 trades');
+    expect(cap).toContain('aucun trade');
+  });
+
+  test('TobTradeRecap caption fits under 2000 chars even with 41 trades', () => {
+    const trades = Array.from({ length: 41 }, (_, i) => ({
+      ticker: `$T${i.toString().padStart(3, '0')}`,
+      entryPrice: 1 + i * 0.1,
+      hodPrice: 1.5 + i * 0.1,
+    }));
+    const cap = buildTobTradeRecapCaption({ dateLabel: 'TODAY', trades, longTermInvestments: [] }, 'TODAY');
+    expect(cap.length).toBeLessThanOrEqual(2000);
+    expect(cap).toContain('41 trades');
+  });
+
+  test('TobTradeRecap caption truncates gracefully if somehow over 2000 chars', () => {
+    // 200 trades with long tickers → over budget; truncation should activate.
+    const trades = Array.from({ length: 200 }, (_, i) => ({
+      ticker: `$LONGTICKER${i}`,
+      entryPrice: 1,
+      hodPrice: 2,
+    }));
+    const cap = buildTobTradeRecapCaption({ dateLabel: 'TODAY', trades, longTermInvestments: [] }, 'TODAY');
+    expect(cap.length).toBeLessThanOrEqual(2000);
   });
 });
 

@@ -252,6 +252,108 @@ export function formatTimeNY(isoTimestamp: string): string {
   });
 }
 
+// Format "+12.3%" / "-4.1%" pour les gains de trade.
+function fmtPct(n: number): string {
+  if (!Number.isFinite(n)) return '—';
+  const sign = n >= 0 ? '+' : '';
+  return `${sign}${n.toFixed(1)}%`;
+}
+
+// Format prix : 2-4 décimales selon magnitude (cohérent avec
+// fmtPrice dans TobTradeRecap.tsx).
+function fmtPrice(n: number): string {
+  if (!Number.isFinite(n)) return '—';
+  if (n >= 1) return n.toFixed(2);
+  if (n >= 0.01) return n.toFixed(3);
+  return n.toFixed(4);
+}
+
+// Caption pour les jobs TobTradeRecap : header + stats + liste des trades
+// avec gains + section long-term. Construit pour rester sous la limite
+// Discord de 2000 chars même avec 41 trades (testé ~1500 chars max).
+export function buildTobTradeRecapCaption(parsed: any, fallbackDate: string): string {
+  const trades = Array.isArray(parsed?.trades) ? parsed.trades : [];
+  const lts = Array.isArray(parsed?.longTermInvestments) ? parsed.longTermInvestments : [];
+  const date = parsed?.dateLabel || fallbackDate || 'TODAY';
+
+  if (trades.length === 0) {
+    return `🎬 **TOB Trade Recap — ${date}**\n(aucun trade dans le tableau)`;
+  }
+
+  const enriched = trades
+    .map((t: any) => {
+      const gainPct = ((t.hodPrice - t.entryPrice) / t.entryPrice) * 100;
+      return {
+        ticker: String(t.ticker || '').replace(/^\$+/, ''),
+        entryPrice: t.entryPrice,
+        hodPrice: t.hodPrice,
+        gainPct,
+      };
+    })
+    .filter((t: any) => Number.isFinite(t.gainPct));
+
+  const green = enriched.filter((t: any) => t.gainPct > 0).length;
+  const combined = enriched.reduce((s: number, t: any) => s + t.gainPct, 0);
+  const avg = combined / Math.max(enriched.length, 1);
+  const successRate = (green / Math.max(enriched.length, 1)) * 100;
+
+  // Tri par gain desc pour highlight les meilleurs
+  const sorted = [...enriched].sort((a: any, b: any) => b.gainPct - a.gainPct);
+  const top3 = sorted.slice(0, 3);
+
+  const lines: string[] = [];
+  lines.push(`🎬 **TOB Trade Recap — ${date}**`);
+  lines.push('');
+  lines.push(`📊 ${enriched.length} trades · ${green}/${enriched.length} green (${successRate.toFixed(0)}%) · combined ${fmtPct(combined)} · avg ${fmtPct(avg)}`);
+  lines.push('');
+
+  if (top3.length > 0) {
+    lines.push('🏆 **Top picks:**');
+    for (const t of top3) {
+      lines.push(`• \`$${t.ticker}\` ${fmtPct(t.gainPct)} (${fmtPrice(t.entryPrice)} → ${fmtPrice(t.hodPrice)})`);
+    }
+    lines.push('');
+  }
+
+  // Liste compacte de tous les trades en lignes condensées
+  // ($TICKER +N% séparés par · jusqu'à ce que ça déborde, puis newline).
+  lines.push('**All trades:**');
+  const items = enriched.map((t: any) => `\`$${t.ticker}\` ${fmtPct(t.gainPct)}`);
+  // Pack en lignes ≤ 90 chars pour rester lisible sur mobile.
+  const packed: string[] = [];
+  let row = '';
+  for (const item of items) {
+    if (row.length === 0) {
+      row = item;
+    } else if (row.length + 3 + item.length <= 90) {
+      row += ' · ' + item;
+    } else {
+      packed.push(row);
+      row = item;
+    }
+  }
+  if (row) packed.push(row);
+  lines.push(...packed);
+
+  if (lts.length > 0) {
+    lines.push('');
+    lines.push('💎 **Long-term:**');
+    for (const lt of lts) {
+      const ltPct = ((lt.currentPrice - lt.entryPrice) / lt.entryPrice) * 100;
+      const t = String(lt.ticker || '').replace(/^\$+/, '');
+      lines.push(`• \`$${t}\` ${fmtPct(ltPct)} (${fmtPrice(lt.entryPrice)} → ${fmtPrice(lt.currentPrice)})`);
+    }
+  }
+
+  let out = lines.join('\n');
+  // Garde-fou : Discord coupe à 2000 chars. Si on dépasse, on tronque les
+  // trades du milieu et on garde top picks + long-term intacts.
+  if (out.length > 1990) {
+    out = out.slice(0, 1980) + '\n… (truncated)';
+  }
+  return out;
+}
+
 // Caption Discord (multi-line). Exemple :
 //   📈 $TSLA · Z · +20% — chart template
 //   Entry 13:32 · Exit 16:30
@@ -261,15 +363,11 @@ export function formatTimeNY(isoTimestamp: string): string {
 // joli que le display name relayé sur l'exit.
 export function buildCaption(job: RenderJob): string {
   if (job.composition === 'TobTradeRecap') {
-    let trades = 0;
-    let lts = 0;
+    let parsed: any = null;
     try {
-      const parsed = job.recap_data ? JSON.parse(job.recap_data) : null;
-      trades = (parsed?.trades || []).length;
-      lts = (parsed?.longTermInvestments || []).length;
-    } catch { /* swallow, caption restera générique */ }
-    const dateStr = job.pnl || 'TODAY';
-    return `🎬 TOB Trade Recap — ${dateStr}\n${trades} trades${lts > 0 ? ` + ${lts} long-term` : ''}`;
+      parsed = job.recap_data ? JSON.parse(job.recap_data) : null;
+    } catch { /* swallow, fallback ci-dessous */ }
+    return buildTobTradeRecapCaption(parsed, job.pnl);
   }
   return [
     `📈 $${job.ticker} · ${job.exitAuthor} · ${job.pnl} — chart template`,

@@ -30,7 +30,7 @@ test('jobToApiShape converts snake_case DB row to camelCase API payload', () => 
   assert.strictEqual(api.status, undefined);
 });
 
-test('buildVideoFilename produces YYYY-MM-DD_HHMM_TICKER_chart-template.mp4', () => {
+test('buildVideoFilename produces YYYY-MM-DD_HHMM_TICKER_chart-template.mp4 by default', () => {
   const filename = buildVideoFilename('TSLA', '2026-04-25T16:30:00-04:00');
   // exit_ts is in NY tz (-04:00). 16:30 NY = 20:30 UTC. The function uses NY tz formatting.
   assert.match(filename, /^2026-04-25_\d{4}_TSLA_chart-template\.mp4$/);
@@ -38,5 +38,20 @@ test('buildVideoFilename produces YYYY-MM-DD_HHMM_TICKER_chart-template.mp4', ()
 
 test('buildVideoFilename uppercases ticker', () => {
   const filename = buildVideoFilename('tsla', '2026-04-25T16:30:00-04:00');
+  assert.match(filename, /TSLA_chart-template\.mp4$/);
+});
+
+test('buildVideoFilename uses tob-trade-recap suffix and RECAP ticker for TobTradeRecap', () => {
+  const filename = buildVideoFilename('TOB-RECAP', '2026-05-13T16:14:00-04:00', 'TobTradeRecap');
+  assert.match(filename, /^2026-05-13_\d{4}_RECAP_tob-trade-recap\.mp4$/);
+});
+
+test('buildVideoFilename uses boom-recap suffix for BoomRecap', () => {
+  const filename = buildVideoFilename('RECAP', '2026-05-13T16:14:00-04:00', 'BoomRecap');
+  assert.match(filename, /^2026-05-13_\d{4}_RECAP_boom-recap\.mp4$/);
+});
+
+test('buildVideoFilename falls back to chart-template for unknown composition', () => {
+  const filename = buildVideoFilename('TSLA', '2026-04-25T16:30:00-04:00', 'WhateverElse');
   assert.match(filename, /TSLA_chart-template\.mp4$/);
 });

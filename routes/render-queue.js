@@ -64,10 +64,19 @@ function jobToApiShape(row) {
   };
 }
 
-// Nom de fichier du MP4 sortant : YYYY-MM-DD_HHMM_TICKER_chart-template.mp4
+// Nom de fichier du MP4 sortant : YYYY-MM-DD_HHMM_TICKER_<suffix>.mp4
 // Date dérivée du exit_ts en timezone America/New_York pour cohérence
 // avec ce que le canvas affiche.
-function buildVideoFilename(ticker, exitTs) {
+//
+// Le suffix dépend de la composition :
+//   ChartTemplate / BoomEntry / BoomProof → "chart-template"
+//   BoomRecap                              → "boom-recap"
+//   TobTradeRecap                          → "tob-trade-recap"
+//   autre / inconnu                        → "chart-template" (fallback)
+//
+// Pour TobTradeRecap le ticker est "TOB-RECAP" (placeholder) → on l'écrase
+// avec "RECAP" pour éviter le double tiret moche dans le filename.
+function buildVideoFilename(ticker, exitTs, composition) {
   const d = new Date(exitTs);
   // Force NY tz via toLocaleString
   const fmt = d.toLocaleString('en-CA', {
@@ -78,7 +87,16 @@ function buildVideoFilename(ticker, exitTs) {
   // fmt is like "2026-04-25, 16:30" → normalize to "2026-04-25_1630"
   const [datePart, timePart] = fmt.split(', ');
   const timeNoColon = timePart.replace(':', '');
-  return `${datePart}_${timeNoColon}_${ticker.toUpperCase()}_chart-template.mp4`;
+  let suffix = 'chart-template';
+  let tick = (ticker || 'PROOF').toUpperCase();
+  if (composition === 'TobTradeRecap') {
+    suffix = 'tob-trade-recap';
+    tick = 'RECAP';
+  } else if (composition === 'BoomRecap') {
+    suffix = 'boom-recap';
+    tick = 'RECAP';
+  }
+  return `${datePart}_${timeNoColon}_${tick}_${suffix}.mp4`;
 }
 
 // Middleware d'auth via Bearer token.
@@ -168,20 +186,26 @@ function registerRenderQueueRoutes(app, discordClient) {
       return res.status(400).json({ error: 'Missing mp4 file or error field' });
     }
     const caption = req.body.caption || `Proof video #${jobId}`;
-    const filename = buildVideoFilename(
-      req.body.ticker || 'PROOF',
-      req.body.exitTs || new Date().toISOString()
-    );
 
     // Lookup per-job output channel override (ex: TobTradeRecap déclenché
     // depuis un canal dédié veut renvoyer le MP4 dans le même canal).
+    // On lit aussi `composition` pour que le filename porte le bon suffixe
+    // (tob-trade-recap.mp4 vs chart-template.mp4 vs boom-recap.mp4).
     let overrideChannelId = null;
+    let jobComposition = null;
     try {
       const job = getRenderJobById(jobId);
       if (job && job.output_channel_id) overrideChannelId = job.output_channel_id;
+      if (job && job.composition) jobComposition = job.composition;
     } catch (err) {
       console.warn('[render-queue] getRenderJobById failed:', err.message);
     }
+
+    const filename = buildVideoFilename(
+      req.body.ticker || 'PROOF',
+      req.body.exitTs || new Date().toISOString(),
+      jobComposition,
+    );
 
     try {
       const msgId = await postVideoToChannel(discordClient, req.file.buffer, caption, filename, overrideChannelId);

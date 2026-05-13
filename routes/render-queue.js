@@ -55,6 +55,11 @@ function jobToApiShape(row) {
     // null car la majorité des fields ont z.string().default(...) non-nullable).
     ...(row.tease_action != null ? { teaseAction: row.tease_action } : {}),
     ...(row.tease_subtext != null ? { teaseSubtext: row.tease_subtext } : {}),
+    // Prix entry/exit utilisés par le worker pour positionner les callouts
+    // sur le chart TradingView (chart-img). null si non disponibles —
+    // dans ce cas le chart est fetché sans annotations.
+    entryPrice: row.entry_price != null ? row.entry_price : null,
+    exitPrice:  row.exit_price  != null ? row.exit_price  : null,
   };
 }
 

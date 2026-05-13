@@ -192,6 +192,47 @@ function buildRectangleDrawing(rect) {
   return drawing;
 }
 
+// Construit le drawing Callout — texte ancré à un point (datetime, price)
+// avec une "flèche" pointant vers ce point. Use case : marquer l'entry
+// price d'un trade sur le chart vidéo avec un label "When alerted", ou
+// l'exit price avec sa valeur.
+//
+// Schéma input (cf https://doc.chart-img.com/#callout) :
+//   datetime  (ISO 8601) — position X (temps)
+//   price     (number)   — position Y (prix)
+//   text      (string)   — contenu de la bulle
+//
+// override (optionnel) :
+//   textColor       — couleur du texte (rgb/rgba)
+//   backgroundColor — fond de la bulle
+//   borderColor     — bordure
+//   fontSize        — typique 10-20
+//   fontBold        — bool
+//
+// Renvoie null si un champ requis est invalide (typage défensif).
+function buildCalloutDrawing(callout) {
+  if (!callout) return null;
+  const { datetime, price, text } = callout;
+  if (typeof datetime !== 'string') return null;
+  if (!Number.isFinite(price)) return null;
+  if (typeof text !== 'string' || text.length === 0) return null;
+
+  const drawing = {
+    name: 'Callout',
+    input: { datetime, price, text },
+  };
+
+  const override = {};
+  if (typeof callout.textColor === 'string')       override.textColor       = callout.textColor;
+  if (typeof callout.backgroundColor === 'string') override.backgroundColor = callout.backgroundColor;
+  if (typeof callout.borderColor === 'string')     override.borderColor     = callout.borderColor;
+  if (Number.isInteger(callout.fontSize))          override.fontSize        = callout.fontSize;
+  if (typeof callout.fontBold === 'boolean')       override.fontBold        = callout.fontBold;
+  if (Object.keys(override).length > 0) drawing.override = override;
+
+  return drawing;
+}
+
 function withTimeout(promise, ms) {
   let handle;
   const timeout = new Promise((_, reject) => {
@@ -315,6 +356,12 @@ function createChartImgClient({
         if (rect) drawings.push(rect);
       }
     }
+    if (Array.isArray(opts.callouts)) {
+      for (const c of opts.callouts) {
+        const callout = buildCalloutDrawing(c);
+        if (callout) drawings.push(callout);
+      }
+    }
 
     // Clé case-sensitive sur le range. La présence du FIB / des rectangles
     // et leurs anchors exacts font partie de la clé pour qu'un changement
@@ -331,12 +378,15 @@ function createChartImgClient({
             + (r.text ? '#' + r.text : '')
         ).join(',')
       : '';
+    const calloutKey = (Array.isArray(opts.callouts) && opts.callouts.length > 0)
+      ? '|CO:' + opts.callouts.map(c => c.datetime + '@' + c.price + '#' + c.text).join(',')
+      : '';
     const studiesKey = Array.isArray(opts.studies)
       ? '|S:' + JSON.stringify(opts.studies)
       : '';
     const sessionKey  = typeof opts.session  === 'string' ? '|SES:' + opts.session  : '';
     const timezoneKey = typeof opts.timezone === 'string' ? '|TZ:'  + opts.timezone : '';
-    const key = sym + '|' + String(range) + fibKey + rectKey + studiesKey + sessionKey + timezoneKey;
+    const key = sym + '|' + String(range) + fibKey + rectKey + calloutKey + studiesKey + sessionKey + timezoneKey;
 
     const hit = cache.get(key);
     if (hit) {
@@ -367,6 +417,7 @@ module.exports = {
   mapRangeToChartImg,
   buildFibDrawing,
   buildRectangleDrawing,
+  buildCalloutDrawing,
   YAHOO_TO_TV_EXCHANGE,
   DEFAULT_STUDIES,
   CHART_IMG_BASE,

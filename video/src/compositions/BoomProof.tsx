@@ -43,6 +43,11 @@ export const boomProofSchema = z.object({
     .nullable()
     .optional()
     .describe('Data URL PNG (image canvas entry+exit). Vide = placeholder.'),
+  chartImageDataUrl: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('Data URL PNG du chart TradingView du jour (fetched par le worker via chart-img). Vide = ChartExplosion synthétique en fallback.'),
   // ─── Text overrides éditables dans Studio ───
   teaseSubtext: z
     .string()
@@ -83,7 +88,7 @@ const SFX_REVEAL = 460;         // Cha-ching sur le résultat final (~15.3s)
 export const BoomProof = ({
   ticker, entryAuthor, entryMessage: _entryMessage, entryTimestamp,
   exitAuthor, exitMessage: _exitMessage, exitTimestamp, pnl,
-  proofImageDataUrl, teaseSubtext, ctaUrl,
+  proofImageDataUrl, chartImageDataUrl, teaseSubtext, ctaUrl,
   accentColor, musicVolume, sfxEnabled, lifestyleSeedOverride,
 }: BoomProofProps) => {
   const lifestyleSeed = lifestyleSeedOverride || `${ticker}-${entryTimestamp}`;
@@ -152,9 +157,13 @@ export const BoomProof = ({
           timing={linearTiming({ durationInFrames: SLIDE_FRAMES })}
         />
 
-        {/* Phase 3 — Chart explosion (~3s) */}
+        {/* Phase 3 — Chart real (TradingView via chart-img) ou ChartExplosion fallback (~3s) */}
         <TransitionSeries.Sequence durationInFrames={98}>
-          <TimePassAct entryTimestamp={entryTimestamp} exitTimestamp={exitTimestamp} />
+          <TimePassAct
+            entryTimestamp={entryTimestamp}
+            exitTimestamp={exitTimestamp}
+            chartImageDataUrl={chartImageDataUrl}
+          />
         </TransitionSeries.Sequence>
 
         <TransitionSeries.Transition

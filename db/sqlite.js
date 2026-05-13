@@ -497,6 +497,14 @@ addColumnIfMissing('render_jobs', 'recap_data', 'TEXT');
 addColumnIfMissing('render_jobs', 'tease_action', 'TEXT');
 addColumnIfMissing('render_jobs', 'tease_subtext', 'TEXT');
 
+// ── render_jobs : entry_price + exit_price ─────────────────────────────
+// Prix entry/exit du trade — passés au worker qui les utilise pour positionner
+// les callouts sur le chart TradingView (fetched via chart-img.com). Nullable
+// car certains messages d'exit ne contiennent pas de prix exact (ex: "out
+// for profit") — dans ce cas le chart est fetched sans callouts.
+addColumnIfMissing('render_jobs', 'entry_price', 'REAL');
+addColumnIfMissing('render_jobs', 'exit_price',  'REAL');
+
 // ── SaaS licenses : passthrough channel séparé pour bots upstream ─────
 // Permet de router les alertes "passthrough" (ex: TrendVision) vers un
 // salon distinct du target_channel_id (signaux principaux).
@@ -1692,18 +1700,20 @@ const stmtEnqueueRenderJob = db.prepare(`
   INSERT INTO render_jobs
     (ticker, entry_author, entry_message, entry_ts,
      exit_author, exit_message, exit_ts, pnl, proof_image_base64,
-     template_name, composition, recap_data, tease_action, tease_subtext)
+     template_name, composition, recap_data, tease_action, tease_subtext,
+     entry_price, exit_price)
   VALUES
     (@ticker, @entry_author, @entry_message, @entry_ts,
      @exit_author, @exit_message, @exit_ts, @pnl, @proof_image_base64,
-     @template_name, @composition, @recap_data, @tease_action, @tease_subtext)
+     @template_name, @composition, @recap_data, @tease_action, @tease_subtext,
+     @entry_price, @exit_price)
 `);
 
 const stmtGetPendingRenderJobs = db.prepare(`
   SELECT id, ticker, entry_author, entry_message, entry_ts,
          exit_author, exit_message, exit_ts, pnl, status, created_at,
          proof_image_base64, template_name, composition, recap_data,
-         tease_action, tease_subtext
+         tease_action, tease_subtext, entry_price, exit_price
   FROM render_jobs
   WHERE status = 'pending'
   ORDER BY created_at ASC
@@ -1733,6 +1743,8 @@ function enqueueRenderJob(payload) {
     recap_data: null,
     tease_action: null,
     tease_subtext: null,
+    entry_price: null,
+    exit_price: null,
     ...payload,
   });
   return result.lastInsertRowid;

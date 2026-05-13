@@ -32,6 +32,15 @@ export type RenderJob = {
   // Discord conversation). Si null, la composition fallback sur les
   // Discord cards Remotion natives.
   proofImageBase64?: string | null;
+  // Optionnel : base64 PNG du chart TradingView intraday du jour du trade,
+  // avec callouts (flèches + labels) sur entry/exit. Fetché par le worker
+  // via chart-img.com avant le render. Si null (API down ou pas de clé),
+  // la composition skip la phase chart.
+  chartImageBase64?: string | null;
+  // Prix entry/exit extraits du message ou DB — requis pour positionner
+  // les callouts sur le chart. Si manquants, le chart est fetché sans.
+  entryPrice?: number | null;
+  exitPrice?: number | null;
   // Optionnel : nom du template Remotion à utiliser (ex: "gold-celebration").
   // Si présent, le worker charge templates/<name>.json et merge ses props
   // comme base avant les props dynamiques du job.
@@ -94,12 +103,103 @@ export function jobPropsToRemotion(job: RenderJob) {
   const dataUrl = proofImageBase64
     ? `data:image/png;base64,${proofImageBase64}`
     : null;
+  // Chart dataUrl séparé — fetched par fetchChartForJob avant processJob.
+  // Reste null si chart-img KO, BoomProof skip la phase chart dans ce cas.
+  const chartDataUrl = job.chartImageBase64
+    ? `data:image/png;base64,${job.chartImageBase64}`
+    : null;
   return {
     ...templateProps,
     ...rest,
     proofImageDataUrl: dataUrl,
     entryImageDataUrl: dataUrl,
+    chartImageDataUrl: chartDataUrl,
   };
+}
+
+// ─── Chart fetch ──────────────────────────────────────────────────
+// Pre-fetch le chart TradingView pour le job (BoomProof uniquement).
+// Skip si :
+//   - composition !== 'BoomProof'
+//   - CHART_IMG_API_KEY absent
+//   - chart-img API échoue (timeout, 4xx, 5xx)
+// Renvoie un base64 PNG ou null. Le worker ne FAIL PAS si chart-img KO,
+// la composition est conçue pour skip la phase chart proprement.
+//
+// Symbol resolution : on essaie NASDAQ:TICKER en default (couvre la
+// majorité des micro/small caps US). Si chart-img répond 404, on essaie
+// AMEX. Pas de cache yahoo-finance ici pour rester rapide et autonome.
+export async function fetchChartForJob(job: RenderJob): Promise<string | null> {
+  if ((job.composition || 'BoomProof') !== 'BoomProof') return null;
+  const apiKey = process.env.CHART_IMG_API_KEY;
+  if (!apiKey) {
+    console.warn(`[worker] job #${job.id}: CHART_IMG_API_KEY absent, skip chart`);
+    return null;
+  }
+
+  // Import dynamique du client (JS depuis TS via require).
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { createChartImgClient, resolveSymbol } = require('../../discord/chart-img-client');
+
+  const client = createChartImgClient({
+    apiKey,
+    width: 1080,    // matche le canvas vidéo 9:16
+    height: 720,    // garde un ratio lisible (3:2)
+    theme: 'dark',
+  });
+
+  // Format helper pour le label callout exit price (ex: "$0.202").
+  const fmtPrice = (n: number): string => {
+    if (n >= 100) return '$' + n.toFixed(2);
+    if (n >= 1)   return '$' + n.toFixed(2);
+    if (n >= 0.01) return '$' + n.toFixed(3);
+    return '$' + n.toFixed(4);
+  };
+
+  // Construit les callouts si on a les prix. Sinon chart sans annotations.
+  const callouts: Array<{
+    datetime: string;
+    price: number;
+    text: string;
+    fontBold?: boolean;
+    backgroundColor?: string;
+    textColor?: string;
+  }> = [];
+
+  if (Number.isFinite(job.entryPrice)) {
+    callouts.push({
+      datetime: job.entryTimestamp,
+      price: job.entryPrice as number,
+      text: 'When alerted',
+      fontBold: true,
+      backgroundColor: 'rgb(59,130,246)',  // bleu accent — visible sur fond dark
+      textColor: 'rgb(255,255,255)',
+    });
+  }
+  if (Number.isFinite(job.exitPrice)) {
+    callouts.push({
+      datetime: job.exitTimestamp,
+      price: job.exitPrice as number,
+      text: fmtPrice(job.exitPrice as number),
+      fontBold: true,
+      backgroundColor: 'rgb(16,185,129)',  // vert profit
+      textColor: 'rgb(0,0,0)',
+    });
+  }
+
+  const symbol = resolveSymbol(job.ticker, '');  // fallback NASDAQ
+  try {
+    const buf = await client.getChart(symbol, '1D', {
+      studies: [],          // pas d'indicateurs (clean look)
+      callouts,
+      session: 'extended',  // pre-market + after-hours
+      timezone: 'America/New_York',
+    });
+    return buf.toString('base64');
+  } catch (err) {
+    console.warn(`[worker] job #${job.id}: chart-img failed for ${symbol}: ${(err as Error).message}`);
+    return null;
+  }
 }
 
 // Format heure NY 24h "HH:MM" depuis ISO timestamp.
@@ -197,6 +297,15 @@ async function processJob(
   botUrl: string, token: string,
 ) {
   console.log(`[worker] processing job ${job.id} (${job.ticker} ${job.pnl})`);
+
+  // Pre-fetch chart image (BoomProof uniquement, skip gracieusement si fail).
+  // Augmente le job in-place pour que jobPropsToRemotion(job) le voie.
+  const chartBase64 = await fetchChartForJob(job);
+  if (chartBase64) {
+    job.chartImageBase64 = chartBase64;
+    console.log(`[worker] job #${job.id}: chart fetched (${(chartBase64.length * 0.75 / 1024).toFixed(0)} KB)`);
+  }
+
   const composition = await selectComposition({
     serveUrl: bundleLocation,
     id: job.composition || 'BoomProof',

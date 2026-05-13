@@ -210,6 +210,18 @@ async function maybeEnqueueProofRender({
     seed: `${signalTicker}-${messageCreatedAt.toISOString()}`,
   });
 
+  // Extrait le prix d'exit du content (premier prix numérique trouvé).
+  // Sert au worker à positionner le callout "exit price" sur le chart.
+  // Si pas de prix dans le message (ex: "out for profit"), reste null →
+  // chart fetched sans annotation d'exit.
+  let exitPriceNum = null;
+  try {
+    const exitPrices = extractPrices(content);
+    if (exitPrices && Number.isFinite(exitPrices.entry_price)) {
+      exitPriceNum = exitPrices.entry_price;
+    }
+  } catch { /* skip — non bloquant */ }
+
   try {
     enqueueRenderJob({
       ticker: signalTicker,
@@ -227,6 +239,11 @@ async function maybeEnqueueProofRender({
       template_name: templateName,
       tease_action: tease ? tease.teaseAction : null,
       tease_subtext: tease ? tease.teaseSubtext : null,
+      // Prix entry stocké dans la table messages (DB) ; exit prix extrait
+      // du message d'exit. Utilisés par le worker pour les callouts chart.
+      entry_price: (originalAlert.entry_price != null && Number.isFinite(originalAlert.entry_price))
+        ? originalAlert.entry_price : null,
+      exit_price: exitPriceNum,
     });
     console.log(`[render-queue] enqueued ${signalTicker} ${pnl} → template '${templateName}', tease ctx '${tease ? tease.context : 'none'}'`);
   } catch (err) {

@@ -19,7 +19,8 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const path = require('path');
-const { createCanvas, loadImage } = require('@napi-rs/canvas');
+const fs = require('fs');
+const { createCanvas, loadImage, GlobalFonts } = require('@napi-rs/canvas');
 const { CONFIG, FONT, CUSTOM_AVATARS, CUSTOM_ROLES, SPECIAL_MENTIONS, CUSTOM_EMOJIS } = require('./config');
 const { getDisplayName } = require('../utils/authors');
 
@@ -27,6 +28,31 @@ const { getDisplayName } = require('../utils/authors');
 const AVATAR_DIR    = path.join(__dirname, '..', 'avatar');
 const TAG_BOOM_PATH = path.join(AVATAR_DIR, 'tag_boom.png');
 const LOGO_PATH     = path.join(__dirname, '..', 'logo_boom.png');
+
+// ── Font registration ───────────────────────────────────────────────
+// Bundle 2 fonts pour rendu identique cross-platform (Windows local ↔
+// Linux Railway) :
+//  - NotoSans-Regular.ttf       ~2 MB — texte principal (utilisé par
+//    le moteur en priorité avant les fallback system Arial/DejaVu Sans).
+//  - NotoSansSymbols2-Regular.ttf ~1.2 MB — fallback Unicode Symbols pour
+//    glyphes type ✦ (U+2726) qu'on voit dans les pseudos Discord
+//    "✦Viking✦" et que Noto Sans Regular n'a pas.
+// Tout deux SIL OFL (libre, commercial OK). Registré une fois au boot.
+const FONT_DIR = path.join(__dirname, '..', 'assets', 'fonts');
+function tryRegisterFont(file, family) {
+  const fontPath = path.join(FONT_DIR, file);
+  try {
+    if (fs.existsSync(fontPath)) {
+      GlobalFonts.registerFromPath(fontPath, family);
+    } else {
+      console.warn(`[canvas] font ${family} introuvable (${fontPath})`);
+    }
+  } catch (err) {
+    console.warn(`[canvas] registerFromPath ${family} failed:`, err.message);
+  }
+}
+tryRegisterFont('NotoSans-Regular.ttf',        'Noto Sans');
+tryRegisterFont('NotoSansSymbols2-Regular.ttf', 'NotoSansSymbols2');
 
 // ── Client Discord (injecté depuis index.js) ──────────────────────────
 // On stocke une référence mutable pour permettre un wire-up après coup

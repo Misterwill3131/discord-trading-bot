@@ -114,7 +114,15 @@ const CONFIG = {
   LINK_COLOR:           '#00aff4',     // Couleur du label de lien (Discord)
 
   // ── Police globale ───────────────────────────────────────────────────────
-  FONT:                 'Noto Sans, sans-serif',
+  // Stack consistent cross-platform via fonts BUNDLÉES (assets/fonts/) :
+  //   1. "Noto Sans"       — texte principal (lettres, chiffres, ponctuation)
+  //   2. NotoSansSymbols2  — fallback Unicode Symbols (✦, ⭐, ⚡, etc.)
+  //   3. sans-serif        — ultime fallback OS si bundles introuvables
+  // Registrées par canvas/proof.js au boot via GlobalFonts.registerFromPath().
+  // L'ordre EST CRITIQUE : NotoSansSymbols2 a des chiffres tabulaires à
+  // espacement très large, mettre cette font avant Noto Sans donnerait
+  // des heures style "0 9 : 5 8" au lieu de "09:58".
+  FONT:                 '"Noto Sans", NotoSansSymbols2, sans-serif',
 };
 // ═══════════════════════════════════════════════════════════════════════════
 

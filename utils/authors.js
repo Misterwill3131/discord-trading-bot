@@ -40,6 +40,7 @@ const AUTHOR_ALIASES = {
   'k.str.l':           'kestrel',
   'the1albatross':     'the1albatross',
   'thedutchess1':      'thedutchess1',
+  'mskimas':           'MsKim',
 };
 
 function getDisplayName(username) {

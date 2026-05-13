@@ -52,16 +52,17 @@ function registerChartTestRoutes(app, requireAuth) {
     }
 
     // Defaults pensés pour un smoke test propre :
-    //   - last trading day (pas le futur → callouts visibles)
-    //   - prix TSLA réaliste (~$450) pour rester dans le Y-axis du chart
-    //   - 10:00 NY → 15:30 NY (couvre l'open + power hour)
+    //   - timestamps dans le PM session du last trading day (14:00 → 15:45 NY)
+    //     pour tomber dans la fenêtre 1D rolling de chart-img (~24h)
+    //   - prix TSLA réaliste ~$450 pour rester dans le Y-axis du chart
+    //   - 14:00 → 15:45 NY couvre la fin de session, où les trades se concluent
     const {
       ticker = 'TSLA',
       exchange = 'NASDAQ',
-      entryPrice = '430',
+      entryPrice = '434',
       exitPrice = '450',
-      entryTs = lastTradingDayNY(10, 0),
-      exitTs = lastTradingDayNY(15, 30),
+      entryTs = lastTradingDayNY(14, 0),
+      exitTs = lastTradingDayNY(15, 45),
       range = '1D',
     } = req.query;
 

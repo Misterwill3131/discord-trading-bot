@@ -313,6 +313,7 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers,
   ],
 });
 // On a 11+ modules qui ajoutent leur propre listener messageCreate (handler,
@@ -361,6 +362,13 @@ const { registerGapCommands } = require('./discord/gap-commands');
 registerGapCommands(client, { yahoo: sharedYahoo, chartImg: chartImgClient });
 startTrendScanner({ client, store: trendStore, yahoo: sharedYahoo });
 registerProfitListener(client, { profitsChannelId: PROFITS_CHANNEL_ID });
+const { registerWelcomeListener } = require('./discord/welcome-listener');
+registerWelcomeListener(client, {
+  guildId:               process.env.TOB_WELCOME_GUILD_ID,
+  subscriberRoleId:      process.env.TOB_SUBSCRIBER_ROLE_ID,
+  welcomeChannelId:      process.env.TOB_WELCOME_CHANNEL_ID,
+  startHereChannelId:    process.env.TOB_START_HERE_CHANNEL_ID,
+});
 registerTradingHandler(client, {
   tradingChannel: TRADING_CHANNEL,
   railwayUrl: RAILWAY_URL,

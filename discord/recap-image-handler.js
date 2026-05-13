@@ -105,10 +105,25 @@ function nyDateKeyToUtcRange(nyDateKey) {
   return [startIso, endIso];
 }
 
+// Normalise un ticker pour comparaison : majuscules + strip "$".
+function normalizeTicker(t) {
+  return String(t || '').toUpperCase().replace(/^\$+/, '');
+}
+
 // Génère les PNG base64 des alertes du jour pour le AlertsParadePhase.
 // Renvoie `[]` si DB indispo, aucune alerte entry, ou canvas KO.
 // `deps` permet de mocker getMessagesByTsRange/generateImage en test.
-async function buildAlertImagesBase64({ maxAlerts = DEFAULT_MAX_ALERTS, deps = {} } = {}) {
+//
+// `tradeTickers` (optionnel) = liste des tickers présents dans le récap
+// OCR. Si fourni, seules les alertes des tickers du récap sont incluses
+// dans la parade — évite qu'un signal $AAPL défile alors que $AAPL n'est
+// même pas dans le tableau. Si vide ou non fourni, toutes les entries du
+// jour sont prises (comportement legacy).
+async function buildAlertImagesBase64({
+  maxAlerts = DEFAULT_MAX_ALERTS,
+  tradeTickers = null,
+  deps = {},
+} = {}) {
   const _getMessagesByTsRange = deps.getMessagesByTsRange || getMessagesByTsRange;
   const _generateImage = deps.generateImage || generateImage;
   const dateKey = deps.dateKey || todayNyDateKey();
@@ -121,10 +136,17 @@ async function buildAlertImagesBase64({ maxAlerts = DEFAULT_MAX_ALERTS, deps = {
     console.warn(`[recap-image-handler] DB query failed for ${dateKey}: ${err.message}`);
     return [];
   }
+
+  // Set des tickers du récap pour O(1) lookup. Si null/vide → on ne filtre pas.
+  const tickerSet = Array.isArray(tradeTickers) && tradeTickers.length > 0
+    ? new Set(tradeTickers.map(normalizeTicker))
+    : null;
+
   // getMessagesByTsRange retourne DESC — on inverse pour avoir l'ordre
   // chronologique de la journée (alerte 1 = plus ancienne).
   const entryAlerts = messages
     .filter(m => m.type === 'entry')
+    .filter(m => tickerSet === null || tickerSet.has(normalizeTicker(m.ticker)))
     .reverse()
     .slice(0, maxAlerts);
   if (entryAlerts.length === 0) return [];
@@ -206,9 +228,15 @@ async function handleRecapImageMessage({ message, channelId, deps = {} }) {
     }
 
     // Génère les PNG des alertes du jour (DB query + canvas render).
-    // Erreurs absorbed — on enqueue quand même, alertImages=[] est OK
-    // (la composition affiche un fallback "Pas d'alertes à afficher").
-    const alertImagesBase64 = await _buildAlertImagesBase64({ deps }).catch(err => {
+    // tradeTickers = liste des tickers du récap OCR → filtre les alertes
+    // de la parade pour ne garder que celles qui ont une ligne dans le
+    // tableau (cohérence visuelle : pas d'alerte $AAPL si $AAPL n'est
+    // pas dans le récap). Erreurs absorbed — on enqueue quand même,
+    // alertImages=[] est OK (la composition affiche un fallback).
+    const tradeTickers = (ocrResult.trades || [])
+      .map(t => t && t.ticker)
+      .filter(Boolean);
+    const alertImagesBase64 = await _buildAlertImagesBase64({ tradeTickers, deps }).catch(err => {
       console.warn(`[recap-image-handler] alert images failed: ${err.message}`);
       return [];
     });

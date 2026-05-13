@@ -17,8 +17,9 @@
 const fs = require('fs');
 const path = require('path');
 const { enqueueRenderJob, getMessagesByTicker } = require('../db/sqlite');
-const { computePnlString } = require('../utils/prices');
+const { computePnlString, extractPrices } = require('../utils/prices');
 const { pickTease, parsePnlNumeric } = require('../utils/pick-tease');
+const { getDisplayName } = require('../utils/authors');
 
 const TEMPLATES_DIR = path.join(__dirname, '..', 'video', 'templates');
 
@@ -88,26 +89,74 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
     const ts = item.ts || new Date().toISOString();
     const ticker = (item.ticker || 'BOOM').toUpperCase();
 
-    // Lookup du message original dans la DB pour extraire le contenu exact
-    // et calculer le PnL. La gallery stocke seulement metadata (id, ticker,
-    // author, ts, buffer) — pas le texte. On query messages WHERE ticker=
-    // dans une fenêtre de ±60s autour de gallery.ts pour matcher.
+    // Lookup du message original (= celui qui a généré le gallery item)
+    // pour extraire le contenu, le PnL, et — pour les proof — l'entry
+    // d'origine afin de passer entry_price + entry_ts + exit_price au
+    // worker. Sans ces fields, fetchChartForJob ne place aucune flèche
+    // sur le chart TradingView et la vidéo perd son point de pédagogie
+    // visuel ("voici où on est entré / où on est sorti").
     let messageStr = `$${ticker} signal`;
     let computedPnl = '+0%';
+    let entryTsIso = ts;
+    let entryAuthor = author;
+    let entryMessageStr = messageStr;
+    let exitTsIso = ts;
+    let entryPriceNum = null;
+    let exitPriceNum = null;
     try {
       const galleryTime = new Date(ts).getTime();
-      const sinceIso = new Date(galleryTime - 60_000).toISOString();
-      const rows = getMessagesByTicker(ticker, sinceIso);
-      // Match : auteur + ts dans ±60s autour de gallery.ts.
-      const match = rows.find(r => {
+
+      // ① Match le message qui a généré le gallery item.
+      //    Pour 'proof' c'est le message d'exit ; pour 'signal' c'est l'entry.
+      const sinceForCurrent = new Date(galleryTime - 60_000).toISOString();
+      const currentRows = getMessagesByTicker(ticker, sinceForCurrent);
+      const currentMatch = currentRows.find(r => {
         const t = new Date(r.ts).getTime();
         return Math.abs(t - galleryTime) < 60_000
           && (r.author || '').toLowerCase() === author.toLowerCase();
       });
-      if (match && match.content) {
-        messageStr = match.content;
-        const pnl = computePnlString(match.content);
+
+      if (currentMatch && currentMatch.content) {
+        messageStr = currentMatch.content;
+        const pnl = computePnlString(currentMatch.content);
         if (pnl) computedPnl = pnl;
+      }
+
+      // ② Selon le type, extraire entry/exit prices + timestamps.
+      if (item.type === 'proof' && currentMatch) {
+        // Le currentMatch = exit. Parse exit_price depuis son content.
+        exitTsIso = currentMatch.ts;
+        try {
+          const exitPrices = extractPrices(currentMatch.content);
+          if (exitPrices && Number.isFinite(exitPrices.entry_price)) {
+            exitPriceNum = exitPrices.entry_price;
+          }
+        } catch { /* skip — non bloquant */ }
+
+        // Cherche l'entry d'origine en DB : 30 jours en arrière, type=entry,
+        // entry_price présent, ts < ts de l'exit. Mêmes critères que
+        // findOriginalAlert dans discord/handler.js (cohérence des 2 flows).
+        const sinceForEntry = new Date(galleryTime - 30 * 86400000).toISOString();
+        const entryRows = getMessagesByTicker(ticker, sinceForEntry);
+        const entryMatch = entryRows.find(m =>
+          m.passed && m.id !== undefined &&
+          m.type === 'entry' &&
+          m.entry_price != null && Number.isFinite(m.entry_price) &&
+          new Date(m.ts) < new Date(currentMatch.ts)
+        );
+        if (entryMatch) {
+          entryTsIso = entryMatch.ts;
+          entryAuthor = entryMatch.author || author;
+          entryMessageStr = entryMatch.content || messageStr;
+          entryPriceNum = entryMatch.entry_price;
+        }
+      } else if (item.type === 'signal' && currentMatch) {
+        // Pour 'signal' (BoomEntry), pas de proof video chart-img — mais on
+        // remplit quand même entry_price pour les compositions futures.
+        entryTsIso = currentMatch.ts;
+        if (currentMatch.entry_price != null && Number.isFinite(currentMatch.entry_price)) {
+          entryPriceNum = currentMatch.entry_price;
+        }
       }
     } catch (err) {
       console.warn('[video-studio] DB lookup failed, using defaults:', err.message);
@@ -137,23 +186,31 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
     try {
       const jobId = enqueueRenderJob({
         ticker,
-        entry_author: author,
-        entry_message: messageStr,
-        entry_ts: ts,
-        // Pour ChartTemplate on aurait besoin de exit_* différents, mais ici
-        // on render depuis une seule image — on duplique.
-        exit_author: author,
+        // Display names (ex: 'traderzz1m' → 'ZZ') pour cohérence avec
+        // le flow auto-render (maybeEnqueueProofRender).
+        entry_author: getDisplayName(entryAuthor),
+        entry_message: entryMessageStr,
+        entry_ts: entryTsIso,
+        exit_author: getDisplayName(author),
         exit_message: messageStr,
-        exit_ts: ts,
+        exit_ts: exitTsIso,
         pnl: computedPnl,
         proof_image_base64: item.buffer.toString('base64'),
         template_name: templateId,
         composition,
         tease_action: tease ? tease.teaseAction : null,
         tease_subtext: tease ? tease.teaseSubtext : null,
+        // Sans ces 2 fields, fetchChartForJob skip les flèches sur le chart.
+        // Avec : entry arrow ↑ "When alerted" + exit arrow ↓ "$prix".
+        entry_price: entryPriceNum,
+        exit_price: exitPriceNum,
       });
-      console.log(`[video-studio] enqueue render_job #${jobId} from gallery ${galleryId} (${item.type}) → composition ${composition}, template ${templateId}, pnl ${computedPnl}, tease ctx '${tease ? tease.context : 'none'}'`);
-      res.json({ jobId, composition, templateId, pnl: computedPnl, teaseContext: tease ? tease.context : null });
+      console.log(`[video-studio] enqueue render_job #${jobId} from gallery ${galleryId} (${item.type}) → composition ${composition}, template ${templateId}, pnl ${computedPnl}, entry=${entryPriceNum ?? 'n/a'}, exit=${exitPriceNum ?? 'n/a'}, tease ctx '${tease ? tease.context : 'none'}'`);
+      res.json({
+        jobId, composition, templateId, pnl: computedPnl,
+        teaseContext: tease ? tease.context : null,
+        entryPrice: entryPriceNum, exitPrice: exitPriceNum,
+      });
     } catch (err) {
       console.error('[video-studio] enqueue failed:', err);
       res.status(500).json({ error: err.message });

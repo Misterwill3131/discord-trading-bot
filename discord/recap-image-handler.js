@@ -110,18 +110,77 @@ function normalizeTicker(t) {
   return String(t || '').toUpperCase().replace(/^\$+/, '');
 }
 
+// Variantes textuelles d'un prix pour le matching dans le content brut.
+// Ex: 0.046 → ["0.046", ".046"]    1.43 → ["1.43"]   33 → ["33", "33.00"]
+function priceVariants(price) {
+  if (!Number.isFinite(price)) return [];
+  const variants = new Set();
+  // Canonique
+  variants.add(String(price));
+  // Sans leading zero pour < 1
+  if (price < 1 && price > 0) {
+    const s = String(price);
+    if (s.startsWith('0.')) variants.add(s.slice(1));
+  }
+  // Variations fixed(2) et fixed(3) pour gérer "1.43" et "1.430"
+  variants.add(price.toFixed(2));
+  variants.add(price.toFixed(3));
+  variants.add(price.toFixed(4));
+  // Strip trailing zeros : "1.430" → "1.43"
+  for (const v of [...variants]) {
+    if (v.includes('.')) {
+      variants.add(v.replace(/0+$/, '').replace(/\.$/, ''));
+    }
+  }
+  return [...variants].filter(v => v && v.length >= 2);
+}
+
+// Pour un trade donné (ticker + entryPrice), trouve l'alerte la + pertinente
+// parmi les candidats (entries du jour ce ticker, ordre ASC).
+//
+// Stratégie :
+//   1. Si une candidate contient le prix d'entrée (texte) → return celle-là.
+//      C'est l'appel d'entrée original (ex: ZZ "TDIC 1.43-3.19" pour
+//      trade TDIC entry=1.43).
+//   2. Sinon → la plus ancienne candidate du jour. Heuristique : le premier
+//      message d'un ticker est généralement le call d'entrée plutôt que les
+//      updates/target hits qui arrivent après.
+function pickAlertForTrade(candidatesAsc, trade) {
+  if (!candidatesAsc || candidatesAsc.length === 0) return null;
+  const variants = priceVariants(trade.entryPrice);
+  for (const v of variants) {
+    const match = candidatesAsc.find(m => {
+      const c = String(m.content || '');
+      // \b évite "1.43" matchant "1.434". On utilise un check char-bornes
+      // simple — les content sont du texte libre, regex coûte.
+      const idx = c.indexOf(v);
+      if (idx === -1) return false;
+      const before = idx === 0 ? ' ' : c[idx - 1];
+      const after = idx + v.length >= c.length ? ' ' : c[idx + v.length];
+      return !/[\d.]/.test(before) && !/\d/.test(after);
+    });
+    if (match) return match;
+  }
+  // Fallback : la première (la plus ancienne) entry du jour pour ce ticker.
+  return candidatesAsc[0];
+}
+
 // Génère les PNG base64 des alertes du jour pour le AlertsParadePhase.
 // Renvoie `[]` si DB indispo, aucune alerte entry, ou canvas KO.
 // `deps` permet de mocker getMessagesByTsRange/generateImage en test.
 //
-// `tradeTickers` (optionnel) = liste des tickers présents dans le récap
-// OCR. Si fourni, seules les alertes des tickers du récap sont incluses
-// dans la parade — évite qu'un signal $AAPL défile alors que $AAPL n'est
-// même pas dans le tableau. Si vide ou non fourni, toutes les entries du
-// jour sont prises (comportement legacy).
+// `trades` (optionnel) = trades OCR du récap (array de {ticker, entryPrice, hodPrice}).
+// Si fourni, on construit la parade en sélectionnant POUR CHAQUE TRADE
+// l'alerte du jour qui matche au mieux (prix d'entrée présent dans le
+// content, sinon la + ancienne pour ce ticker). Ça évite que la parade
+// soit dominée par les target hits / updates qui arrivent après le call
+// original.
+//
+// Si trades est vide/non fourni, toutes les entries du jour sont prises
+// (comportement legacy).
 async function buildAlertImagesBase64({
   maxAlerts = DEFAULT_MAX_ALERTS,
-  tradeTickers = null,
+  trades = null,
   deps = {},
 } = {}) {
   const _getMessagesByTsRange = deps.getMessagesByTsRange || getMessagesByTsRange;
@@ -137,18 +196,36 @@ async function buildAlertImagesBase64({
     return [];
   }
 
-  // Set des tickers du récap pour O(1) lookup. Si null/vide → on ne filtre pas.
-  const tickerSet = Array.isArray(tradeTickers) && tradeTickers.length > 0
-    ? new Set(tradeTickers.map(normalizeTicker))
-    : null;
+  // getMessagesByTsRange retourne DESC — on inverse pour ordre ASC (chronologique).
+  const allEntriesAsc = messages.filter(m => m.type === 'entry').reverse();
 
-  // getMessagesByTsRange retourne DESC — on inverse pour avoir l'ordre
-  // chronologique de la journée (alerte 1 = plus ancienne).
-  const entryAlerts = messages
-    .filter(m => m.type === 'entry')
-    .filter(m => tickerSet === null || tickerSet.has(normalizeTicker(m.ticker)))
-    .reverse()
-    .slice(0, maxAlerts);
+  // Mode "récap" : per-trade matching → one alert per trade row, in
+  // chronological order.
+  let entryAlerts;
+  if (Array.isArray(trades) && trades.length > 0) {
+    const seenIds = new Set();
+    const picked = [];
+    for (const trade of trades) {
+      const tNorm = normalizeTicker(trade && trade.ticker);
+      if (!tNorm) continue;
+      const candidates = allEntriesAsc.filter(m => normalizeTicker(m.ticker) === tNorm);
+      const chosen = pickAlertForTrade(candidates, trade);
+      if (!chosen) continue;
+      // Dedupe : si le même message a été choisi pour 2 trades (ex: le call
+      // mentionne plusieurs prix), on ne le rend qu'une fois.
+      const key = chosen.id != null ? `id:${chosen.id}` : `ts:${chosen.ts}:${chosen.author}`;
+      if (seenIds.has(key)) continue;
+      seenIds.add(key);
+      picked.push(chosen);
+    }
+    // Tri chronologique (la première à apparaître à l'écran = la + ancienne)
+    picked.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+    entryAlerts = picked.slice(0, maxAlerts);
+  } else {
+    // Legacy : toutes les entries du jour, capées à maxAlerts (plus anciennes en 1er).
+    entryAlerts = allEntriesAsc.slice(0, maxAlerts);
+  }
+
   if (entryAlerts.length === 0) return [];
 
   const out = [];
@@ -228,15 +305,17 @@ async function handleRecapImageMessage({ message, channelId, deps = {} }) {
     }
 
     // Génère les PNG des alertes du jour (DB query + canvas render).
-    // tradeTickers = liste des tickers du récap OCR → filtre les alertes
-    // de la parade pour ne garder que celles qui ont une ligne dans le
-    // tableau (cohérence visuelle : pas d'alerte $AAPL si $AAPL n'est
-    // pas dans le récap). Erreurs absorbed — on enqueue quand même,
-    // alertImages=[] est OK (la composition affiche un fallback).
-    const tradeTickers = (ocrResult.trades || [])
-      .map(t => t && t.ticker)
-      .filter(Boolean);
-    const alertImagesBase64 = await _buildAlertImagesBase64({ tradeTickers, deps }).catch(err => {
+    // On passe les trades du récap OCR — buildAlertImagesBase64 fait du
+    // per-trade matching : pour chaque trade, sélectionne l'alerte du
+    // jour dont le content contient le prix d'entrée (= appel original),
+    // fallback à la + ancienne pour le ticker sinon. Évite que la parade
+    // soit submergée par des target hits / updates postés après les calls.
+    // Erreurs absorbed — on enqueue quand même, alertImages=[] est OK
+    // (la composition affiche un fallback).
+    const alertImagesBase64 = await _buildAlertImagesBase64({
+      trades: ocrResult.trades || [],
+      deps,
+    }).catch(err => {
       console.warn(`[recap-image-handler] alert images failed: ${err.message}`);
       return [];
     });

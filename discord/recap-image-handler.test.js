@@ -148,42 +148,72 @@ test('buildAlertImagesBase64 filters to type=entry, reverses order (chronologica
   assert.strictEqual(Buffer.from(result[0].base64, 'base64').toString(), 'PNG-A-$TSLA 1');
 });
 
-test('buildAlertImagesBase64 with tradeTickers filters to only those tickers', async () => {
-  // 4 entries du jour, mais le récap n'en mentionne que 2 ($TDIC, $HAO)
-  // → la parade ne doit afficher que TDIC et HAO.
+test('buildAlertImagesBase64 picks the entry whose content contains the trade price', async () => {
+  // 3 messages TDIC : un call original (1.43) puis 2 target hits.
+  // Le récap a entryPrice=1.43, donc on doit choisir le call original.
+  // DB retourne DESC (plus récent en premier).
   const messages = [
-    { type: 'entry', author: 'ZZ', content: '$AAPL 150', ts: '2026-05-13T13:00:00-04:00', ticker: 'AAPL' },
-    { type: 'entry', author: 'ZZ', content: '$TDIC 1.43', ts: '2026-05-13T13:30:00-04:00', ticker: 'TDIC' },
-    { type: 'entry', author: 'ZZ', content: '$NVDA 800', ts: '2026-05-13T14:00:00-04:00', ticker: 'NVDA' },
-    { type: 'entry', author: 'ZZ', content: '$HAO 0.046', ts: '2026-05-13T14:30:00-04:00', ticker: 'HAO' },
+    { type: 'entry', author: 'ZZ', content: 'TDIC 25 nailed', ts: '2026-05-13T19:33:00Z', ticker: 'TDIC' },
+    { type: 'entry', author: 'ZZ', content: 'TDIC 25 above', ts: '2026-05-13T19:21:00Z', ticker: 'TDIC' },
+    { type: 'entry', author: 'ZZ', content: 'TDIC 1.43-3.19 entry', ts: '2026-05-13T13:32:00Z', ticker: 'TDIC' },
   ];
   const result = await buildAlertImagesBase64({
-    tradeTickers: ['$TDIC', '$HAO'],
+    trades: [{ ticker: '$TDIC', entryPrice: 1.43, hodPrice: 3.71 }],
     deps: {
       getMessagesByTsRange: () => messages,
       generateImage: (author, content) => Promise.resolve(Buffer.from(`PNG-${content}`)),
       dateKey: '2026-05-13',
     },
   });
-  assert.strictEqual(result.length, 2);
-  // Inversion: AAPL/TDIC/NVDA/HAO → après filter → TDIC, HAO → après reverse → HAO, TDIC
-  // Mais DB renvoie déjà DESC (HAO le plus récent en premier),
-  // donc le mock messages devrait être en ordre DESC pour matcher.
-  // Réécriture : on simule un retour DESC réel.
-  const tickers = result.map(r => r.ticker);
-  assert.ok(tickers.includes('TDIC'));
-  assert.ok(tickers.includes('HAO'));
+  assert.strictEqual(result.length, 1);
+  assert.strictEqual(Buffer.from(result[0].base64, 'base64').toString(), 'PNG-TDIC 1.43-3.19 entry');
 });
 
-test('buildAlertImagesBase64 with tradeTickers normalizes $ prefix differences', async () => {
+test('buildAlertImagesBase64 falls back to earliest entry when price is not in any content', async () => {
+  // Aucun content ne contient "1.43" exactement → fallback = la + ancienne TDIC.
   const messages = [
-    { type: 'entry', author: 'ZZ', content: 'TDIC 1.43', ts: 't', ticker: 'TDIC' }, // DB sans $
+    { type: 'entry', author: 'ZZ', content: 'TDIC 25 nailed', ts: '2026-05-13T19:33:00Z', ticker: 'TDIC' },
+    { type: 'entry', author: 'ZZ', content: 'TDIC bouncing off 9ema', ts: '2026-05-13T13:32:00Z', ticker: 'TDIC' },
   ];
   const result = await buildAlertImagesBase64({
-    tradeTickers: ['$TDIC'], // OCR avec $
+    trades: [{ ticker: '$TDIC', entryPrice: 1.43, hodPrice: 3.71 }],
     deps: {
       getMessagesByTsRange: () => messages,
-      generateImage: () => Promise.resolve(Buffer.from('p')),
+      generateImage: (author, content) => Promise.resolve(Buffer.from(`PNG-${content}`)),
+      dateKey: '2026-05-13',
+    },
+  });
+  assert.strictEqual(result.length, 1);
+  // Fallback = la + ancienne (13:32 = "bouncing off 9ema"), pas le 19:33 nailed
+  assert.strictEqual(Buffer.from(result[0].base64, 'base64').toString(), 'PNG-TDIC bouncing off 9ema');
+});
+
+test('buildAlertImagesBase64 with leading-zero price variants (".046" matches 0.046)', async () => {
+  const messages = [
+    { type: 'entry', author: 'ZZ', content: 'HAO .046 Lotto', ts: '2026-05-13T14:00:00Z', ticker: 'HAO' },
+  ];
+  const result = await buildAlertImagesBase64({
+    trades: [{ ticker: '$HAO', entryPrice: 0.046, hodPrice: 0.071 }],
+    deps: {
+      getMessagesByTsRange: () => messages,
+      generateImage: (author, content) => Promise.resolve(Buffer.from(`PNG-${content}`)),
+      dateKey: '2026-05-13',
+    },
+  });
+  assert.strictEqual(result.length, 1);
+  assert.strictEqual(Buffer.from(result[0].base64, 'base64').toString(), 'PNG-HAO .046 Lotto');
+});
+
+test('buildAlertImagesBase64 only includes tickers from trades (drops $AAPL not in recap)', async () => {
+  const messages = [
+    { type: 'entry', author: 'ZZ', content: 'AAPL 150 entry', ts: '2026-05-13T13:00:00Z', ticker: 'AAPL' },
+    { type: 'entry', author: 'ZZ', content: 'TDIC 1.43 entry', ts: '2026-05-13T13:30:00Z', ticker: 'TDIC' },
+  ];
+  const result = await buildAlertImagesBase64({
+    trades: [{ ticker: '$TDIC', entryPrice: 1.43, hodPrice: 3.71 }],
+    deps: {
+      getMessagesByTsRange: () => messages,
+      generateImage: (author, content) => Promise.resolve(Buffer.from(`PNG-${content}`)),
       dateKey: '2026-05-13',
     },
   });
@@ -191,12 +221,31 @@ test('buildAlertImagesBase64 with tradeTickers normalizes $ prefix differences',
   assert.strictEqual(result[0].ticker, 'TDIC');
 });
 
-test('buildAlertImagesBase64 with empty tradeTickers keeps all entries (legacy)', async () => {
+test('buildAlertImagesBase64 dedupes when same alert is picked for multiple trades', async () => {
+  // Un seul message qui contient les 2 prix → ne doit apparaître qu'une fois.
   const messages = [
-    { type: 'entry', author: 'ZZ', content: '$AAPL 150', ts: 't', ticker: 'AAPL' },
+    { id: 1, type: 'entry', author: 'ZZ', content: 'OCG 2.10 and re-entry at 2.25', ts: '2026-05-13T13:00:00Z', ticker: 'OCG' },
   ];
   const result = await buildAlertImagesBase64({
-    tradeTickers: [],
+    trades: [
+      { ticker: '$OCG', entryPrice: 2.10, hodPrice: 2.98 },
+      { ticker: '$OCG', entryPrice: 2.25, hodPrice: 2.60 },
+    ],
+    deps: {
+      getMessagesByTsRange: () => messages,
+      generateImage: () => Promise.resolve(Buffer.from('p')),
+      dateKey: '2026-05-13',
+    },
+  });
+  assert.strictEqual(result.length, 1);
+});
+
+test('buildAlertImagesBase64 with empty trades keeps all entries (legacy)', async () => {
+  const messages = [
+    { type: 'entry', author: 'ZZ', content: '$AAPL 150', ts: '2026-05-13T13:00:00Z', ticker: 'AAPL' },
+  ];
+  const result = await buildAlertImagesBase64({
+    trades: [],
     deps: {
       getMessagesByTsRange: () => messages,
       generateImage: () => Promise.resolve(Buffer.from('p')),
@@ -339,9 +388,13 @@ test('handleRecapImageMessage enqueues a render job with output channel set and 
   assert.strictEqual(data.longTermInvestments[0].ticker, '$DXYZ');
   assert.strictEqual(data.alertImagesBase64[0].base64, 'XX');
 
-  // Le filtre par ticker du récap doit avoir été propagé à buildAlertImagesBase64
+  // Les trades du récap doivent être propagés à buildAlertImagesBase64
+  // (pour le per-trade matching prix → alerte).
   assert.ok(alertOpts);
-  assert.deepStrictEqual(alertOpts.tradeTickers, ['$TSLA', '$TDIC']);
+  assert.ok(Array.isArray(alertOpts.trades));
+  assert.strictEqual(alertOpts.trades.length, 2);
+  assert.strictEqual(alertOpts.trades[0].ticker, '$TSLA');
+  assert.strictEqual(alertOpts.trades[1].ticker, '$TDIC');
 });
 
 test('handleRecapImageMessage skips when OCR returns no trades', async () => {

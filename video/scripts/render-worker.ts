@@ -161,8 +161,8 @@ export async function fetchChartForJob(job: RenderJob): Promise<string | null> {
   // le prix d'entrée). Exit : flèche down + label = exit price formaté
   // (pointe depuis le haut vers le prix de sortie).
   //
-  // Offset 0.3% — flèches collées à la candle, à peine décalées pour
-  // éviter le chevauchement direct avec le body.
+  // Offset 1% — gap clair entre la flèche et la candle (~$4 sur TSLA $400).
+  // Sous 1% la flèche tombe encore dans le range high/low de la candle.
   const arrows: Array<{
     datetime: string;
     price: number;
@@ -170,7 +170,7 @@ export async function fetchChartForJob(job: RenderJob): Promise<string | null> {
     direction?: 'up' | 'down';
     fontBold?: boolean;
   }> = [];
-  const ARROW_OFFSET = 0.003;
+  const ARROW_OFFSET = 0.01;
 
   if (Number.isFinite(job.entryPrice)) {
     arrows.push({

@@ -70,9 +70,9 @@ function registerChartTestRoutes(app, requireAuth) {
       return '$' + n.toFixed(4);
     };
 
-    // Offset 0.3% — flèches collées à la candle, à peine décalées pour
-    // éviter le chevauchement direct avec le body.
-    const ARROW_OFFSET = 0.003;
+    // Offset 1% — gap clair entre la flèche et la candle (~$4 sur TSLA $400).
+    // 0.3% laissait la flèche dans le range de la candle (high/low wicks).
+    const ARROW_OFFSET = 0.01;
     const arrows = [];
     if (Number.isFinite(entryPriceNum)) {
       arrows.push({

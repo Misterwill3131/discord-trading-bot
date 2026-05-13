@@ -259,32 +259,29 @@ async function drawRichLine(ctx, text, x, y, fontSize) {
       if (style) {
         const label = '@' + style.name;
         const labelW = ctx.measureText(label).width;
-        const pillH = fontSize + 4;
-        const pillY = y - fontSize * 0.85;
+        // Pill dimensions calées sur le texte (cap height + petit padding).
+        // pillH = fontSize donne un pill qui couvre les majuscules + une
+        // ligne de descender, EXACTEMENT comme le client Discord. pillY
+        // positionné pour aligner le baseline du texte du pill avec le
+        // baseline ambiant — pas besoin de textBaseline = 'middle'.
+        const pillH = fontSize;
+        const pillY = y - fontSize * 0.78;
         const prevFill = ctx.fillStyle;
         // Fond pill (couleur du rôle à bgOpacity, default 18%).
-        // Override per-role possible via style.bgOpacity dans CUSTOM_ROLES.
         const bgOpacity = typeof style.bgOpacity === 'number' ? style.bgOpacity : 0.18;
         ctx.fillStyle = hexToRgba(style.color, bgOpacity);
         ctx.beginPath();
         if (typeof ctx.roundRect === 'function') {
           ctx.roundRect(cx, pillY, labelW + 6, pillH, 3);
         } else {
-          // Fallback si roundRect n'est pas dispo dans la version de canvas.
           ctx.rect(cx, pillY, labelW + 6, pillH);
         }
         ctx.fill();
-        // Texte du label par-dessus, centré verticalement dans le pill via
-        // textBaseline = 'middle' à la coordonnée Y du centre du pill.
-        // Évite que le texte soit calé en haut (cas par défaut quand on
-        // dessine à y avec baseline alphabetic).
-        const prevBaseline = ctx.textBaseline;
-        ctx.textBaseline = 'middle';
+        // Texte du label par-dessus, MÊME baseline que le texte ambient
+        // → alignement vertical parfait avec ce qui suit.
         ctx.fillStyle = style.color;
-        ctx.fillText(label, cx + 3, pillY + pillH / 2);
-        // Restaurer la couleur + baseline pour le texte qui suit.
+        ctx.fillText(label, cx + 3, y);
         ctx.fillStyle = prevFill;
-        ctx.textBaseline = prevBaseline;
         cx += labelW + 6;
       } else {
         const raw = '<@&' + seg.id + '>';
@@ -296,8 +293,8 @@ async function drawRichLine(ctx, text, x, y, fontSize) {
       if (style) {
         const label = style.label;
         const labelW = ctx.measureText(label).width;
-        const pillH = fontSize + 4;
-        const pillY = y - fontSize * 0.85;
+        const pillH = fontSize;
+        const pillY = y - fontSize * 0.78;
         const prevFill = ctx.fillStyle;
         ctx.fillStyle = hexToRgba(style.color, 0.18);
         ctx.beginPath();
@@ -307,12 +304,9 @@ async function drawRichLine(ctx, text, x, y, fontSize) {
           ctx.rect(cx, pillY, labelW + 6, pillH);
         }
         ctx.fill();
-        const prevBaseline = ctx.textBaseline;
-        ctx.textBaseline = 'middle';
         ctx.fillStyle = style.color;
-        ctx.fillText(label, cx + 3, pillY + pillH / 2);
+        ctx.fillText(label, cx + 3, y);
         ctx.fillStyle = prevFill;
-        ctx.textBaseline = prevBaseline;
         cx += labelW + 6;
       } else {
         const raw = '@' + seg.name;
@@ -432,8 +426,8 @@ async function drawRichLineTruncated(ctx, text, x, y, fontSize, maxWidth) {
       if (st) {
         const label = '@' + st.name;
         const lblW = ctx.measureText(label).width;
-        const pillH = fontSize + 4;
-        const pillY = y - pillH / 2;
+        const pillH = fontSize;
+        const pillY = y - fontSize * 0.78;
         const prevFill = ctx.fillStyle;
         const bgOpacity = typeof st.bgOpacity === 'number' ? st.bgOpacity : 0.18;
         ctx.fillStyle = hexToRgba(st.color, bgOpacity);
@@ -441,12 +435,9 @@ async function drawRichLineTruncated(ctx, text, x, y, fontSize, maxWidth) {
         if (typeof ctx.roundRect === 'function') ctx.roundRect(cx, pillY, lblW + 6, pillH, 3);
         else                                      ctx.rect(cx, pillY, lblW + 6, pillH);
         ctx.fill();
-        const prevBaseline = ctx.textBaseline;
-        ctx.textBaseline = 'middle';
         ctx.fillStyle = st.color;
-        ctx.fillText(label, cx + 3, pillY + pillH / 2);
+        ctx.fillText(label, cx + 3, y);
         ctx.fillStyle = prevFill;
-        ctx.textBaseline = prevBaseline;
         cx += lblW + 6;
       } else {
         const raw = '<@&' + seg.id + '>';
@@ -458,20 +449,17 @@ async function drawRichLineTruncated(ctx, text, x, y, fontSize, maxWidth) {
       if (st) {
         const label = st.label;
         const lblW = ctx.measureText(label).width;
-        const pillH = fontSize + 4;
-        const pillY = y - pillH / 2;
+        const pillH = fontSize;
+        const pillY = y - fontSize * 0.78;
         const prevFill = ctx.fillStyle;
         ctx.fillStyle = hexToRgba(st.color, 0.18);
         ctx.beginPath();
         if (typeof ctx.roundRect === 'function') ctx.roundRect(cx, pillY, lblW + 6, pillH, 3);
         else                                      ctx.rect(cx, pillY, lblW + 6, pillH);
         ctx.fill();
-        const prevBaseline = ctx.textBaseline;
-        ctx.textBaseline = 'middle';
         ctx.fillStyle = st.color;
-        ctx.fillText(label, cx + 3, pillY + pillH / 2);
+        ctx.fillText(label, cx + 3, y);
         ctx.fillStyle = prevFill;
-        ctx.textBaseline = prevBaseline;
         cx += lblW + 6;
       } else {
         const raw = '@' + seg.name;

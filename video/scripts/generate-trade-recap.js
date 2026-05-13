@@ -10,17 +10,22 @@
 // 4. Render via Remotion CLI → MP4 dans video/out/
 //
 // CLI flags :
-//   --no-db         : skip query DB. AlertsParade utilise les paths déjà
-//                     listés dans template.props.alertImages (ou vide).
-//   --date=YYYY-MM-DD : override la date de query (default : aujourd'hui).
-//   --no-render     : skip Remotion render. Juste génère les PNG alertes.
-//   --max-alerts=N  : limite à N alertes max (default: 30). Au-delà la
-//                     parade défile trop vite pour être lisible.
+//   --no-db          : skip query DB. AlertsParade utilise les paths déjà
+//                      listés dans template.props.alertImages (ou vide).
+//   --date=YYYY-MM-DD: override la date de query (default : trading day NY).
+//   --no-render      : skip Remotion render. Juste génère les PNG alertes.
+//   --max-alerts=N   : limite à N alertes max (default: 12). Plus = scroll
+//                      plus long en feed-style.
+//   --from-image=PATH: OCR cette image (tableau récap TOB) pour remplir
+//                      automatiquement trades + longTermInvestment dans
+//                      le template avant render. Pratique pour le workflow
+//                      "screenshot du tableau → vidéo automatique".
 //
 // Usage :
 //   cd video && npm run generate:trade-recap
 //   cd video && npm run generate:trade-recap -- --no-db
 //   cd video && npm run generate:trade-recap -- --date=2026-05-12
+//   cd video && npm run generate:trade-recap -- --from-image=../recap.png
 // ─────────────────────────────────────────────────────────────────────
 
 const fs = require('fs');
@@ -55,16 +60,38 @@ function parseArgs() {
   // Default 12 alertes — feed-style : ~8 visibles + 4 qui scroll au-dessus.
   // À 1s entre 2 apparitions : phase = (12-1)*1s + ~3s hold = ~14s parade.
   const maxAlerts = maxArg ? parseInt(maxArg.slice('--max-alerts='.length), 10) : 12;
-  return { noDb, noRender, date, maxAlerts };
+  const fromImageArg = args.find(a => a.startsWith('--from-image='));
+  const fromImage = fromImageArg ? fromImageArg.slice('--from-image='.length) : null;
+  return { noDb, noRender, date, maxAlerts, fromImage };
 }
 
 async function main() {
-  const { noDb, noRender, date, maxAlerts } = parseArgs();
+  const { noDb, noRender, date, maxAlerts, fromImage } = parseArgs();
 
   console.log('[gen-trade-recap] Pipeline démarré');
   console.log(`  Date : ${date}`);
   console.log(`  Mode : ${noDb ? 'no-db (utilise template.props.alertImages)' : 'DB query (genère PNG live)'}`);
   console.log(`  Max alerts : ${maxAlerts}`);
+  if (fromImage) console.log(`  OCR source : ${fromImage}`);
+
+  // ── 0. (Optionnel) OCR depuis image avant de charger le template ──
+  if (fromImage) {
+    const { parseRecapImage } = require('../../utils/parse-recap-image');
+    const imageAbs = path.resolve(fromImage);
+    console.log(`[gen-trade-recap] OCR Claude Vision sur ${imageAbs}…`);
+    const ocrResult = await parseRecapImage(imageAbs);
+    const { _meta } = ocrResult;
+    console.log(`[gen-trade-recap]   ✓ ${_meta.tradesCount} trades extracted (${_meta.latencyMs}ms)`);
+
+    // Override template props.trades + longTermInvestment + dateLabel
+    const template = JSON.parse(fs.readFileSync(TEMPLATE_PATH, 'utf8'));
+    template.props = template.props || {};
+    template.props.trades = ocrResult.trades;
+    template.props.longTermInvestment = ocrResult.longTermInvestment;
+    template.props.dateLabel = ocrResult.dateLabel;
+    fs.writeFileSync(TEMPLATE_PATH, JSON.stringify(template, null, 2) + '\n');
+    console.log(`[gen-trade-recap]   ✓ Template mis à jour avec ${ocrResult.trades.length} trades + longTerm=${ocrResult.longTermInvestment?.ticker || 'aucun'}`);
+  }
 
   // ── 1. Charge template ────────────────────────────────────────────
   if (!fs.existsSync(TEMPLATE_PATH)) {

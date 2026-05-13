@@ -499,7 +499,12 @@ async function generateImage(author, content, timestamp, options = {}) {
   ctx.closePath();
   ctx.clip();
 
-  const customAvatarUrl = CUSTOM_AVATARS[author];
+  // Lookup avatar : essaie d'abord la clé brute, puis une version
+  // normalisée (strip non-ASCII) pour gérer les pseudos type "✦Viking✦"
+  // qui doivent matcher CUSTOM_AVATARS['Viking']. On ne mute pas `author`
+  // — l'affichage texte garde les sparkles, seule la clé du dict est normalisée.
+  const normalizedAuthor = (author || '').replace(/[^A-Za-z0-9_ -]/g, '').trim();
+  const customAvatarUrl = CUSTOM_AVATARS[author] || CUSTOM_AVATARS[normalizedAuthor];
   if (customAvatarUrl) {
     try {
       const img = await loadImage(customAvatarUrl);
@@ -522,8 +527,10 @@ async function generateImage(author, content, timestamp, options = {}) {
   ctx.restore();
 
   // Initiales (uniquement si pas d'avatar custom).
+  // On utilise normalizedAuthor (ASCII-only) pour éviter qu'un pseudo
+  // "✦Viking✦" donne des initiales "✦V" (1er char unicode = blank glyph).
   if (!customAvatarUrl) {
-    const initials = (author || 'W').slice(0, 2).toUpperCase();
+    const initials = (normalizedAuthor || author || 'W').slice(0, 2).toUpperCase();
     ctx.fillStyle = CONFIG.AVATAR_TEXT_COLOR;
     ctx.font = 'bold 14px ' + FONT;
     ctx.textAlign = 'center';
@@ -535,7 +542,9 @@ async function generateImage(author, content, timestamp, options = {}) {
 
   const nameY = PADDING_V + NAME_H - 3;
 
-  // Username — rouge pour Legacy Trading, dégradé rose pour les autres.
+  // Username — blanc par défaut (match Discord), rouge pour Legacy Trading.
+  // On retire le dégradé rose-magenta qui rendait l'image différente du
+  // client Discord. Couleur depuis CONFIG.USERNAME_COLOR (= '#ffffff').
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   ctx.font = '16px ' + FONT;
@@ -543,57 +552,23 @@ async function generateImage(author, content, timestamp, options = {}) {
   if (author === 'Legacy Trading') {
     ctx.fillStyle = '#e84040';
   } else {
-    const nameGrad = ctx.createLinearGradient(CONTENT_X, 0, CONTENT_X + nameW, 0);
-    nameGrad.addColorStop(0, '#ff79f2');
-    nameGrad.addColorStop(1, '#d649cc');
-    ctx.fillStyle = nameGrad;
+    ctx.fillStyle = CONFIG.USERNAME_COLOR;
   }
   ctx.fillText(author || 'Z', CONTENT_X, nameY);
 
-  // Badge tag_boom.png
-  const TAG_H = 18;
-  const badgeX = CONTENT_X + nameW + 6;
-  const badgeY = nameY - TAG_H + 2;
-  let BADGE_W = 0;
-  try {
-    const tagImg = await loadImage(TAG_BOOM_PATH);
-    const tagRatio = tagImg.width / tagImg.height;
-    BADGE_W = Math.round(TAG_H * tagRatio);
-    ctx.drawImage(tagImg, badgeX, badgeY, BADGE_W, TAG_H);
-  } catch (e) {
-    ctx.font = 'bold 10px ' + FONT;
-    ctx.fillStyle = '#ffffff';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('BOOM', badgeX, badgeY + TAG_H / 2);
-    ctx.textBaseline = 'alphabetic';
-    BADGE_W = 50;
-  }
-
-  // Logo BOOM circulaire
-  const LOGO_SIZE = 18;
-  const logoX = badgeX + BADGE_W + 6;
-  const logoCY = badgeY + TAG_H / 2;
-  let logoEndX = logoX;
-  try {
-    const logoImg = await loadImage(LOGO_PATH);
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(logoX + LOGO_SIZE / 2, logoCY, LOGO_SIZE / 2, 0, Math.PI * 2);
-    ctx.closePath();
-    ctx.clip();
-    ctx.drawImage(logoImg, logoX, logoCY - LOGO_SIZE / 2, LOGO_SIZE, LOGO_SIZE);
-    ctx.restore();
-    logoEndX = logoX + LOGO_SIZE + 6;
-  } catch (e) {
-    logoEndX = logoX;
-  }
+  // Pas de badge BOOM/APP — on reproduit fidèlement le rendu Discord d'un
+  // message de bot tel qu'il apparaît côté client (Discord lui-même ajoute
+  // le pill APP, on ne le re-dessine pas par-dessus). Le timestamp colle
+  // directement après le nom, avec un padding de 6px.
+  const TIME_GAP = 6;
+  const timeX = CONTENT_X + nameW + TIME_GAP;
 
   // Heure fuseau NY (24h).
   const d = timestamp ? new Date(timestamp) : new Date();
   const timeStr = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/New_York' });
   ctx.fillStyle = CONFIG.TIME_COLOR;
   ctx.font = '12px ' + FONT;
-  ctx.fillText(timeStr, logoEndX, nameY - 1);
+  ctx.fillText(timeStr, timeX, nameY - 1);
 
   // Corps du message — rendu rich-text (emojis Discord, mentions de rôle).
   ctx.fillStyle = CONFIG.MESSAGE_COLOR;
@@ -649,7 +624,12 @@ async function drawMessageBlock(ctx, author, content, timestamp, yStart, W) {
   ctx.closePath();
   ctx.clip();
 
-  const customAvatarUrl = CUSTOM_AVATARS[author];
+  // Lookup avatar : essaie d'abord la clé brute, puis une version
+  // normalisée (strip non-ASCII) pour gérer les pseudos type "✦Viking✦"
+  // qui doivent matcher CUSTOM_AVATARS['Viking']. On ne mute pas `author`
+  // — l'affichage texte garde les sparkles, seule la clé du dict est normalisée.
+  const normalizedAuthor = (author || '').replace(/[^A-Za-z0-9_ -]/g, '').trim();
+  const customAvatarUrl = CUSTOM_AVATARS[author] || CUSTOM_AVATARS[normalizedAuthor];
   if (customAvatarUrl) {
     try {
       const img = await loadImage(customAvatarUrl);

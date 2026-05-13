@@ -49,7 +49,8 @@ const CUSTOM_AVATARS = {
 // dans cette table, une mention <@&id> est rendue comme un pill cyan
 // "@nom". Sinon la chaîne brute reste affichée.
 const CUSTOM_ROLES = {
-  '1497256488274624565': { name: 'Swing', color: '#3498db' },
+  '1497256488274624565': { name: 'Swing',    color: '#3498db' },
+  '1330929339134640179': { name: 'Momentum', color: '#5865f2' },
 };
 
 // Mentions spéciales Discord (@everyone, @here). Rendues comme pill avec
@@ -95,7 +96,10 @@ const CONFIG = {
   FLAME_TOP:            '#ffd000',     // Couleur sommet flamme (jaune-or)
 
   // ── Nom utilisateur ──────────────────────────────────────────────────────
-  USERNAME_COLOR:       '#D649CC',     // Couleur du nom (violet/rose)
+  // Blanc par défaut pour matcher l'apparence Discord (le client utilise
+  // la couleur du rôle le plus haut, sinon blanc). Override par auteur
+  // possible dans generateImage (ex: Legacy Trading reste rouge).
+  USERNAME_COLOR:       '#ffffff',     // Couleur du nom (blanc par défaut)
   USERNAME_FONT_SIZE:   16,            // Taille police nom (px)
 
   // ── Horodatage ───────────────────────────────────────────────────────────

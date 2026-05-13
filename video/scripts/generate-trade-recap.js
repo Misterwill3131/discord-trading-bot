@@ -44,7 +44,13 @@ function parseArgs() {
   const noDb = args.includes('--no-db');
   const noRender = args.includes('--no-render');
   const dateArg = args.find(a => a.startsWith('--date='));
-  const date = dateArg ? dateArg.slice('--date='.length) : new Date().toISOString().slice(0, 10);
+  // Trading day default = date courante en America/New_York (pas UTC),
+  // sinon le script run après 00h UTC (= 19h ET) prend le jour suivant
+  // alors qu'on veut encore le jour de trading qui vient de se terminer.
+  // Override via --date=YYYY-MM-DD pour un récap rétroactif.
+  const date = dateArg
+    ? dateArg.slice('--date='.length)
+    : new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
   const maxArg = args.find(a => a.startsWith('--max-alerts='));
   // Default 12 alertes — feed-style : ~8 visibles + 4 qui scroll au-dessus.
   // À 1s entre 2 apparitions : phase = (12-1)*1s + ~3s hold = ~14s parade.

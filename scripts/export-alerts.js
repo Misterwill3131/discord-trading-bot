@@ -45,7 +45,9 @@ function parseArgs() {
     const arg = args.find(a => a.startsWith(`--${name}=`));
     return arg ? arg.slice(name.length + 3) : null;
   };
-  const todayUTC = new Date().toISOString().slice(0, 10);
+  // Trading day default = date courante America/New_York (pas UTC).
+  // À 00h UTC = 19h ET, on veut encore le jour de trading actuel.
+  const todayUTC = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
   const date = getFlag('date');
   const from = getFlag('from');
   const to = getFlag('to');

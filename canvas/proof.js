@@ -262,8 +262,10 @@ async function drawRichLine(ctx, text, x, y, fontSize) {
         const pillH = fontSize + 4;
         const pillY = y - fontSize * 0.85;
         const prevFill = ctx.fillStyle;
-        // Fond pill (couleur du rôle à 18% d'opacity).
-        ctx.fillStyle = hexToRgba(style.color, 0.18);
+        // Fond pill (couleur du rôle à bgOpacity, default 18%).
+        // Override per-role possible via style.bgOpacity dans CUSTOM_ROLES.
+        const bgOpacity = typeof style.bgOpacity === 'number' ? style.bgOpacity : 0.18;
+        ctx.fillStyle = hexToRgba(style.color, bgOpacity);
         ctx.beginPath();
         if (typeof ctx.roundRect === 'function') {
           ctx.roundRect(cx, pillY, labelW + 6, pillH, 3);
@@ -424,7 +426,8 @@ async function drawRichLineTruncated(ctx, text, x, y, fontSize, maxWidth) {
         const pillH = fontSize + 4;
         const pillY = y - pillH / 2;
         const prevFill = ctx.fillStyle;
-        ctx.fillStyle = hexToRgba(st.color, 0.18);
+        const bgOpacity = typeof st.bgOpacity === 'number' ? st.bgOpacity : 0.18;
+        ctx.fillStyle = hexToRgba(st.color, bgOpacity);
         ctx.beginPath();
         if (typeof ctx.roundRect === 'function') ctx.roundRect(cx, pillY, lblW + 6, pillH, 3);
         else                                      ctx.rect(cx, pillY, lblW + 6, pillH);

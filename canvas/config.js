@@ -45,12 +45,14 @@ const CUSTOM_AVATARS = {
   'MsKim' : AV('MsKim.png'),
 };
 
-// Rôles personnalisés (id Discord → nom affiché + couleur). Si présent
-// dans cette table, une mention <@&id> est rendue comme un pill cyan
-// "@nom". Sinon la chaîne brute reste affichée.
+// Rôles personnalisés (id Discord → nom affiché + couleur + optionnel
+// bgOpacity). Si présent dans cette table, une mention <@&id> est rendue
+// comme un pill avec fond color×bgOpacity. Default bgOpacity = 0.18.
+// bgOpacity override utile quand la couleur native est très saturée
+// (ex: vert pur) et que le pill paraît trop vibrant à 18%.
 const CUSTOM_ROLES = {
   '1497256488274624565': { name: 'Swing',    color: '#3498db' },
-  '1330929339134640179': { name: 'Momentum', color: '#2ecc71' },
+  '1330929339134640179': { name: 'Momentum', color: '#2ecc71', bgOpacity: 0.144 },
 };
 
 // Mentions spéciales Discord (@everyone, @here). Rendues comme pill avec

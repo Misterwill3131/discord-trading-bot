@@ -61,7 +61,7 @@ async function enrichPropsWithCanvasImage(composition, props) {
         const buf = await generateImage(enriched.author, enriched.message, enriched.timestamp, { scale: 2 });
         enriched.entryImageDataUrl = `data:image/png;base64,${buf.toString('base64')}`;
       }
-    } else if (composition === 'BoomProof' && !enriched.proofImageDataUrl) {
+    } else if ((composition === 'ChartTemplate' || composition === 'BoomProof') && !enriched.proofImageDataUrl) {
       if (enriched.entryAuthor && enriched.entryMessage && enriched.entryTimestamp
           && enriched.exitAuthor && enriched.exitMessage && enriched.exitTimestamp) {
         const buf = await generateProofImage(

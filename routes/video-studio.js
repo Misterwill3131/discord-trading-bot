@@ -37,7 +37,7 @@ function loadTemplates() {
         return {
           id,
           name: data.name || id,
-          composition: data.composition || 'BoomProof',
+          composition: data.composition || 'ChartTemplate',
           description: data.description || '',
           props: data.props || {},
         };
@@ -77,10 +77,10 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
     if (!tpl) return res.status(404).json({ error: 'Template not found' });
 
     // Détecte la composition à utiliser
-    // - 'proof' image → BoomProof (a entry+exit)
+    // - 'proof' image → ChartTemplate (a entry+exit)
     // - 'signal' image → BoomEntry (single message)
     // Mais si le template force une composition spécifique, on la respecte.
-    const composition = tpl.composition || (item.type === 'proof' ? 'BoomProof' : 'BoomEntry');
+    const composition = tpl.composition || (item.type === 'proof' ? 'ChartTemplate' : 'BoomEntry');
 
     // Construit les props du job. Pour BoomEntry on n'utilise que author/message/timestamp,
     // mais render_jobs schema exige tous les champs entry_/exit_ — on duplique.
@@ -140,7 +140,7 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
         entry_author: author,
         entry_message: messageStr,
         entry_ts: ts,
-        // Pour BoomProof on aurait besoin de exit_* différents, mais ici
+        // Pour ChartTemplate on aurait besoin de exit_* différents, mais ici
         // on render depuis une seule image — on duplique.
         exit_author: author,
         exit_message: messageStr,

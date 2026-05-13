@@ -72,11 +72,11 @@ describe('SignalAlert composition', () => {
   });
 });
 
-describe('BoomProof composition', () => {
+describe('ChartTemplate composition', () => {
   test('is registered with correct dimensions and duration', async () => {
     const comp = await selectComposition({
       serveUrl: bundleLocation,
-      id: 'BoomProof',
+      id: 'ChartTemplate',
     });
     expect(comp.width).toBe(1080);
     expect(comp.height).toBe(1920);
@@ -87,7 +87,7 @@ describe('BoomProof composition', () => {
   test('has default props with expected fields', async () => {
     const comp = await selectComposition({
       serveUrl: bundleLocation,
-      id: 'BoomProof',
+      id: 'ChartTemplate',
     });
     expect(comp.defaultProps).toMatchObject({
       ticker: 'TSLA',
@@ -102,7 +102,7 @@ describe('BoomProof composition', () => {
   test('accepts inputProps override without throwing', async () => {
     const comp = await selectComposition({
       serveUrl: bundleLocation,
-      id: 'BoomProof',
+      id: 'ChartTemplate',
       inputProps: {
         ticker: 'NVDA',
         entryAuthor: 'Bora',
@@ -114,6 +114,6 @@ describe('BoomProof composition', () => {
         pnl: '+15%',
       },
     });
-    expect(comp.id).toBe('BoomProof');
+    expect(comp.id).toBe('ChartTemplate');
   });
 });

@@ -22,7 +22,7 @@ const { fontFamily } = loadInter('normal', { weights: ['400', '600', '700', '900
 // ─────────────────────────────────────────────────────────────────────
 // BoomEntry — Template pour annoncer un signal d'entry live
 // ─────────────────────────────────────────────────────────────────────
-// Pendant que BoomProof célèbre une exit gagnante, BoomEntry annonce
+// Pendant que ChartTemplate célèbre une exit gagnante, BoomEntry annonce
 // "🚨 LIVE: Z just called $TSLA" pour driver des conversions abonnement.
 //
 // Phases (~13s = 390 frames @ 30fps) :

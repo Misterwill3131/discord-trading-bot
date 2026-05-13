@@ -18,7 +18,7 @@ function timeDiffLabel(entry: string, exit: string): string {
   return `${days} day${days > 1 ? 's' : ''} later`;
 }
 
-// Phase 3 du BoomProof : 98 frames (~3.3s).
+// Phase 3 du ChartTemplate : 98 frames (~3.3s).
 // Background gradient + texte "X hours later" + CHART RÉEL (chart-img.com)
 // avec Ken Burns subtle zoom-in.
 //

@@ -3,7 +3,7 @@ import { pickOutroImage } from '../outro-pool';
 
 // ─────────────────────────────────────────────────────────────────────
 // SharedOutro — Outro brandé Temple of Boom partagé entre toutes les
-// compositions (BoomProof, BoomEntry, BoomRecap, etc.).
+// compositions (ChartTemplate, BoomEntry, BoomRecap, etc.).
 // ─────────────────────────────────────────────────────────────────────
 // Affiche une des 4 images PNG du pool (video/public/outro/) en fin de
 // vidéo, avec un Ken Burns zoom (1.0 → 1.1) sur la durée de la séquence

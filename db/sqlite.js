@@ -474,18 +474,32 @@ addColumnIfMissing('render_jobs', 'proof_image_base64', 'TEXT');
 // Optionnel : si null, le worker utilise les defaultProps de Root.tsx.
 addColumnIfMissing('render_jobs', 'template_name', 'TEXT');
 
-// ── render_jobs : composition (BoomProof | BoomEntry | etc.) ──────────
-// Nom de la composition Remotion à rendre. Default 'BoomProof' (rétro-
-// compat : tous les jobs créés avant cette migration sont des proof
-// videos). Permet maintenant de lancer des renders BoomEntry (signal
-// d'entry) depuis le dashboard /video-studio.
-addColumnIfMissing('render_jobs', 'composition', "TEXT NOT NULL DEFAULT 'BoomProof'");
+// ── render_jobs : composition (ChartTemplate | BoomEntry | etc.) ──────
+// Nom de la composition Remotion à rendre. Default 'ChartTemplate' (ex-
+// BoomProof renommé). Permet aussi BoomEntry (signal d'entry) et
+// BoomRecap (recap quotidien) depuis le dashboard /video-studio.
+addColumnIfMissing('render_jobs', 'composition', "TEXT NOT NULL DEFAULT 'ChartTemplate'");
+
+// ── Migration : ancien nom 'BoomProof' → 'ChartTemplate' ──────────────
+// Idempotente : si pas de rows à migrer, no-op. Cf rename de la
+// composition Remotion. Le worker accepte les 2 noms en rétrocompat
+// mais on migre pour cleanup et cohérence DB.
+try {
+  const result = db.prepare(`UPDATE render_jobs SET composition = 'ChartTemplate' WHERE composition = 'BoomProof'`).run();
+  if (result.changes > 0) {
+    console.log(`[db] migrated ${result.changes} render_jobs from 'BoomProof' to 'ChartTemplate'`);
+  }
+} catch (err) {
+  // Si la column n'existe pas encore au boot ultra-early, on swallow
+  // (addColumnIfMissing l'aura créée au-dessus).
+  console.warn('[db] BoomProof→ChartTemplate migration skipped:', err.message);
+}
 
 // ── render_jobs : recap_data pour BoomRecap composition ───────────────
 // JSON stringified de { tickers, runnersHit, runnersTotal, tagline, ... }
 // Utilisé uniquement pour composition='BoomRecap'. Le worker parse
 // uniquement si non-null. Nullable pour rétrocompat avec les jobs
-// BoomProof/BoomEntry existants.
+// ChartTemplate/BoomEntry existants.
 addColumnIfMissing('render_jobs', 'recap_data', 'TEXT');
 
 // ── render_jobs : tease_action + tease_subtext (picker contextuel) ─────
@@ -1734,12 +1748,12 @@ const stmtMarkRenderJobFailed = db.prepare(`
 
 function enqueueRenderJob(payload) {
   // proof_image_base64 + template_name + composition + recap_data + tease_*
-  // optionnels — si absents du payload, défaulte à null/'BoomProof'.
+  // optionnels — si absents du payload, défaulte à null/'ChartTemplate'.
   // better-sqlite3 plante si on ne fournit pas explicitement les @-paramètres.
   const result = stmtEnqueueRenderJob.run({
     proof_image_base64: null,
     template_name: null,
-    composition: 'BoomProof',
+    composition: 'ChartTemplate',
     recap_data: null,
     tease_action: null,
     tease_subtext: null,

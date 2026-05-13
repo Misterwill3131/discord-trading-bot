@@ -8,7 +8,7 @@ sans avoir à retaper toutes les valeurs.
 
 ```json
 {
-  "composition": "BoomEntry",  // ID de la composition (BoomEntry | BoomProof)
+  "composition": "BoomEntry",  // ID de la composition (BoomEntry | ChartTemplate)
   "name": "Aggressive Red",    // nom lisible (affiché par list)
   "description": "...",        // courte description
   "props": {
@@ -48,5 +48,5 @@ npm run template:render -- aggressive-red '{"ticker":"NVDA","pnl":"+47%"}'
 - `aggressive-red` (BoomEntry) — rouge intense, transitions slide, gros fonts
 - `calm-gold` (BoomEntry) — doré/jaune, fade smooth, music réduite
 - `minimal` (BoomEntry) — pas de SFX, fonts standards, design épuré
-- `classic-green` (BoomProof) — vert win standard
-- `gold-celebration` (BoomProof) — gold accent pour les gros wins
+- `classic-green` (ChartTemplate) — vert win standard
+- `gold-celebration` (ChartTemplate) — gold accent pour les gros wins

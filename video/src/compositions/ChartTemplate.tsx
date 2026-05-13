@@ -29,7 +29,7 @@ const TRANSITION_SERIES_END = 518;
 // Zod schema : Studio génère automatiquement un formulaire d'édition riche
 // (text fields validés, textareas multi-line, etc.) à partir de cette
 // définition. Les props peuvent être modifiées en live sans toucher au code.
-export const boomProofSchema = z.object({
+export const chartTemplateSchema = z.object({
   ticker: z.string().min(1).max(10).describe('Ticker stock (ex: TSLA, GDC)'),
   entryAuthor: z.string().min(1).describe("Pseudo Discord de l'analyste qui a posté l'entry"),
   entryMessage: zTextarea().describe("Texte du message d'entry"),
@@ -67,7 +67,7 @@ export const boomProofSchema = z.object({
 });
 
 // Inferred TypeScript type — cohérent avec le schema, plus de duplication.
-export type BoomProofProps = z.infer<typeof boomProofSchema>;
+export type ChartTemplateProps = z.infer<typeof chartTemplateSchema>;
 
 // Transitions courtes (~0.2s) entre chaque phase pour fluidité sans ralentir.
 // Sequences gonflées pour préserver le timing visuel d'origine malgré les overlaps.
@@ -85,12 +85,12 @@ const SFX_TRANS_2 = 108;        // Whoosh lifestyle → tease (~3.6s)
 const SFX_IMPACT = 222;         // Impact bass au climax du chart (~7.4s)
 const SFX_REVEAL = 460;         // Cha-ching sur le résultat final (~15.3s)
 
-export const BoomProof = ({
+export const ChartTemplate = ({
   ticker, entryAuthor, entryMessage: _entryMessage, entryTimestamp,
   exitAuthor, exitMessage: _exitMessage, exitTimestamp, pnl,
   proofImageDataUrl, chartImageDataUrl, teaseSubtext, ctaUrl,
   accentColor, musicVolume, sfxEnabled, lifestyleSeedOverride,
-}: BoomProofProps) => {
+}: ChartTemplateProps) => {
   const lifestyleSeed = lifestyleSeedOverride || `${ticker}-${entryTimestamp}`;
   // Caption pour la phase ProofImage : ticker + auteur(s) + pnl.
   // Si entry et exit même auteur (cas le + fréquent), simplifie en un seul nom.

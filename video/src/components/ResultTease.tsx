@@ -10,7 +10,7 @@ type Props = {
   subtext?: string;
 };
 
-// Phase 2 du BoomProof : 60 frames (2s).
+// Phase 2 du ChartTemplate : 60 frames (2s).
 // Gros pnl qui zoom + ticker dessous + sous-texte tease.
 export const ResultTease = ({ ticker, pnl, author, subtext }: Props) => {
   const frame = useCurrentFrame();

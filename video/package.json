@@ -7,7 +7,7 @@
     "studio": "remotion studio",
     "render": "remotion render BrandPromo out/brand-promo.mp4",
     "render:signal": "remotion render SignalAlert out/signal-alert.mp4",
-    "render:proof": "remotion render BoomProof out/boom-proof.mp4",
+    "render:chart": "remotion render ChartTemplate out/chart-template.mp4",
     "render:entry": "remotion render BoomEntry out/boom-entry.mp4",
     "templates:list": "node scripts/list-templates.js",
     "template:render": "node scripts/render-template.js",

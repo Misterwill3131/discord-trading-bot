@@ -2,7 +2,7 @@
 // video/src/outro-pool.ts — Pool d'images d'outro Temple of Boom
 // ─────────────────────────────────────────────────────────────────────
 // 8 images PNG carrées (1024×1024) brandées TOB — affichées en fin de
-// toutes les compositions vidéo (BoomProof, BoomEntry, BoomRecap, etc.)
+// toutes les compositions vidéo (ChartTemplate, BoomEntry, BoomRecap, etc.)
 // pour cohérence visuelle.
 //
 // Picker SEEDÉ (déterministe) : un même seed produit toujours la même

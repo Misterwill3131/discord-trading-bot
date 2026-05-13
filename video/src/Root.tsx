@@ -1,7 +1,7 @@
 import { Composition } from 'remotion';
 import { BrandPromo } from './compositions/BrandPromo';
 import { SignalAlert, SignalAlertProps } from './compositions/SignalAlert';
-import { BoomProof, boomProofSchema } from './compositions/BoomProof';
+import { ChartTemplate, chartTemplateSchema } from './compositions/ChartTemplate';
 import { BoomEntry, boomEntrySchema } from './compositions/BoomEntry';
 import { BoomRecap, boomRecapSchema, computeTotalFrames } from './compositions/BoomRecap';
 import { TobBrandStory, tobBrandStorySchema, computeBrandStoryTotalFrames } from './compositions/TobBrandStory';
@@ -19,7 +19,7 @@ const signalAlertDefaults: SignalAlertProps = {
   timestamp: '2026-04-25T13:32:00-04:00',
 };
 
-const boomProofDefaults = {
+const chartTemplateDefaults = {
   ticker: 'TSLA',
   entryAuthor: 'Z',
   entryMessage: '$TSLA 150 entry long',
@@ -83,14 +83,14 @@ export const Root = () => {
         defaultProps={signalAlertDefaults}
       />
       <Composition
-        id="BoomProof"
-        component={BoomProof}
+        id="ChartTemplate"
+        component={ChartTemplate}
         durationInFrames={608}
         fps={30}
         width={1080}
         height={1920}
-        schema={boomProofSchema}
-        defaultProps={boomProofDefaults}
+        schema={chartTemplateSchema}
+        defaultProps={chartTemplateDefaults}
       />
       <Composition
         id="BoomEntry"

@@ -41,9 +41,9 @@ function jobToApiShape(row) {
     // Le worker charge templates/<name>.json pour les props par défaut.
     // null = utilise les defaultProps de Root.tsx.
     templateName: row.template_name || null,
-    // Composition Remotion à rendre ('BoomProof' default, ou 'BoomEntry'
+    // Composition Remotion à rendre ('ChartTemplate' default, ou 'BoomEntry'
     // pour les renders manuels depuis /dashboard/video-studio).
-    composition: row.composition || 'BoomProof',
+    composition: row.composition || 'ChartTemplate',
     // JSON sérialisé des props recap (uniquement pour BoomRecap). Le worker
     // parse uniquement si composition === 'BoomRecap'. Snake-case car le
     // worker le destructure tel quel via `recap_data`.
@@ -63,7 +63,7 @@ function jobToApiShape(row) {
   };
 }
 
-// Nom de fichier du MP4 sortant : YYYY-MM-DD_HHMM_TICKER_boomproof.mp4
+// Nom de fichier du MP4 sortant : YYYY-MM-DD_HHMM_TICKER_chart-template.mp4
 // Date dérivée du exit_ts en timezone America/New_York pour cohérence
 // avec ce que le canvas affiche.
 function buildVideoFilename(ticker, exitTs) {
@@ -77,7 +77,7 @@ function buildVideoFilename(ticker, exitTs) {
   // fmt is like "2026-04-25, 16:30" → normalize to "2026-04-25_1630"
   const [datePart, timePart] = fmt.split(', ');
   const timeNoColon = timePart.replace(':', '');
-  return `${datePart}_${timeNoColon}_${ticker.toUpperCase()}_boomproof.mp4`;
+  return `${datePart}_${timeNoColon}_${ticker.toUpperCase()}_chart-template.mp4`;
 }
 
 // Middleware d'auth via Bearer token.

@@ -8,7 +8,7 @@
 //   2. Click une image → modal avec :
 //      - Template dropdown (aggressive-red, classic-green, gold-celebration, ...)
 //      - Composition autodéterminée selon le type (signal → BoomEntry,
-//        proof → BoomProof)
+//        proof → ChartTemplate)
 //      - Override CTA URL
 //      - Bouton "Render"
 //   3. Render → POST /api/video-studio/render → enqueue render_jobs
@@ -122,7 +122,7 @@ let selectedItem = null;
 let activeFilter = 'all';
 
 const TEMPLATES_BY_COMPOSITION = {
-  BoomProof: [],
+  ChartTemplate: [],
   BoomEntry: [],
 };
 
@@ -181,7 +181,7 @@ function openModal(id) {
   badge.className = 'badge badge-' + item.type;
 
   // Composition selon le type
-  const composition = item.type === 'proof' ? 'BoomProof' : 'BoomEntry';
+  const composition = item.type === 'proof' ? 'ChartTemplate' : 'BoomEntry';
   const eligibleTemplates = TEMPLATES_BY_COMPOSITION[composition] || [];
 
   const sel = document.getElementById('modal-template');

@@ -5,7 +5,7 @@
 //
 // Renvoie un PNG du chart TradingView 1D avec 2 callouts (entry + exit),
 // EXACTEMENT comme le worker render-worker.ts l'appellerait pour un job
-// BoomProof. Utile pour valider visuellement avant qu'un vrai trade
+// ChartTemplate. Utile pour valider visuellement avant qu'un vrai trade
 // gagnant ne déclenche un render automatique.
 //
 // Params (tous optionnels, valeurs default pour démo) :

@@ -6,7 +6,7 @@
 //
 // Workflow :
 //   1. Choisis l'ID du template (slug)
-//   2. Choisis la composition (BoomEntry / BoomProof / SignalAlert / BrandPromo)
+//   2. Choisis la composition (BoomEntry / ChartTemplate / SignalAlert / BrandPromo)
 //   3. Donne un nom lisible + description
 //   4. Optionnel : clone les props d'un template existant comme base
 //   5. Écrit le fichier templates/<id>.json
@@ -41,7 +41,7 @@ const COMPOSITION_DEFAULTS = {
     ctaTitleFontSize: 200,
     transitionType: 'fade',
   },
-  BoomProof: {
+  ChartTemplate: {
     ticker: 'TSLA',
     entryAuthor: 'Z',
     entryMessage: '$TSLA 150 entry long',

@@ -384,7 +384,7 @@ document.getElementById('btn-save').onclick = async () => {
 document.getElementById('btn-preview').onclick = async () => {
   const composition = document.getElementById('template-composition').value;
   const props = collectProps();
-  const frame = composition === 'BoomEntry' ? 220 : composition === 'BoomProof' ? 380 : 130;
+  const frame = composition === 'BoomEntry' ? 220 : composition === 'ChartTemplate' ? 380 : 130;
   const url = `/api/still?composition=${composition}&frame=${frame}&props=${encodeURIComponent(JSON.stringify(props))}`;
   toast('Rendering preview...', '');
   const res = await fetch(url);

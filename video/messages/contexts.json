@@ -1,5 +1,5 @@
 {
-  "_doc": "Pool de phrases tease pour BoomProof / BoomEntry. Picker dans utils/pick-tease.js. Sélection seedée → cohérente entre re-renders du même item. Pour ajouter des variations, append à la liste — au minimum 3 par contexte pour avoir de la diversité.",
+  "_doc": "Pool de phrases tease pour ChartTemplate / BoomEntry. Picker dans utils/pick-tease.js. Sélection seedée → cohérente entre re-renders du même item. Pour ajouter des variations, append à la liste — au minimum 3 par contexte pour avoir de la diversité.",
   "entry": [
     { "teaseAction": "is going long.",         "teaseSubtext": "Don't miss this →" },
     { "teaseAction": "spotted this setup.",    "teaseSubtext": "Move incoming →" },

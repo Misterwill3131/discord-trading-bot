@@ -7,7 +7,7 @@ type Props = {
   url?: string;
 };
 
-// Phase 6 du BoomProof : 90 frames (3s) — final.
+// Phase 6 du ChartTemplate : 90 frames (3s) — final.
 // Gros pnl confirmé qui pulse + URL slide-up + flash blanc final.
 export const ResultCta = ({ pnl, url = 'discord.gg/boom' }: Props) => {
   const frame = useCurrentFrame();

@@ -45,8 +45,9 @@ export type RenderJob = {
   // Si présent, le worker charge templates/<name>.json et merge ses props
   // comme base avant les props dynamiques du job.
   templateName?: string | null;
-  // Composition Remotion à rendre (ex: 'BoomProof', 'BoomEntry'). Default
-  // 'BoomProof' (rétro-compat).
+  // Composition Remotion à rendre (ex: 'ChartTemplate', 'BoomEntry'). Default
+  // 'ChartTemplate'. Accepte aussi 'BoomProof' (ancien nom) pour rétrocompat
+  // avec les jobs déjà en DB avant le rename.
   composition?: string;
   // JSON sérialisé contenant les props du récap (tickers, runnersHit, etc.).
   // Uniquement peuplé pour composition === 'BoomRecap'.
@@ -97,14 +98,14 @@ export function jobPropsToRemotion(job: RenderJob) {
     }
   }
 
-  // Else : flow existant (BoomProof, BoomEntry, etc.)
+  // Else : flow existant (ChartTemplate, BoomEntry, etc.)
   // BoomEntry utilise entryImageDataUrl au lieu de proofImageDataUrl.
   // On expose les 2 keys pour que les 2 compositions puissent l'utiliser.
   const dataUrl = proofImageBase64
     ? `data:image/png;base64,${proofImageBase64}`
     : null;
   // Chart dataUrl séparé — fetched par fetchChartForJob avant processJob.
-  // Reste null si chart-img KO, BoomProof skip la phase chart dans ce cas.
+  // Reste null si chart-img KO, ChartTemplate skip la phase chart dans ce cas.
   const chartDataUrl = job.chartImageBase64
     ? `data:image/png;base64,${job.chartImageBase64}`
     : null;
@@ -118,9 +119,9 @@ export function jobPropsToRemotion(job: RenderJob) {
 }
 
 // ─── Chart fetch ──────────────────────────────────────────────────
-// Pre-fetch le chart TradingView pour le job (BoomProof uniquement).
+// Pre-fetch le chart TradingView pour le job (ChartTemplate uniquement).
 // Skip si :
-//   - composition !== 'BoomProof'
+//   - composition !== 'ChartTemplate' (et !== 'BoomProof' pour rétrocompat)
 //   - CHART_IMG_API_KEY absent
 //   - chart-img API échoue (timeout, 4xx, 5xx)
 // Renvoie un base64 PNG ou null. Le worker ne FAIL PAS si chart-img KO,
@@ -130,7 +131,8 @@ export function jobPropsToRemotion(job: RenderJob) {
 // majorité des micro/small caps US). Si chart-img répond 404, on essaie
 // AMEX. Pas de cache yahoo-finance ici pour rester rapide et autonome.
 export async function fetchChartForJob(job: RenderJob): Promise<string | null> {
-  if ((job.composition || 'BoomProof') !== 'BoomProof') return null;
+  const comp = job.composition || 'ChartTemplate';
+  if (comp !== 'ChartTemplate' && comp !== 'BoomProof') return null;
   const apiKey = process.env.CHART_IMG_API_KEY;
   if (!apiKey) {
     console.warn(`[worker] job #${job.id}: CHART_IMG_API_KEY absent, skip chart`);
@@ -226,7 +228,7 @@ export function formatTimeNY(isoTimestamp: string): string {
 }
 
 // Caption Discord (multi-line). Exemple :
-//   📈 $TSLA · Z · +20% — proof video
+//   📈 $TSLA · Z · +20% — chart template
 //   Entry 13:32 · Exit 16:30
 //
 // Utilise exitAuthor (l'analyste qui clôt le trade) plutôt que entryAuthor
@@ -234,12 +236,12 @@ export function formatTimeNY(isoTimestamp: string): string {
 // joli que le display name relayé sur l'exit.
 export function buildCaption(job: RenderJob): string {
   return [
-    `📈 $${job.ticker} · ${job.exitAuthor} · ${job.pnl} — proof video`,
+    `📈 $${job.ticker} · ${job.exitAuthor} · ${job.pnl} — chart template`,
     `Entry ${formatTimeNY(job.entryTimestamp)} · Exit ${formatTimeNY(job.exitTimestamp)}`,
   ].join('\n');
 }
 
-// Filename : YYYY-MM-DD_HHMM_TICKER_boomproof.mp4 (NY tz).
+// Filename : YYYY-MM-DD_HHMM_TICKER_chart-template.mp4 (NY tz).
 function buildLocalFilename(job: RenderJob): string {
   const d = new Date(job.exitTimestamp);
   const fmt = d.toLocaleString('en-CA', {
@@ -249,7 +251,7 @@ function buildLocalFilename(job: RenderJob): string {
   });
   const [datePart, timePart] = fmt.split(', ');
   const timeNoColon = timePart.replace(':', '');
-  return `${datePart}_${timeNoColon}_${job.ticker.toUpperCase()}_boomproof.mp4`;
+  return `${datePart}_${timeNoColon}_${job.ticker.toUpperCase()}_chart-template.mp4`;
 }
 
 // ─── Fonctions HTTP côté bot ─────────────────────────────────────────
@@ -310,7 +312,7 @@ async function processJob(
 ) {
   console.log(`[worker] processing job ${job.id} (${job.ticker} ${job.pnl})`);
 
-  // Pre-fetch chart image (BoomProof uniquement, skip gracieusement si fail).
+  // Pre-fetch chart image (ChartTemplate uniquement, skip gracieusement si fail).
   // Augmente le job in-place pour que jobPropsToRemotion(job) le voie.
   const chartBase64 = await fetchChartForJob(job);
   if (chartBase64) {
@@ -320,7 +322,11 @@ async function processJob(
 
   const composition = await selectComposition({
     serveUrl: bundleLocation,
-    id: job.composition || 'BoomProof',
+    // Alias 'BoomProof' → 'ChartTemplate' pour rétrocompat avec les jobs
+    // déjà en DB avant le rename. Root.tsx ne registre plus 'BoomProof'.
+    id: (job.composition === 'BoomProof' || !job.composition)
+      ? 'ChartTemplate'
+      : job.composition,
     inputProps: jobPropsToRemotion(job),
   });
   const filename = buildLocalFilename(job);

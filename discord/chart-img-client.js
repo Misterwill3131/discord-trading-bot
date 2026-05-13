@@ -194,7 +194,7 @@ function buildRectangleDrawing(rect) {
 
 // Construit le drawing Callout — texte avec flèche pointant vers un prix.
 // Use case : marquer l'entry price ('When alerted') ou exit price ('$X.XX')
-// sur le chart vidéo BoomProof.
+// sur le chart vidéo ChartTemplate.
 //
 // Schéma input (chart-img v2 — partage le shape start/end de Rectangle/Fib) :
 //   startDatetime (ISO 8601) — pointe de la flèche : temps
@@ -271,7 +271,7 @@ function buildCalloutDrawing(callout) {
 //   }
 //
 // Use case : marquer entry price ('When alerted') et exit price ('$X.XX')
-// sur le chart BoomProof, plus visuellement clair que Callout.
+// sur le chart ChartTemplate, plus visuellement clair que Callout.
 //
 // `arrow.direction` = 'up' (default) | 'down' — sélectionne le bon
 // drawing TradingView.

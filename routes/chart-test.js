@@ -70,9 +70,8 @@ function registerChartTestRoutes(app, requireAuth) {
       return '$' + n.toFixed(4);
     };
 
-    // Offset 1% — gap clair entre la flèche et la candle (~$4 sur TSLA $400).
-    // 0.3% laissait la flèche dans le range de la candle (high/low wicks).
-    const ARROW_OFFSET = 0.01;
+    // Offset 0.6% — entre 0.3% (touchait la candle) et 1% (trop loin).
+    const ARROW_OFFSET = 0.006;
     const arrows = [];
     if (Number.isFinite(entryPriceNum)) {
       arrows.push({

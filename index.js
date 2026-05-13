@@ -50,6 +50,7 @@ const { registerConfigRoutes } = require('./routes/config');
 const { registerDbViewerRoutes } = require('./routes/db-viewer');
 const { registerBackupLogRoutes } = require('./routes/backup-log');
 const { registerDbSnapshotRoutes } = require('./routes/db-snapshot');
+const { registerChartTestRoutes } = require('./routes/chart-test');
 const imageState = require('./state/images');
 const { messageLog } = require('./state/messages');
 
@@ -174,6 +175,9 @@ registerBackupLogRoutes(app, requireAuth);
 
 // DB snapshot download (VACUUM INTO + stream, auth-protected).
 registerDbSnapshotRoutes(app, requireAuth);
+
+// Chart-img smoke test (admin only, fetch un chart sample avec callouts).
+registerChartTestRoutes(app, requireAuth);
 
 // Profits : injection du channelId avant d'enregistrer les routes.
 profitCounter.setProfitsChannelId(PROFITS_CHANNEL_ID);

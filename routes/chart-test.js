@@ -70,14 +70,9 @@ function registerChartTestRoutes(app, requireAuth) {
       return '$' + n.toFixed(4);
     };
 
-    // Offset 2% pour décaler les flèches HORS de la candle (sinon le body
-    // de l'arrow se superpose à la candle puisque entry/exit price = price
-    // de la candle au moment du trade).
-    //   - Entry (Up arrow): price - 2% → arrow body BELOW la candle low
-    //   - Exit  (Down arrow): price + 2% → arrow body ABOVE la candle high
-    // Le label texte ('When alerted', '$450') reste lisible et identifie
-    // le trade — pas besoin de pointer pixel-perfect au prix.
-    const ARROW_OFFSET = 0.02;
+    // Offset 0.5% — flèches juste à côté de la candle (1 candle-height environ).
+    // 2% donnait des flèches trop éloignées du prix.
+    const ARROW_OFFSET = 0.005;
     const arrows = [];
     if (Number.isFinite(entryPriceNum)) {
       arrows.push({

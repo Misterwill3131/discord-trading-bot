@@ -20,28 +20,13 @@
 // Auth-protected (requireAuth).
 // ─────────────────────────────────────────────────────────────────────
 
-function todayNY(hh, mm) {
-  // Renvoie un ISO 8601 pour aujourd'hui à HH:MM heure NY.
-  const now = new Date();
-  const ny = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  ny.setHours(hh, mm, 0, 0);
-  return ny.toISOString();
-}
-
-// Renvoie un ISO 8601 pour le DERNIER trading day à HH:MM NY (skip weekend).
-// Si on est mardi 11h → renvoie lundi à HH:MM. Si on est lundi 11h → renvoie
-// vendredi. Utile pour les defaults du test admin : on veut une plage temps
-// dans le passé visible sur le chart, pas dans le futur (clamping au edge).
-function lastTradingDayNY(hh, mm) {
-  const now = new Date();
-  const ny = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  ny.setDate(ny.getDate() - 1);
-  // Si samedi/dimanche, recule jusqu'à vendredi.
-  while (ny.getDay() === 0 || ny.getDay() === 6) {
-    ny.setDate(ny.getDate() - 1);
-  }
-  ny.setHours(hh, mm, 0, 0);
-  return ny.toISOString();
+// Renvoie un ISO 8601 pour "il y a N heures" — timezone-agnostic et
+// garanti dans la fenêtre 1D rolling de chart-img (~24h).
+// Plus robuste que reconstruire le NY tz à la main avec setHours()
+// qui opère en local tz du process Node (sur Railway = UTC, donc
+// setHours(14, 0) donnait 14:00 UTC = 10:00 NY, AVANT le start du chart).
+function hoursAgoISO(h) {
+  return new Date(Date.now() - h * 60 * 60 * 1000).toISOString();
 }
 
 function registerChartTestRoutes(app, requireAuth) {
@@ -52,17 +37,18 @@ function registerChartTestRoutes(app, requireAuth) {
     }
 
     // Defaults pensés pour un smoke test propre :
-    //   - timestamps dans le PM session du last trading day (14:00 → 15:45 NY)
-    //     pour tomber dans la fenêtre 1D rolling de chart-img (~24h)
+    //   - timestamps "il y a N heures" — garanti dans la fenêtre 1D
+    //     rolling (~24h) du chart-img peu importe la timezone du serveur
+    //   - entry 20h ago (début de la fenêtre, après l'open NY d'hier)
+    //   - exit  2h ago  (récent, idéalement dans le AM session du jour)
     //   - prix TSLA réaliste ~$450 pour rester dans le Y-axis du chart
-    //   - 14:00 → 15:45 NY couvre la fin de session, où les trades se concluent
     const {
       ticker = 'TSLA',
       exchange = 'NASDAQ',
       entryPrice = '434',
       exitPrice = '450',
-      entryTs = lastTradingDayNY(14, 0),
-      exitTs = lastTradingDayNY(15, 45),
+      entryTs = hoursAgoISO(20),
+      exitTs = hoursAgoISO(2),
       range = '1D',
     } = req.query;
 

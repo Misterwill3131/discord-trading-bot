@@ -97,14 +97,24 @@ function registerChartTestRoutes(app, requireAuth) {
 
     try {
       const startedAt = Date.now();
+      // Tentative : session 'extended' (pour AVOIR le pre-market) +
+      // overrides TradingView qui essaient de matcher le bg pre-market
+      // au regular. chart-img n'a pas de param documenté ; on tente
+      // plusieurs property names natifs TV avec un noir pur identique
+      // au fond regular du theme dark.
       const buf = await client.getChart(symbol, String(range), {
         studies: [],
         arrows,
-        // 'regular' (9:30-16:00 ET) plutôt que 'extended' pour éviter
-        // l'ombrage darker sur pre/after-market (visuellement bruyant
-        // dans la vidéo). Trade-off : trades pre-market non visibles.
-        session: 'regular',
+        session: 'extended',
         timezone: 'America/New_York',
+        bodyOverride: {
+          // TradingView property paths typiques pour bg + extended session
+          'paneProperties.background': '#131722',
+          'paneProperties.backgroundType': 'solid',
+          'paneProperties.backgroundGradientStartColor': '#131722',
+          'paneProperties.backgroundGradientEndColor': '#131722',
+          'mainSeriesProperties.statusViewStyle.symbolTextSource': 'description',
+        },
       });
       const elapsedMs = Date.now() - startedAt;
       res.setHeader('Content-Type', 'image/png');

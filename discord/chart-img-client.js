@@ -324,7 +324,7 @@ function createChartImgClient({
 
   const cache = new Map();   // 'SYMBOL|RANGE|FIB' → { ts, data: Buffer } | { inflight }
 
-  function buildBody(symbol, mapping, drawings, studiesOverride, sessionOverride, timezoneOverride) {
+  function buildBody(symbol, mapping, drawings, studiesOverride, sessionOverride, timezoneOverride, bodyOverride) {
     const body = {
       symbol,
       interval: mapping.interval,
@@ -348,6 +348,13 @@ function createChartImgClient({
     if (typeof sessionOverride === 'string')   body.session  = sessionOverride;
     if (typeof timezoneOverride === 'string')  body.timezone = timezoneOverride;
     if (drawings && drawings.length > 0) body.drawings = drawings;
+    // Body-level override : permet de passer des TradingView property names
+    // arbitraires (paneProperties.background, etc.) pour customiser le rendu
+    // au-delà des params documentés. Use case : désactiver l'ombrage de
+    // l'extended session via une propriété TV native.
+    if (bodyOverride && typeof bodyOverride === 'object') {
+      body.override = bodyOverride;
+    }
     return body;
   }
 
@@ -464,7 +471,10 @@ function createChartImgClient({
       : '';
     const sessionKey  = typeof opts.session  === 'string' ? '|SES:' + opts.session  : '';
     const timezoneKey = typeof opts.timezone === 'string' ? '|TZ:'  + opts.timezone : '';
-    const key = sym + '|' + String(range) + fibKey + rectKey + calloutKey + arrowKey + studiesKey + sessionKey + timezoneKey;
+    const overrideKey = (opts.bodyOverride && typeof opts.bodyOverride === 'object')
+      ? '|OV:' + JSON.stringify(opts.bodyOverride)
+      : '';
+    const key = sym + '|' + String(range) + fibKey + rectKey + calloutKey + arrowKey + studiesKey + sessionKey + timezoneKey + overrideKey;
 
     const hit = cache.get(key);
     if (hit) {
@@ -472,7 +482,7 @@ function createChartImgClient({
       if (hit.inflight) return hit.inflight;
     }
 
-    const body = buildBody(sym, mapping, drawings, opts.studies, opts.session, opts.timezone);
+    const body = buildBody(sym, mapping, drawings, opts.studies, opts.session, opts.timezone, opts.bodyOverride);
     const inflight = fetchPng(body);
     cache.set(key, { inflight });
     try {

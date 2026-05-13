@@ -15,7 +15,7 @@
 //     ]
 //   }
 //
-// Utilise Claude Sonnet 4.5 (vision) — le bot utilise déjà la même clé
+// Utilise Claude Sonnet 4.6 (vision) — le bot utilise déjà la même clé
 // ANTHROPIC_API_KEY et le même SDK que services/llm-classify.js.
 //
 // Couts : ~$0.01-0.03 par image selon résolution. Pas de cache : chaque
@@ -30,7 +30,10 @@ const fs = require('fs');
 const path = require('path');
 const Anthropic = require('@anthropic-ai/sdk');
 
-const DEFAULT_MODEL = process.env.RECAP_OCR_MODEL || 'claude-sonnet-4-5-20251001';
+// Sonnet 4.6 = modèle Sonnet courant (Sonnet 4.5 a été retiré). Override
+// possible via env RECAP_OCR_MODEL si tu veux tester un snapshot daté ou
+// passer sur Opus pour de l'OCR plus précis (~3-5x plus cher).
+const DEFAULT_MODEL = process.env.RECAP_OCR_MODEL || 'claude-sonnet-4-6';
 const MAX_TOKENS = 8000;
 
 // Params Anthropic interdits — copie depuis llm-classify.js pour

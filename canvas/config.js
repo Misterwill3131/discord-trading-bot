@@ -67,6 +67,17 @@ const CUSTOM_EMOJIS = {
   'greatcall': AV('great_call.png'),
 };
 
+// Styles per-author : couleur du username + flag "showBoom" pour ajouter
+// le sticker tag_boom à droite du nom. Sans entrée ici, l'auteur utilise
+// le default blanc (CONFIG.USERNAME_COLOR) et pas de badge.
+//
+// Clé = display name canonique (après AUTHOR_ALIASES). Pour ajouter un
+// analyste : push une entrée ici, pas besoin de toucher generateImage().
+const AUTHOR_STYLES = {
+  'MsKim':          { color: '#2ecc71', showBoom: true },
+  'Legacy Trading': { color: '#e84040' },
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  🎨 CUSTOMISATION — Modifier ici l'apparence des images générées
 // ═══════════════════════════════════════════════════════════════════════════
@@ -131,4 +142,4 @@ const CONFIG = {
 // Alias de compatibilité — utilisé par les appels directs `FONT` dans le code.
 const FONT = CONFIG.FONT;
 
-module.exports = { CONFIG, FONT, CUSTOM_AVATARS, CUSTOM_ROLES, SPECIAL_MENTIONS, CUSTOM_EMOJIS };
+module.exports = { CONFIG, FONT, CUSTOM_AVATARS, CUSTOM_ROLES, SPECIAL_MENTIONS, CUSTOM_EMOJIS, AUTHOR_STYLES };

@@ -21,7 +21,7 @@
 const path = require('path');
 const fs = require('fs');
 const { createCanvas, loadImage, GlobalFonts } = require('@napi-rs/canvas');
-const { CONFIG, FONT, CUSTOM_AVATARS, CUSTOM_ROLES, SPECIAL_MENTIONS, CUSTOM_EMOJIS } = require('./config');
+const { CONFIG, FONT, CUSTOM_AVATARS, CUSTOM_ROLES, SPECIAL_MENTIONS, CUSTOM_EMOJIS, AUTHOR_STYLES } = require('./config');
 const { getDisplayName } = require('../utils/authors');
 
 // Chemins absolus vers les ressources — remonte d'un niveau depuis canvas/.
@@ -586,26 +586,39 @@ async function generateImage(author, content, timestamp, options = {}) {
 
   const nameY = PADDING_V + NAME_H - 3;
 
-  // Username — blanc par défaut (match Discord), rouge pour Legacy Trading.
-  // On retire le dégradé rose-magenta qui rendait l'image différente du
-  // client Discord. Couleur depuis CONFIG.USERNAME_COLOR (= '#ffffff').
+  // Username — couleur + flags depuis AUTHOR_STYLES (per-analyste),
+  // fallback blanc (CONFIG.USERNAME_COLOR). Permet d'ajouter facilement
+  // un analyste avec sa propre couleur sans toucher au code.
+  const authorStyle = AUTHOR_STYLES[author] || {};
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   ctx.font = '16px ' + FONT;
   const nameW = ctx.measureText(author || 'Z').width;
-  if (author === 'Legacy Trading') {
-    ctx.fillStyle = '#e84040';
-  } else {
-    ctx.fillStyle = CONFIG.USERNAME_COLOR;
-  }
+  ctx.fillStyle = authorStyle.color || CONFIG.USERNAME_COLOR;
   ctx.fillText(author || 'Z', CONTENT_X, nameY);
 
-  // Pas de badge BOOM/APP — on reproduit fidèlement le rendu Discord d'un
-  // message de bot tel qu'il apparaît côté client (Discord lui-même ajoute
-  // le pill APP, on ne le re-dessine pas par-dessus). Le timestamp colle
-  // directement après le nom, avec un padding de 6px.
+  // Badge BOOM optionnel — affiché uniquement si AUTHOR_STYLES.showBoom = true
+  // pour cet auteur. Pour les autres, rien (match l'apparence client Discord).
+  let afterNameX = CONTENT_X + nameW;
+  if (authorStyle.showBoom) {
+    const BADGE_H = 18;
+    const badgeX = afterNameX + 6;
+    const badgeY = nameY - BADGE_H + 2;
+    try {
+      const tagImg = await loadImage(TAG_BOOM_PATH);
+      const tagRatio = tagImg.width / tagImg.height;
+      const badgeW = Math.round(BADGE_H * tagRatio);
+      ctx.drawImage(tagImg, badgeX, badgeY, badgeW, BADGE_H);
+      afterNameX = badgeX + badgeW;
+    } catch (e) {
+      // Si l'image n'est pas dispo, on skip silencieusement plutôt que
+      // de dessiner un fallback texte (qui serait pire visuellement).
+    }
+  }
+
+  // Timestamp après le nom (+ badge si présent), avec padding de 6px.
   const TIME_GAP = 6;
-  const timeX = CONTENT_X + nameW + TIME_GAP;
+  const timeX = afterNameX + TIME_GAP;
 
   // Heure fuseau NY (24h).
   const d = timestamp ? new Date(timestamp) : new Date();

@@ -195,11 +195,17 @@ export async function fetchChartForJob(job: RenderJob): Promise<string | null> {
     const buf = await client.getChart(symbol, '1D', {
       studies: [],          // pas d'indicateurs (clean look)
       arrows,               // Arrow Mark Up/Down avec text labels
-      // 'regular' (9:30-16:00 ET) plutôt que 'extended' — évite l'ombrage
-      // darker visuellement bruyant sur les vidéos BoomProof. Trade-off :
-      // trades pre-market (rares) ne seront pas visibles sur le chart.
-      session: 'regular',
+      // 'extended' pour AVOIR le pre-market data visible, mais avec un
+      // bodyOverride paneProperties.background qui force le bg uniforme
+      // (sinon TradingView ombrise les pre/after-market en plus foncé).
+      session: 'extended',
       timezone: 'America/New_York',
+      bodyOverride: {
+        'paneProperties.background': '#131722',
+        'paneProperties.backgroundType': 'solid',
+        'paneProperties.backgroundGradientStartColor': '#131722',
+        'paneProperties.backgroundGradientEndColor': '#131722',
+      },
     });
     return buf.toString('base64');
   } catch (err) {

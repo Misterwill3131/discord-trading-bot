@@ -10,7 +10,7 @@
 // Flags :
 //   --out=path        Écrit le JSON dans ce fichier (default: print stdout)
 //   --apply-template  Écrit directement dans video/templates/trade-recap-default.json
-//                     (overrides props.trades + props.longTermInvestment).
+//                     (overrides props.trades + props.longTermInvestments).
 //                     Pratique : run l'OCR puis lance generate:trade-recap.
 //
 // Coût : ~$0.01-0.03 par image Claude Sonnet 4.5 vision.
@@ -46,7 +46,8 @@ async function main() {
 
   const { _meta, ...clean } = result;
   console.log(`[parse-recap-image] ✅ ${_meta.tradesCount} trades extracted (${_meta.latencyMs}ms, ${_meta.model})`);
-  console.log(`  longTermInvestment : ${clean.longTermInvestment ? clean.longTermInvestment.ticker : 'absent'}`);
+  const ltSummary = (clean.longTermInvestments || []).map(lt => lt.ticker).join(', ') || 'absent';
+  console.log(`  longTermInvestments : ${ltSummary}`);
   if (_meta.usage) {
     console.log(`  Tokens : ${_meta.usage.input_tokens} in / ${_meta.usage.output_tokens} out`);
   }
@@ -79,8 +80,10 @@ async function main() {
     const template = JSON.parse(fs.readFileSync(TEMPLATE_PATH, 'utf8'));
     template.props = template.props || {};
     template.props.trades = clean.trades;
-    template.props.longTermInvestment = clean.longTermInvestment;
+    template.props.longTermInvestments = clean.longTermInvestments || [];
     template.props.dateLabel = clean.dateLabel;
+    // Cleanup vieux champ singleton si jamais il traîne dans le template.
+    delete template.props.longTermInvestment;
     fs.writeFileSync(TEMPLATE_PATH, JSON.stringify(template, null, 2) + '\n');
     console.log(`\n[parse-recap-image] ✅ Template appliqué : ${TEMPLATE_PATH}`);
     console.log('  → Lance maintenant : npm run generate:trade-recap');

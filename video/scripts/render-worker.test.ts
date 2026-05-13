@@ -1,5 +1,10 @@
-import { describe, expect, test } from 'vitest';
-import { jobPropsToRemotion, buildCaption, formatTimeNY, loadTemplateProps } from './render-worker';
+import { afterAll, describe, expect, test } from 'vitest';
+import { jobPropsToRemotion, buildCaption, formatTimeNY, loadTemplateProps, prepareRecapAlertImages } from './render-worker';
+import * as fs from 'fs';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const sampleJob = {
   id: 42,
@@ -48,14 +53,39 @@ describe('jobPropsToRemotion', () => {
 });
 
 describe('buildCaption', () => {
-  test('formats with ticker, author, pnl, and time range', () => {
+  test('formats with ticker, author, pnl, and time range (ChartTemplate default)', () => {
     const cap = buildCaption(sampleJob);
     expect(cap).toContain('$TSLA');
     expect(cap).toContain('Z');
     expect(cap).toContain('+20%');
-    expect(cap).toContain('proof video');
+    expect(cap).toContain('chart template');
     expect(cap).toContain('Entry');
     expect(cap).toContain('Exit');
+  });
+
+  test('TobTradeRecap caption mentions trade + long-term counts', () => {
+    const job = {
+      ...sampleJob,
+      composition: 'TobTradeRecap',
+      pnl: 'TODAY',
+      recap_data: JSON.stringify({
+        dateLabel: 'TODAY',
+        trades: Array.from({ length: 7 }, () => ({ ticker: '$X', entryPrice: 1, hodPrice: 2 })),
+        longTermInvestments: [{ ticker: '$DXYZ', entryPrice: 30, currentPrice: 71 }],
+      }),
+    };
+    const cap = buildCaption(job);
+    expect(cap).toContain('TOB Trade Recap');
+    expect(cap).toContain('TODAY');
+    expect(cap).toContain('7 trades');
+    expect(cap).toContain('1 long-term');
+  });
+
+  test('TobTradeRecap caption stays usable when recap_data missing', () => {
+    const job = { ...sampleJob, composition: 'TobTradeRecap', pnl: 'TODAY' };
+    const cap = buildCaption(job);
+    expect(cap).toContain('TOB Trade Recap');
+    expect(cap).toContain('0 trades');
   });
 });
 
@@ -89,6 +119,104 @@ describe('loadTemplateProps', () => {
 
   test('template inexistant → null + warn', () => {
     expect(loadTemplateProps('nonexistent-template')).toBeNull();
+  });
+});
+
+describe('jobPropsToRemotion TobTradeRecap', () => {
+  test('parses recap_data into trades + longTermInvestments + alertImages', () => {
+    const job = {
+      ...sampleJob,
+      composition: 'TobTradeRecap',
+      recap_data: JSON.stringify({
+        dateLabel: 'TODAY',
+        trades: [{ ticker: '$RVI', entryPrice: 1, hodPrice: 1.5 }],
+        longTermInvestments: [
+          { ticker: '$DXYZ', entryPrice: 30, currentPrice: 71 },
+          { ticker: '$REA',  entryPrice: 1.21, currentPrice: 1.91 },
+        ],
+      }),
+      preparedAlertImages: [{ imagePath: 'recap-alerts/alert-1.png', ticker: '$RVI' }],
+    } as any;
+    const props = jobPropsToRemotion(job) as Record<string, any>;
+    expect(props.dateLabel).toBe('TODAY');
+    expect(props.trades).toHaveLength(1);
+    expect(props.longTermInvestments).toHaveLength(2);
+    expect(props.longTermInvestments[0].ticker).toBe('$DXYZ');
+    expect(props.alertImages).toHaveLength(1);
+    expect(props.alertImages[0].imagePath).toBe('recap-alerts/alert-1.png');
+  });
+
+  test('handles missing longTermInvestments by defaulting to []', () => {
+    const job = {
+      ...sampleJob,
+      composition: 'TobTradeRecap',
+      recap_data: JSON.stringify({
+        dateLabel: 'TODAY',
+        trades: [{ ticker: '$X', entryPrice: 1, hodPrice: 2 }],
+      }),
+    } as any;
+    const props = jobPropsToRemotion(job) as Record<string, any>;
+    expect(props.longTermInvestments).toEqual([]);
+    expect(props.alertImages).toEqual([]);
+  });
+
+  test('falls back to template-only props if recap_data is invalid JSON', () => {
+    const job = {
+      ...sampleJob,
+      composition: 'TobTradeRecap',
+      recap_data: 'not-json',
+    } as any;
+    const props = jobPropsToRemotion(job) as Record<string, any>;
+    // No throw — we get an object back
+    expect(props).toBeDefined();
+  });
+});
+
+describe('prepareRecapAlertImages', () => {
+  // Tmp dir isolé pour éviter de polluer video/public/recap-alerts/ (les
+  // fixtures dev y vivent et sont check-in dans git).
+  const tmpDir = path.join(__dirname, '..', '..', 'tmp', `recap-alerts-test-${process.pid}`);
+
+  test('returns [] for null/empty/invalid recap_data', () => {
+    expect(prepareRecapAlertImages(null, { publicDir: tmpDir })).toEqual([]);
+    expect(prepareRecapAlertImages(undefined, { publicDir: tmpDir })).toEqual([]);
+    expect(prepareRecapAlertImages('', { publicDir: tmpDir })).toEqual([]);
+    expect(prepareRecapAlertImages('not-json', { publicDir: tmpDir })).toEqual([]);
+    expect(prepareRecapAlertImages(JSON.stringify({}), { publicDir: tmpDir })).toEqual([]);
+    expect(prepareRecapAlertImages(JSON.stringify({ alertImagesBase64: [] }), { publicDir: tmpDir })).toEqual([]);
+  });
+
+  test('writes PNGs and returns staticFile paths', () => {
+    const png = Buffer.from('FAKE_PNG_BYTES').toString('base64');
+    const result = prepareRecapAlertImages(JSON.stringify({
+      alertImagesBase64: [
+        { base64: png, ticker: '$RVI' },
+        { base64: png, ticker: '$REA' },
+      ],
+    }), { publicDir: tmpDir });
+    expect(result).toHaveLength(2);
+    expect(result[0].imagePath).toBe('recap-alerts/alert-1.png');
+    expect(result[1].imagePath).toBe('recap-alerts/alert-2.png');
+    expect(result[0].ticker).toBe('$RVI');
+    // Verify file exists and decodes correctly
+    const onDisk = fs.readFileSync(path.join(tmpDir, 'alert-1.png'));
+    expect(onDisk.toString()).toBe('FAKE_PNG_BYTES');
+  });
+
+  test('skips entries with missing/invalid base64', () => {
+    const result = prepareRecapAlertImages(JSON.stringify({
+      alertImagesBase64: [
+        { base64: '', ticker: '$A' },
+        { base64: Buffer.from('OK').toString('base64'), ticker: '$B' },
+        { ticker: '$C' },
+      ],
+    }), { publicDir: tmpDir });
+    expect(result).toHaveLength(1);
+    expect(result[0].ticker).toBe('$B');
+  });
+
+  afterAll(() => {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   });
 });
 

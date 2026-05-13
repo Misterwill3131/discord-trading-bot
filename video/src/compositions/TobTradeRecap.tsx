@@ -49,7 +49,9 @@ const alertImageSchema = z.object({
 export const tobTradeRecapSchema = z.object({
   dateLabel: z.string().default('TODAY'),
   trades: z.array(tradeSchema).min(1).max(80),
-  longTermInvestment: longTermSchema.nullable().optional(),
+  // Liste de placements long-terme (peut être 0, 1, 2…). On affiche
+  // toutes les cartes en stack vertical dans LongTermPhase.
+  longTermInvestments: z.array(longTermSchema).default([]),
   alertImages: z.array(alertImageSchema).default([]),
   // Délai (en s) entre l'apparition de 2 alertes successives. 1.0s = 1 alerte
   // par seconde. Plus la valeur est basse, plus le feed se remplit vite.
@@ -669,27 +671,100 @@ const StatBoxHero: React.FC<{
   );
 };
 
-// ─── Phase 5 : Long-term investment highlight ───────────────────────
-const LongTermPhase: React.FC<{
-  longTerm: { ticker: string; entryPrice: number; currentPrice: number } | null | undefined;
+// ─── Phase 5 : Long-term investment highlight (1+ cartes) ───────────
+type LongTerm = { ticker: string; entryPrice: number; currentPrice: number };
+
+const LongTermCard: React.FC<{
+  lt: LongTerm;
   accentColor: string;
   successColor: string;
-  bgColor: string;
-}> = ({ longTerm, accentColor, successColor, bgColor }) => {
+  errorColor: string;
+  compact: boolean;
+  delay: number;
+}> = ({ lt, accentColor, successColor, errorColor, compact, delay }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  if (!longTerm) {
+  const popScale = spring({ frame: Math.max(0, frame - delay), fps, config: { damping: 12, stiffness: 100 }, durationInFrames: 30 });
+  const opacity = interpolate(frame, [delay, delay + 15], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+
+  const returnPct = ((lt.currentPrice - lt.entryPrice) / lt.entryPrice) * 100;
+  const valueColor = returnPct >= 0 ? successColor : errorColor;
+
+  // Pulse doré sur le % uniquement quand 1 seule carte (sinon trop chargé)
+  const pulse = compact ? 1 : 1 + 0.05 * Math.sin(frame * 0.15);
+
+  // Tailles ajustées : compact (≥2 cartes) vs hero (1 carte)
+  const tickerFs = compact ? 56 : 80;
+  const priceFs = compact ? 26 : 36;
+  const pctFs = compact ? 72 : 110;
+  const labelFs = compact ? 22 : 32;
+  const cardPad = compact ? '28px 36px' : '50px 40px';
+  const gapPrices = compact ? 28 : 40;
+
+  return (
+    <div style={{
+      transform: `scale(${popScale})`,
+      opacity,
+      textAlign: 'center',
+      background: `linear-gradient(135deg, rgba(251,191,36,0.18) 0%, rgba(245,158,11,0.10) 100%)`,
+      border: `4px solid ${accentColor}`,
+      borderRadius: 24,
+      padding: cardPad,
+      boxShadow: `0 8px 64px ${accentColor}55`,
+      width: '92%',
+    }}>
+      <div style={{ fontSize: labelFs, fontWeight: 800, color: accentColor, letterSpacing: 3, marginBottom: 6 }}>
+        ◆ LONG TERM INVESTMENT ◆
+      </div>
+      {!compact && (
+        <div style={{ fontSize: 24, fontWeight: 600, color: '#94a3b8', marginBottom: 30 }}>
+          (NOT INCLUDED IN STATS)
+        </div>
+      )}
+
+      <div style={{ fontSize: tickerFs, fontWeight: 900, color: '#fff', marginBottom: compact ? 8 : 16, lineHeight: 1 }}>
+        {lt.ticker}
+      </div>
+
+      <div style={{ display: 'flex', gap: gapPrices, justifyContent: 'center', marginBottom: compact ? 16 : 40 }}>
+        <div>
+          <div style={{ fontSize: compact ? 16 : 18, color: '#94a3b8', marginBottom: 2 }}>ENTRY</div>
+          <div style={{ fontSize: priceFs, fontWeight: 800, color: '#fff' }}>{fmtPrice(lt.entryPrice)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: compact ? 16 : 18, color: '#94a3b8', marginBottom: 2 }}>CURRENT</div>
+          <div style={{ fontSize: priceFs, fontWeight: 800, color: '#fff' }}>{fmtPrice(lt.currentPrice)}</div>
+        </div>
+      </div>
+
+      <div style={{
+        fontSize: pctFs,
+        fontWeight: 900,
+        color: valueColor,
+        transform: `scale(${pulse})`,
+        textShadow: `0 4px 32px ${valueColor}88`,
+        letterSpacing: -2,
+        lineHeight: 1,
+      }}>
+        {fmtPct(returnPct)}
+      </div>
+    </div>
+  );
+};
+
+const LongTermPhase: React.FC<{
+  longTerms: LongTerm[];
+  accentColor: string;
+  successColor: string;
+  errorColor: string;
+  bgColor: string;
+}> = ({ longTerms, accentColor, successColor, errorColor, bgColor }) => {
+  if (!longTerms || longTerms.length === 0) {
     return <AbsoluteFill style={{ backgroundColor: bgColor }} />;
   }
 
-  const returnPct = ((longTerm.currentPrice - longTerm.entryPrice) / longTerm.entryPrice) * 100;
-
-  const popScale = spring({ frame, fps, config: { damping: 12, stiffness: 100 }, durationInFrames: 30 });
-  const opacity = interpolate(frame, [0, 15], [0, 1], { extrapolateRight: 'clamp' });
-
-  // Pulse doré sur le %
-  const pulse = 1 + 0.05 * Math.sin(frame * 0.15);
+  const compact = longTerms.length > 1;
 
   return (
     <AbsoluteFill style={{
@@ -699,51 +774,20 @@ const LongTermPhase: React.FC<{
       alignItems: 'center',
       justifyContent: 'center',
       flexDirection: 'column',
-      padding: 30,
+      gap: 24,
+      padding: 24,
     }}>
-      <div style={{
-        transform: `scale(${popScale})`,
-        opacity,
-        textAlign: 'center',
-        background: `linear-gradient(135deg, rgba(251,191,36,0.18) 0%, rgba(245,158,11,0.10) 100%)`,
-        border: `4px solid ${accentColor}`,
-        borderRadius: 24,
-        padding: '50px 40px',
-        boxShadow: `0 8px 64px ${accentColor}55`,
-      }}>
-        <div style={{ fontSize: 32, fontWeight: 800, color: accentColor, letterSpacing: 3, marginBottom: 16 }}>
-          ◆ LONG TERM INVESTMENT ◆
-        </div>
-        <div style={{ fontSize: 24, fontWeight: 600, color: '#94a3b8', marginBottom: 30 }}>
-          (NOT INCLUDED IN STATS)
-        </div>
-
-        <div style={{ fontSize: 80, fontWeight: 900, color: '#fff', marginBottom: 16 }}>
-          {longTerm.ticker}
-        </div>
-
-        <div style={{ display: 'flex', gap: 40, justifyContent: 'center', marginBottom: 40 }}>
-          <div>
-            <div style={{ fontSize: 18, color: '#94a3b8', marginBottom: 4 }}>ENTRY</div>
-            <div style={{ fontSize: 36, fontWeight: 800, color: '#fff' }}>{fmtPrice(longTerm.entryPrice)}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: 18, color: '#94a3b8', marginBottom: 4 }}>CURRENT</div>
-            <div style={{ fontSize: 36, fontWeight: 800, color: '#fff' }}>{fmtPrice(longTerm.currentPrice)}</div>
-          </div>
-        </div>
-
-        <div style={{
-          fontSize: 110,
-          fontWeight: 900,
-          color: successColor,
-          transform: `scale(${pulse})`,
-          textShadow: `0 4px 32px ${successColor}88`,
-          letterSpacing: -2,
-        }}>
-          {fmtPct(returnPct)}
-        </div>
-      </div>
+      {longTerms.map((lt, i) => (
+        <LongTermCard
+          key={i}
+          lt={lt}
+          accentColor={accentColor}
+          successColor={successColor}
+          errorColor={errorColor}
+          compact={compact}
+          delay={i * 8}
+        />
+      ))}
     </AbsoluteFill>
   );
 };
@@ -751,7 +795,7 @@ const LongTermPhase: React.FC<{
 // ─── Composition principale ─────────────────────────────────────────
 export const TobTradeRecap: React.FC<TobTradeRecapProps> = (props) => {
   const {
-    dateLabel, trades, longTermInvestment, alertImages,
+    dateLabel, trades, longTermInvestments, alertImages,
     secondsPerAlert,
     accentColor, successColor, errorColor, bgColor, outroSeed,
   } = props;
@@ -805,9 +849,10 @@ export const TobTradeRecap: React.FC<TobTradeRecapProps> = (props) => {
 
       <Sequence from={longTermFrom} durationInFrames={FRAMES_LONGTERM}>
         <LongTermPhase
-          longTerm={longTermInvestment}
+          longTerms={longTermInvestments}
           accentColor={accentColor}
           successColor={successColor}
+          errorColor={errorColor}
           bgColor={bgColor}
         />
       </Sequence>

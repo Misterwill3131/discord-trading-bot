@@ -519,6 +519,13 @@ addColumnIfMissing('render_jobs', 'tease_subtext', 'TEXT');
 addColumnIfMissing('render_jobs', 'entry_price', 'REAL');
 addColumnIfMissing('render_jobs', 'exit_price',  'REAL');
 
+// ── render_jobs : output_channel_id (routing du MP4 par job) ──────────
+// Channel Discord où poster le MP4 final. NULL = fallback sur la var
+// d'env RENDER_OUTPUT_CHANNEL_ID (comportement historique). Permet à
+// certains jobs (ex: TobTradeRecap déclenché depuis un canal dédié) de
+// renvoyer le rendu dans le même canal que l'image source.
+addColumnIfMissing('render_jobs', 'output_channel_id', 'TEXT');
+
 // ── SaaS licenses : passthrough channel séparé pour bots upstream ─────
 // Permet de router les alertes "passthrough" (ex: TrendVision) vers un
 // salon distinct du target_channel_id (signaux principaux).
@@ -1715,23 +1722,34 @@ const stmtEnqueueRenderJob = db.prepare(`
     (ticker, entry_author, entry_message, entry_ts,
      exit_author, exit_message, exit_ts, pnl, proof_image_base64,
      template_name, composition, recap_data, tease_action, tease_subtext,
-     entry_price, exit_price)
+     entry_price, exit_price, output_channel_id)
   VALUES
     (@ticker, @entry_author, @entry_message, @entry_ts,
      @exit_author, @exit_message, @exit_ts, @pnl, @proof_image_base64,
      @template_name, @composition, @recap_data, @tease_action, @tease_subtext,
-     @entry_price, @exit_price)
+     @entry_price, @exit_price, @output_channel_id)
 `);
 
 const stmtGetPendingRenderJobs = db.prepare(`
   SELECT id, ticker, entry_author, entry_message, entry_ts,
          exit_author, exit_message, exit_ts, pnl, status, created_at,
          proof_image_base64, template_name, composition, recap_data,
-         tease_action, tease_subtext, entry_price, exit_price
+         tease_action, tease_subtext, entry_price, exit_price,
+         output_channel_id
   FROM render_jobs
   WHERE status = 'pending'
   ORDER BY created_at ASC
   LIMIT ?
+`);
+
+const stmtGetRenderJobById = db.prepare(`
+  SELECT id, ticker, entry_author, entry_message, entry_ts,
+         exit_author, exit_message, exit_ts, pnl, status, created_at,
+         proof_image_base64, template_name, composition, recap_data,
+         tease_action, tease_subtext, entry_price, exit_price,
+         output_channel_id
+  FROM render_jobs
+  WHERE id = ?
 `);
 
 const stmtMarkRenderJobDone = db.prepare(`
@@ -1759,6 +1777,7 @@ function enqueueRenderJob(payload) {
     tease_subtext: null,
     entry_price: null,
     exit_price: null,
+    output_channel_id: null,
     ...payload,
   });
   return result.lastInsertRowid;
@@ -1766,6 +1785,10 @@ function enqueueRenderJob(payload) {
 
 function getPendingRenderJobs(limit = 10) {
   return stmtGetPendingRenderJobs.all(limit);
+}
+
+function getRenderJobById(id) {
+  return stmtGetRenderJobById.get(id);
 }
 
 function markRenderJobDone(id, discordMsgId) {
@@ -1945,6 +1968,7 @@ module.exports = {
   // render jobs (Phase 3 auto-render proof videos)
   enqueueRenderJob,
   getPendingRenderJobs,
+  getRenderJobById,
   markRenderJobDone,
   markRenderJobFailed,
 

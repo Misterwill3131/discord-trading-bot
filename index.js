@@ -26,6 +26,7 @@ const {
 } = require('./auth/trading-session');
 const { setDiscordClient: setCanvasDiscordClient } = require('./canvas/proof');
 const { registerTradingHandler } = require('./discord/handler');
+const { registerRecapImageHandler } = require('./discord/recap-image-handler');
 const { registerDiscordCommands } = require('./discord/commands');
 const { registerMarketCommands } = require('./discord/market-commands');
 const { createYahooClient } = require('./discord/market-commands');
@@ -366,6 +367,13 @@ registerTradingHandler(client, {
   makeWebhookUrl: MAKE_WEBHOOK_URL,
   tradingEngine,
   sendEmailAlert,
+});
+// Auto-trigger d'un TobTradeRecap quand une image recap est postée dans
+// le canal configuré (env TOB_RECAP_IMAGE_CHANNEL_ID). OCR Claude Vision
+// → enqueueRenderJob composition='TobTradeRecap' → worker render → MP4
+// re-posté dans le même canal.
+registerRecapImageHandler(client, {
+  channelId: process.env.TOB_RECAP_IMAGE_CHANNEL_ID,
 });
 startScheduler({ client, tradingChannel: TRADING_CHANNEL, sendAlert: sendMarketAlert });
 

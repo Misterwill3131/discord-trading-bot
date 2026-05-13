@@ -57,6 +57,10 @@ export type RenderJob = {
   // les valeurs du template/defaultProps.
   teaseAction?: string | null;
   teaseSubtext?: string | null;
+  // Mutated par processJob avant render quand composition === 'TobTradeRecap'.
+  // Liste de paths staticFile relatifs (ex: 'recap-alerts/alert-1.png') où
+  // les PNG d'alertes du jour ont été décodés depuis recap_data.alertImagesBase64.
+  preparedAlertImages?: Array<{ imagePath: string; ticker?: string | null }>;
 };
 
 // Charge un template JSON depuis video/templates/<name>.json.
@@ -94,6 +98,27 @@ export function jobPropsToRemotion(job: RenderJob) {
     } catch (err) {
       console.error('[worker] Failed to parse recap_data:', (err as Error).message);
       // Continue avec template-only props (defaults sortiront depuis le schema Zod)
+      return { ...templateProps };
+    }
+  }
+
+  // Pour TobTradeRecap : recap_data porte le résultat OCR (dateLabel,
+  // trades[], longTermInvestments[]) et optionnellement alertImagesBase64
+  // — déjà décodés en fichiers PNG par processJob (cf preparedAlertImages
+  // mutée sur `job`). On ignore les entry_*/exit_* (placeholders pour
+  // satisfaire les NOT NULL columns).
+  if (job.composition === 'TobTradeRecap' && recap_data) {
+    try {
+      const parsed = JSON.parse(recap_data);
+      return {
+        ...templateProps,
+        dateLabel: parsed.dateLabel || 'TODAY',
+        trades: parsed.trades || [],
+        longTermInvestments: parsed.longTermInvestments || [],
+        alertImages: job.preparedAlertImages || [],
+      };
+    } catch (err) {
+      console.error('[worker] Failed to parse TobTradeRecap recap_data:', (err as Error).message);
       return { ...templateProps };
     }
   }
@@ -235,6 +260,17 @@ export function formatTimeNY(isoTimestamp: string): string {
 // car ce dernier peut être un raw Discord username (ex "traderzz1m") moins
 // joli que le display name relayé sur l'exit.
 export function buildCaption(job: RenderJob): string {
+  if (job.composition === 'TobTradeRecap') {
+    let trades = 0;
+    let lts = 0;
+    try {
+      const parsed = job.recap_data ? JSON.parse(job.recap_data) : null;
+      trades = (parsed?.trades || []).length;
+      lts = (parsed?.longTermInvestments || []).length;
+    } catch { /* swallow, caption restera générique */ }
+    const dateStr = job.pnl || 'TODAY';
+    return `🎬 TOB Trade Recap — ${dateStr}\n${trades} trades${lts > 0 ? ` + ${lts} long-term` : ''}`;
+  }
   return [
     `📈 $${job.ticker} · ${job.exitAuthor} · ${job.pnl} — chart template`,
     `Entry ${formatTimeNY(job.entryTimestamp)} · Exit ${formatTimeNY(job.exitTimestamp)}`,
@@ -251,7 +287,63 @@ function buildLocalFilename(job: RenderJob): string {
   });
   const [datePart, timePart] = fmt.split(', ');
   const timeNoColon = timePart.replace(':', '');
-  return `${datePart}_${timeNoColon}_${job.ticker.toUpperCase()}_chart-template.mp4`;
+  const suffix = job.composition === 'TobTradeRecap'
+    ? 'tob-trade-recap'
+    : 'chart-template';
+  const tick = job.composition === 'TobTradeRecap'
+    ? 'RECAP'
+    : job.ticker.toUpperCase();
+  return `${datePart}_${timeNoColon}_${tick}_${suffix}.mp4`;
+}
+
+// Décode les alertImagesBase64 (du recap_data) vers des PNG sous
+// publicDir (default = video/public/recap-alerts/). Retourne la liste
+// des paths staticFile (relatifs au dossier public) à utiliser comme
+// alertImages dans la composition. Idempotent : nettoie les anciens
+// alert-*.png puis écrit les nouveaux.
+//
+// `publicDir` est customisable pour les tests (sinon ils polluent les
+// fixtures dev dans video/public/recap-alerts/).
+export function prepareRecapAlertImages(
+  recapDataJson: string | null | undefined,
+  opts: { publicDir?: string } = {},
+): Array<{ imagePath: string; ticker?: string | null }> {
+  if (!recapDataJson) return [];
+  let parsed: { alertImagesBase64?: Array<{ base64: string; ticker?: string | null }> };
+  try {
+    parsed = JSON.parse(recapDataJson);
+  } catch {
+    return [];
+  }
+  const items = Array.isArray(parsed.alertImagesBase64) ? parsed.alertImagesBase64 : [];
+  if (items.length === 0) return [];
+
+  const publicDir = opts.publicDir || path.join(__dirname, '..', 'public', 'recap-alerts');
+  fs.mkdirSync(publicDir, { recursive: true });
+
+  // Clean les anciens alert-*.png (vieux récap), garde les autres fichiers.
+  try {
+    for (const f of fs.readdirSync(publicDir)) {
+      if (/^alert-\d+\.png$/.test(f)) {
+        fs.unlinkSync(path.join(publicDir, f));
+      }
+    }
+  } catch { /* swallow */ }
+
+  const out: Array<{ imagePath: string; ticker?: string | null }> = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (!it || typeof it.base64 !== 'string' || !it.base64) continue;
+    const fileName = `alert-${i + 1}.png`;
+    const fullPath = path.join(publicDir, fileName);
+    try {
+      fs.writeFileSync(fullPath, Buffer.from(it.base64, 'base64'));
+      out.push({ imagePath: `recap-alerts/${fileName}`, ticker: it.ticker || null });
+    } catch (err) {
+      console.warn(`[worker] failed to write ${fileName}: ${(err as Error).message}`);
+    }
+  }
+  return out;
 }
 
 // ─── Fonctions HTTP côté bot ─────────────────────────────────────────
@@ -318,6 +410,12 @@ async function processJob(
   if (chartBase64) {
     job.chartImageBase64 = chartBase64;
     console.log(`[worker] job #${job.id}: chart fetched (${(chartBase64.length * 0.75 / 1024).toFixed(0)} KB)`);
+  }
+
+  // Décode les PNG d'alertes pour TobTradeRecap (idempotent).
+  if (job.composition === 'TobTradeRecap') {
+    job.preparedAlertImages = prepareRecapAlertImages(job.recap_data);
+    console.log(`[worker] job #${job.id}: prepared ${job.preparedAlertImages.length} alert PNGs`);
   }
 
   const composition = await selectComposition({

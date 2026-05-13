@@ -3,12 +3,16 @@
 // ─────────────────────────────────────────────────────────────────────
 // Input  : path d'une image PNG/JPEG du tableau de récap TOB (avec
 //          colonnes TICKER | ENTRY | HOD | T1 | T2 | T3 | TARGETS |
-//          SUCCESS et un footer LONG TERM INVESTMENT optionnel).
+//          SUCCESS et un footer LONG TERM INVESTMENTS optionnel,
+//          potentiellement avec plusieurs tickers).
 // Output : JSON structuré matchant le schema TobTradeRecap :
 //   {
 //     dateLabel: "TODAY",
 //     trades: [{ ticker: "$XOS", entryPrice: 2.49, hodPrice: 2.90 }, ...],
-//     longTermInvestment: { ticker: "$DXYZ", entryPrice: 30, currentPrice: 71 } | null
+//     longTermInvestments: [
+//       { ticker: "$RVI", entryPrice: 0.50, currentPrice: 1.16 },
+//       { ticker: "$REA", entryPrice: 1.21, currentPrice: 1.91 }
+//     ]
 //   }
 //
 // Utilise Claude Sonnet 4.5 (vision) — le bot utilise déjà la même clé
@@ -48,9 +52,9 @@ const SYSTEM_PROMPT = `You are a precise OCR specialist for "TOB TRADE RECAP" tr
 These images have a dark background, gold title "✦ TOB TRADE RECAP FOR TODAY ✦", and a main table with these columns from left to right:
   TICKER | ENTRY PRICE | HOD PRICE | T1 (+5%) | T2 (+10%) | T3 (+15%) | TARGETS HIT | SUCCESS RATE
 
-The bottom of the image has a stats panel (Total Calls, Combined Final, etc.) and optionally a "LONG TERM INVESTMENT" section.
+The bottom of the image has a stats panel (Total Calls, Combined Final, etc.) and optionally a "LONG TERM INVESTMENTS" section listing ONE OR MORE long-term holdings (each with ticker, entry price, and current price). Treat both "LONG TERM INVESTMENT" and "LONG TERM INVESTMENTS" sections the same way — always return an array (possibly empty, possibly with multiple entries).
 
-Your task: extract ONLY the TICKER + ENTRY PRICE + HOD PRICE from each row of the main table, plus the long-term investment if present. The T1/T2/T3/targets/success columns are auto-computed downstream — DO NOT extract them.
+Your task: extract ONLY the TICKER + ENTRY PRICE + HOD PRICE from each row of the main table, plus ALL long-term investments if present. The T1/T2/T3/targets/success columns are auto-computed downstream — DO NOT extract them.
 
 Output STRICTLY this JSON shape (no prose, no markdown fences, no explanation):
 {
@@ -59,11 +63,10 @@ Output STRICTLY this JSON shape (no prose, no markdown fences, no explanation):
     { "ticker": "$XOS", "entryPrice": 2.49, "hodPrice": 2.90 },
     { "ticker": "$HAO", "entryPrice": 0.046, "hodPrice": 0.071 }
   ],
-  "longTermInvestment": {
-    "ticker": "$DXYZ",
-    "entryPrice": 30.00,
-    "currentPrice": 71.00
-  }
+  "longTermInvestments": [
+    { "ticker": "$RVI", "entryPrice": 0.50, "currentPrice": 1.16 },
+    { "ticker": "$REA", "entryPrice": 1.21, "currentPrice": 1.91 }
+  ]
 }
 
 Rules:
@@ -71,7 +74,7 @@ Rules:
 - Parse EVERY row of the main table — duplicates (e.g., $XOS appearing twice) are different trades, include all
 - Numbers as floats (no commas, no $, no quotes)
 - If the image has 41 rows, return 41 objects in trades[]
-- "longTermInvestment" is null if no "LONG TERM INVESTMENT" footer is visible
+- "longTermInvestments" is ALWAYS an array. Use [] if no long-term section is visible. Include EVERY long-term entry the image shows (1, 2, 3, …).
 - "dateLabel" defaults to "TODAY" unless image clearly shows a specific date
 - If a row is illegible/cut off, OMIT it — never invent numbers
 - Output JSON only. NO markdown code fences. NO prose.`;
@@ -81,7 +84,7 @@ Rules:
  * @param {string} imagePath - chemin absolu vers PNG ou JPEG
  * @param {object} [opts]
  * @param {string} [opts.model] - override le modèle Claude
- * @returns {Promise<{dateLabel: string, trades: Array, longTermInvestment: object|null, _meta: object}>}
+ * @returns {Promise<{dateLabel: string, trades: Array, longTermInvestments: Array, _meta: object}>}
  */
 async function parseRecapImage(imagePath, opts = {}) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -169,9 +172,22 @@ async function parseRecapImage(imagePath, opts = {}) {
 
   // Defaults sécurisés
   parsed.dateLabel = parsed.dateLabel || 'TODAY';
-  if (!parsed.longTermInvestment || typeof parsed.longTermInvestment !== 'object') {
-    parsed.longTermInvestment = null;
+  // Compat : ancien shape singleton `longTermInvestment` est remappé en
+  // array. Si rien n'est fourni, on retourne [].
+  if (Array.isArray(parsed.longTermInvestments)) {
+    parsed.longTermInvestments = parsed.longTermInvestments.filter(
+      lt => lt && typeof lt === 'object'
+        && typeof lt.ticker === 'string'
+        && typeof lt.entryPrice === 'number'
+        && typeof lt.currentPrice === 'number'
+    );
+  } else if (parsed.longTermInvestment && typeof parsed.longTermInvestment === 'object') {
+    parsed.longTermInvestments = [parsed.longTermInvestment];
+  } else {
+    parsed.longTermInvestments = [];
   }
+  // On supprime l'ancien champ pour éviter de polluer le template.
+  delete parsed.longTermInvestment;
 
   parsed._meta = {
     model,

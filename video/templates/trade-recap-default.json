@@ -48,11 +48,13 @@
       { "ticker": "$SST",  "entryPrice": 3.60,  "hodPrice": 4.65 },
       { "ticker": "$DXF",  "entryPrice": 0.42,  "hodPrice": 0.63 }
     ],
-    "longTermInvestment": {
-      "ticker": "$DXYZ",
-      "entryPrice": 30.00,
-      "currentPrice": 71.00
-    },
+    "longTermInvestments": [
+      {
+        "ticker": "$DXYZ",
+        "entryPrice": 30.00,
+        "currentPrice": 71.00
+      }
+    ],
     "alertImages": [],
     "accentColor": "#fbbf24",
     "successColor": "#10b981",

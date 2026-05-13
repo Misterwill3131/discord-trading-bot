@@ -17,7 +17,7 @@
 //   --max-alerts=N   : limite à N alertes max (default: 12). Plus = scroll
 //                      plus long en feed-style.
 //   --from-image=PATH: OCR cette image (tableau récap TOB) pour remplir
-//                      automatiquement trades + longTermInvestment dans
+//                      automatiquement trades + longTermInvestments dans
 //                      le template avant render. Pratique pour le workflow
 //                      "screenshot du tableau → vidéo automatique".
 //
@@ -83,14 +83,15 @@ async function main() {
     const { _meta } = ocrResult;
     console.log(`[gen-trade-recap]   ✓ ${_meta.tradesCount} trades extracted (${_meta.latencyMs}ms)`);
 
-    // Override template props.trades + longTermInvestment + dateLabel
+    // Override template props.trades + longTermInvestments + dateLabel
     const template = JSON.parse(fs.readFileSync(TEMPLATE_PATH, 'utf8'));
     template.props = template.props || {};
     template.props.trades = ocrResult.trades;
-    template.props.longTermInvestment = ocrResult.longTermInvestment;
+    template.props.longTermInvestments = ocrResult.longTermInvestments || [];
     template.props.dateLabel = ocrResult.dateLabel;
     fs.writeFileSync(TEMPLATE_PATH, JSON.stringify(template, null, 2) + '\n');
-    console.log(`[gen-trade-recap]   ✓ Template mis à jour avec ${ocrResult.trades.length} trades + longTerm=${ocrResult.longTermInvestment?.ticker || 'aucun'}`);
+    const ltSummary = (ocrResult.longTermInvestments || []).map(lt => lt.ticker).join(', ') || 'aucun';
+    console.log(`[gen-trade-recap]   ✓ Template mis à jour avec ${ocrResult.trades.length} trades + longTerm=${ltSummary}`);
   }
 
   // ── 1. Charge template ────────────────────────────────────────────
@@ -100,7 +101,8 @@ async function main() {
   }
   const template = JSON.parse(fs.readFileSync(TEMPLATE_PATH, 'utf8'));
   const trades = template.props?.trades || [];
-  console.log(`[gen-trade-recap] Template chargé : ${trades.length} trades, longTerm=${template.props?.longTermInvestment?.ticker || 'aucun'}`);
+  const ltLoaded = (template.props?.longTermInvestments || []).map(lt => lt.ticker).join(', ') || 'aucun';
+  console.log(`[gen-trade-recap] Template chargé : ${trades.length} trades, longTerm=${ltLoaded}`);
 
   // ── 2. Génère PNG alertes (sauf --no-db) ─────────────────────────
   let alertImagesProp = template.props?.alertImages || [];

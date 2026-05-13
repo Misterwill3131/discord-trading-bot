@@ -11,6 +11,7 @@
 const multer = require('multer');
 const {
   getPendingRenderJobs,
+  getRenderJobById,
   markRenderJobDone,
   markRenderJobFailed,
 } = require('../db/sqlite');
@@ -96,13 +97,19 @@ function requireWorkerAuth(req, res, next) {
 
 // Helper : poste une vidéo dans le canal Discord configuré, retourne msg id.
 // Erreurs explicites pour faciliter le debug côté Railway logs :
-//   - RENDER_OUTPUT_CHANNEL_ID manquant
+//   - channelId manquant (ni override par job, ni RENDER_OUTPUT_CHANNEL_ID)
 //   - Discord client pas encore prêt
 //   - Channel inaccessible (bot pas dans le serveur, ou pas de permissions)
 //   - send() qui throw (permissions Send Messages / Attach Files manquantes)
-async function postVideoToChannel(client, mp4Buffer, caption, filename) {
-  const channelId = process.env.RENDER_OUTPUT_CHANNEL_ID;
-  if (!channelId) throw new Error('RENDER_OUTPUT_CHANNEL_ID not set');
+//
+// `overrideChannelId` (optionnel) gagne sur la var d'env — utilisé par les
+// jobs qui veulent renvoyer le MP4 dans leur canal source (ex: image recap
+// postée dans #tob-trade-recap → MP4 retourné dans le même canal).
+async function postVideoToChannel(client, mp4Buffer, caption, filename, overrideChannelId) {
+  const channelId = overrideChannelId || process.env.RENDER_OUTPUT_CHANNEL_ID;
+  if (!channelId) {
+    throw new Error('No output channel: ni job.output_channel_id ni RENDER_OUTPUT_CHANNEL_ID');
+  }
   if (!client || !client.channels) {
     throw new Error('Discord client not ready (channels manager unavailable)');
   }
@@ -166,8 +173,18 @@ function registerRenderQueueRoutes(app, discordClient) {
       req.body.exitTs || new Date().toISOString()
     );
 
+    // Lookup per-job output channel override (ex: TobTradeRecap déclenché
+    // depuis un canal dédié veut renvoyer le MP4 dans le même canal).
+    let overrideChannelId = null;
     try {
-      const msgId = await postVideoToChannel(discordClient, req.file.buffer, caption, filename);
+      const job = getRenderJobById(jobId);
+      if (job && job.output_channel_id) overrideChannelId = job.output_channel_id;
+    } catch (err) {
+      console.warn('[render-queue] getRenderJobById failed:', err.message);
+    }
+
+    try {
+      const msgId = await postVideoToChannel(discordClient, req.file.buffer, caption, filename, overrideChannelId);
       markRenderJobDone(jobId, msgId);
       res.json({ status: 'done', discord_msg_id: msgId });
     } catch (err) {

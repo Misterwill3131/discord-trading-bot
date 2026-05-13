@@ -176,7 +176,7 @@ export const Root = () => {
             { ticker: '$LABT', entryPrice: 3.17,  hodPrice: 3.16 },
             { ticker: '$ERNA', entryPrice: 7.91,  hodPrice: 14.80 },
           ],
-          longTermInvestment: { ticker: '$DXYZ', entryPrice: 30, currentPrice: 71 },
+          longTermInvestments: [{ ticker: '$DXYZ', entryPrice: 30, currentPrice: 71 }],
           alertImages: [],
           secondsPerAlert: 1.0,
           alertsHoldEndSeconds: 3,

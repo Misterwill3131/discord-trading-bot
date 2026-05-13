@@ -83,25 +83,25 @@ function registerChartTestRoutes(app, requireAuth) {
       return '$' + n.toFixed(4);
     };
 
-    const callouts = [];
+    const arrows = [];
     if (Number.isFinite(entryPriceNum)) {
-      callouts.push({
+      arrows.push({
         datetime: entryTs,
         price: entryPriceNum,
         text: 'When alerted',
+        direction: 'up',
         fontBold: true,
-        backgroundColor: 'rgb(59,130,246)',
-        textColor: 'rgb(255,255,255)',
+        color: 'rgb(59,130,246)',
       });
     }
     if (Number.isFinite(exitPriceNum)) {
-      callouts.push({
+      arrows.push({
         datetime: exitTs,
         price: exitPriceNum,
         text: fmtPrice(exitPriceNum),
+        direction: 'down',
         fontBold: true,
-        backgroundColor: 'rgb(16,185,129)',
-        textColor: 'rgb(0,0,0)',
+        color: 'rgb(16,185,129)',
       });
     }
 
@@ -111,7 +111,7 @@ function registerChartTestRoutes(app, requireAuth) {
       const startedAt = Date.now();
       const buf = await client.getChart(symbol, String(range), {
         studies: [],
-        callouts,
+        arrows,
         session: 'extended',
         timezone: 'America/New_York',
       });

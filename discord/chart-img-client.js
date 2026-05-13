@@ -261,6 +261,43 @@ function buildCalloutDrawing(callout) {
   return drawing;
 }
 
+// Construit le drawing "Arrow Mark Up" (ou "Arrow Mark Down") — flèche
+// qui pointe vers un prix précis, avec un label optionnel.
+// Schéma vérifié contre la doc + exemple user :
+//   {
+//     "name": "Arrow Mark Up",
+//     "input": { "datetime": ISO, "price": number, "text"?: string },
+//     "override": { "fontBold"?: bool, "color"?: rgb }
+//   }
+//
+// Use case : marquer entry price ('When alerted') et exit price ('$X.XX')
+// sur le chart BoomProof, plus visuellement clair que Callout.
+//
+// `arrow.direction` = 'up' (default) | 'down' — sélectionne le bon
+// drawing TradingView.
+//
+// Renvoie null si un champ requis est invalide.
+function buildArrowMarkupDrawing(arrow) {
+  if (!arrow) return null;
+  const { datetime, price, text } = arrow;
+  if (typeof datetime !== 'string') return null;
+  if (!Number.isFinite(price)) return null;
+
+  const name = arrow.direction === 'down' ? 'Arrow Mark Down' : 'Arrow Mark Up';
+  const drawing = { name, input: { datetime, price } };
+  if (typeof text === 'string' && text.length > 0) {
+    drawing.input.text = text;
+  }
+
+  const override = {};
+  if (typeof arrow.fontBold === 'boolean') override.fontBold = arrow.fontBold;
+  if (typeof arrow.color === 'string')     override.color    = arrow.color;
+  if (Number.isInteger(arrow.fontSize))    override.fontSize = arrow.fontSize;
+  if (Object.keys(override).length > 0) drawing.override = override;
+
+  return drawing;
+}
+
 function withTimeout(promise, ms) {
   let handle;
   const timeout = new Promise((_, reject) => {
@@ -390,6 +427,12 @@ function createChartImgClient({
         if (callout) drawings.push(callout);
       }
     }
+    if (Array.isArray(opts.arrows)) {
+      for (const a of opts.arrows) {
+        const arrow = buildArrowMarkupDrawing(a);
+        if (arrow) drawings.push(arrow);
+      }
+    }
 
     // Clé case-sensitive sur le range. La présence du FIB / des rectangles
     // et leurs anchors exacts font partie de la clé pour qu'un changement
@@ -413,12 +456,15 @@ function createChartImgClient({
           return dt + '@' + pr + '#' + c.text;
         }).join(',')
       : '';
+    const arrowKey = (Array.isArray(opts.arrows) && opts.arrows.length > 0)
+      ? '|AR:' + opts.arrows.map(a => (a.direction || 'up') + '|' + a.datetime + '@' + a.price + '#' + (a.text || '')).join(',')
+      : '';
     const studiesKey = Array.isArray(opts.studies)
       ? '|S:' + JSON.stringify(opts.studies)
       : '';
     const sessionKey  = typeof opts.session  === 'string' ? '|SES:' + opts.session  : '';
     const timezoneKey = typeof opts.timezone === 'string' ? '|TZ:'  + opts.timezone : '';
-    const key = sym + '|' + String(range) + fibKey + rectKey + calloutKey + studiesKey + sessionKey + timezoneKey;
+    const key = sym + '|' + String(range) + fibKey + rectKey + calloutKey + arrowKey + studiesKey + sessionKey + timezoneKey;
 
     const hit = cache.get(key);
     if (hit) {
@@ -450,6 +496,7 @@ module.exports = {
   buildFibDrawing,
   buildRectangleDrawing,
   buildCalloutDrawing,
+  buildArrowMarkupDrawing,
   YAHOO_TO_TV_EXCHANGE,
   DEFAULT_STUDIES,
   CHART_IMG_BASE,

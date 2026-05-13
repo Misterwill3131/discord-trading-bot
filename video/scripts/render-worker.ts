@@ -156,34 +156,37 @@ export async function fetchChartForJob(job: RenderJob): Promise<string | null> {
     return '$' + n.toFixed(4);
   };
 
-  // Construit les callouts si on a les prix. Sinon chart sans annotations.
-  const callouts: Array<{
+  // Construit les arrows (Arrow Mark Up / Down) si on a les prix.
+  // Entry : flèche up + label 'When alerted' (pointe depuis le bas vers
+  // le prix d'entrée). Exit : flèche down + label = exit price formaté
+  // (pointe depuis le haut vers le prix de sortie).
+  const arrows: Array<{
     datetime: string;
     price: number;
-    text: string;
+    text?: string;
+    direction?: 'up' | 'down';
     fontBold?: boolean;
-    backgroundColor?: string;
-    textColor?: string;
+    color?: string;
   }> = [];
 
   if (Number.isFinite(job.entryPrice)) {
-    callouts.push({
+    arrows.push({
       datetime: job.entryTimestamp,
       price: job.entryPrice as number,
       text: 'When alerted',
+      direction: 'up',
       fontBold: true,
-      backgroundColor: 'rgb(59,130,246)',  // bleu accent — visible sur fond dark
-      textColor: 'rgb(255,255,255)',
+      color: 'rgb(59,130,246)',  // bleu accent
     });
   }
   if (Number.isFinite(job.exitPrice)) {
-    callouts.push({
+    arrows.push({
       datetime: job.exitTimestamp,
       price: job.exitPrice as number,
       text: fmtPrice(job.exitPrice as number),
+      direction: 'down',
       fontBold: true,
-      backgroundColor: 'rgb(16,185,129)',  // vert profit
-      textColor: 'rgb(0,0,0)',
+      color: 'rgb(16,185,129)',  // vert profit
     });
   }
 
@@ -191,7 +194,7 @@ export async function fetchChartForJob(job: RenderJob): Promise<string | null> {
   try {
     const buf = await client.getChart(symbol, '1D', {
       studies: [],          // pas d'indicateurs (clean look)
-      callouts,
+      arrows,               // Arrow Mark Up/Down avec text labels
       session: 'extended',  // pre-market + after-hours
       timezone: 'America/New_York',
     });

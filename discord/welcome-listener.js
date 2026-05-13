@@ -26,7 +26,40 @@ function shouldWelcome(oldMember, newMember, { roleId, guildId }) {
   return !hadRole && hasRole;
 }
 
+// Registers a guildMemberUpdate listener on `client`. No-op (with a single
+// boot warning) if any config field is empty. The handler is async because
+// it fetches the welcome channel from the Discord API.
+function registerWelcomeListener(client, {
+  guildId,
+  subscriberRoleId,
+  welcomeChannelId,
+  startHereChannelId,
+}) {
+  if (!guildId || !subscriberRoleId || !welcomeChannelId || !startHereChannelId) {
+    console.warn('[welcome] missing config — disabled (need TOB_WELCOME_GUILD_ID, TOB_SUBSCRIBER_ROLE_ID, TOB_WELCOME_CHANNEL_ID, TOB_START_HERE_CHANNEL_ID)');
+    return;
+  }
+
+  client.on('guildMemberUpdate', async (oldMember, newMember) => {
+    if (!shouldWelcome(oldMember, newMember, { roleId: subscriberRoleId, guildId })) return;
+    try {
+      const ch = await client.channels.fetch(welcomeChannelId);
+      if (!ch || !ch.isTextBased || !ch.isTextBased()) {
+        console.error('[welcome] welcome channel not text-based or not found:', welcomeChannelId);
+        return;
+      }
+      const msg = formatWelcomeMessage(newMember.user.id, startHereChannelId);
+      await ch.send(msg);
+    } catch (err) {
+      console.error('[welcome] send failed:', err.message);
+    }
+  });
+
+  console.log('[welcome] listener registered (guild=' + guildId + ', role=' + subscriberRoleId + ')');
+}
+
 module.exports = {
   formatWelcomeMessage,
   shouldWelcome,
+  registerWelcomeListener,
 };

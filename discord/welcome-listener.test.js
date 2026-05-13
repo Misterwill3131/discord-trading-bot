@@ -74,3 +74,40 @@ test('shouldWelcome returns false when member is a bot', () => {
   const newM = mockMember({ isBot: true, roleIds: ['sub-role'] });
   assert.strictEqual(shouldWelcome(oldM, newM, CFG), false);
 });
+
+// ── registerWelcomeListener ─────────────────────────────────────────
+
+const { registerWelcomeListener } = require('./welcome-listener');
+
+// Minimal client mock — captures `on` registrations.
+function mockClient() {
+  const handlers = {};
+  return {
+    on: (event, fn) => { handlers[event] = fn; },
+    handlers,
+  };
+}
+
+test('registerWelcomeListener does not subscribe when guildId is missing', () => {
+  const c = mockClient();
+  registerWelcomeListener(c, { guildId: '', subscriberRoleId: 'r', welcomeChannelId: 'c', startHereChannelId: 's' });
+  assert.strictEqual(c.handlers.guildMemberUpdate, undefined);
+});
+
+test('registerWelcomeListener does not subscribe when any config is missing', () => {
+  for (const missing of ['subscriberRoleId', 'welcomeChannelId', 'startHereChannelId']) {
+    const cfg = { guildId: 'g', subscriberRoleId: 'r', welcomeChannelId: 'c', startHereChannelId: 's' };
+    cfg[missing] = '';
+    const c = mockClient();
+    registerWelcomeListener(c, cfg);
+    assert.strictEqual(c.handlers.guildMemberUpdate, undefined, `missing ${missing} should disable listener`);
+  }
+});
+
+test('registerWelcomeListener subscribes when all config is present', () => {
+  const c = mockClient();
+  registerWelcomeListener(c, {
+    guildId: 'g', subscriberRoleId: 'r', welcomeChannelId: 'c', startHereChannelId: 's',
+  });
+  assert.strictEqual(typeof c.handlers.guildMemberUpdate, 'function');
+});

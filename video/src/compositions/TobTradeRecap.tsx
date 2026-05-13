@@ -222,7 +222,15 @@ const IntroPhase: React.FC<{ accentColor: string; dateLabel: string }> = ({ acce
   );
 };
 
-// ─── Phase 2 : Table — auto-scroll vertical ─────────────────────────
+// ─── Phase 2 : Table — auto-scroll vertical + scaling adaptatif ──────
+// Le SCALE adapte la taille des rows (et fonts/checkmarks) au nombre
+// de trades : peu de trades → rows + texte zoomés pour remplir l'écran ;
+// beaucoup de trades → rows compactes + auto-scroll vertical.
+//
+// Bornes : SCALE ∈ [1, 2.5]
+//   - 28 trades (1456px) → SCALE=1 (rows à taille de base, pile la frame)
+//   - 10 trades (520px)  → SCALE=2.5 → 1300px de contenu, plein écran
+//   - 41 trades (2132px) → SCALE=1 → scroll vertical comme avant
 const TablePhase: React.FC<{
   trades: ComputedTrade[];
   accentColor: string;
@@ -233,11 +241,23 @@ const TablePhase: React.FC<{
   const frame = useCurrentFrame();
   const { durationInFrames } = useVideoConfig();
 
-  const ROW_HEIGHT = 52;
+  const ROW_HEIGHT_BASE = 52;
   const HEADER_HEIGHT = 60;
   const VISIBLE_TABLE_HEIGHT = 1450;  // 9:16 1920px tall, leave room for title + padding
+  const naturalContentH = Math.max(1, trades.length * ROW_HEIGHT_BASE);
+  const SCALE = Math.max(1, Math.min(2.5, VISIBLE_TABLE_HEIGHT / naturalContentH));
+
+  const ROW_HEIGHT = Math.round(ROW_HEIGHT_BASE * SCALE);
+  const CELL_FONT_SIZE = Math.round(TABLE_CELL_FONT_SIZE * SCALE);
+  const HEADER_FONT_SIZE = Math.round(18 * SCALE);
+  const CHECK_SIZE = Math.round(22 * SCALE);
+
   const TOTAL_CONTENT_HEIGHT = trades.length * ROW_HEIGHT;
+  // Container = min(content, full budget). Quand peu de trades, on n'alloue
+  // que ce qu'il faut → le bottom n'est plus du vide noir.
+  const USED_TABLE_HEIGHT = Math.min(TOTAL_CONTENT_HEIGHT, VISIBLE_TABLE_HEIGHT);
   const MAX_SCROLL = Math.max(0, TOTAL_CONTENT_HEIGHT - VISIBLE_TABLE_HEIGHT + HEADER_HEIGHT);
+  const SCROLL_NEEDED = MAX_SCROLL > 0;
 
   // Scroll from 0 to MAX_SCROLL over (durationInFrames - 60) frames.
   // Hold first 30 frames at top, hold last 30 frames at bottom for readability.
@@ -252,7 +272,15 @@ const TablePhase: React.FC<{
   const titleOpacity = interpolate(frame, [0, 15], [0, 1], { extrapolateRight: 'clamp' });
 
   return (
-    <AbsoluteFill style={{ backgroundColor: bgColor, fontFamily, padding: '30px 24px', flexDirection: 'column' }}>
+    <AbsoluteFill style={{
+      backgroundColor: bgColor,
+      fontFamily,
+      padding: '30px 24px',
+      flexDirection: 'column',
+      // Centre verticalement quand le contenu est plus petit que le budget
+      // (peu de trades) — évite la grosse zone vide en bas.
+      justifyContent: SCROLL_NEEDED ? 'flex-start' : 'center',
+    }}>
       {/* Mini-titre */}
       <div style={{
         opacity: titleOpacity,
@@ -265,10 +293,10 @@ const TablePhase: React.FC<{
       </div>
 
       {/* Header columns sticky */}
-      <TableHeader accentColor={accentColor} />
+      <TableHeader accentColor={accentColor} fontSize={HEADER_FONT_SIZE} />
 
       {/* Scrolling rows */}
-      <div style={{ height: VISIBLE_TABLE_HEIGHT, overflow: 'hidden', position: 'relative' }}>
+      <div style={{ height: USED_TABLE_HEIGHT, overflow: 'hidden', position: 'relative' }}>
         <div style={{ transform: `translateY(-${scrollOffset}px)`, willChange: 'transform' }}>
           {trades.map((t, i) => (
             <TradeRow
@@ -279,17 +307,22 @@ const TablePhase: React.FC<{
               successColor={successColor}
               errorColor={errorColor}
               rowHeight={ROW_HEIGHT}
+              fontSize={CELL_FONT_SIZE}
+              checkSize={CHECK_SIZE}
             />
           ))}
         </div>
-        {/* Gradient fade at bottom for visual softness */}
-        <div style={{
-          position: 'absolute',
-          bottom: 0, left: 0, right: 0,
-          height: 80,
-          background: `linear-gradient(180deg, transparent 0%, ${bgColor} 100%)`,
-          pointerEvents: 'none',
-        }} />
+        {/* Gradient fade at bottom — uniquement quand le contenu scroll, sinon
+            ça mange visuellement la dernière row. */}
+        {SCROLL_NEEDED && (
+          <div style={{
+            position: 'absolute',
+            bottom: 0, left: 0, right: 0,
+            height: 80,
+            background: `linear-gradient(180deg, transparent 0%, ${bgColor} 100%)`,
+            pointerEvents: 'none',
+          }} />
+        )}
       </div>
     </AbsoluteFill>
   );
@@ -299,13 +332,13 @@ const TablePhase: React.FC<{
 const TABLE_GRID = '1.2fr 1fr 1fr 1fr 1fr 1fr 1.6fr 1fr';
 const TABLE_CELL_FONT_SIZE = 22;
 
-const TableHeader: React.FC<{ accentColor: string }> = ({ accentColor }) => (
+const TableHeader: React.FC<{ accentColor: string; fontSize: number }> = ({ accentColor, fontSize }) => (
   <div style={{
     display: 'grid',
     gridTemplateColumns: TABLE_GRID,
     padding: '14px 12px',
     color: accentColor,
-    fontSize: 18,
+    fontSize,
     fontWeight: 800,
     letterSpacing: 0.5,
     borderBottom: `2px solid ${accentColor}66`,
@@ -330,13 +363,18 @@ const TradeRow: React.FC<{
   successColor: string;
   errorColor: string;
   rowHeight: number;
-}> = ({ index, trade, successColor, errorColor, rowHeight }) => {
+  fontSize: number;
+  checkSize: number;
+}> = ({ index, trade, successColor, errorColor, rowHeight, fontSize, checkSize }) => {
   const hodColor = trade.hodPrice >= trade.entryPrice ? successColor : errorColor;
   const t1Color = trade.t1Hit ? successColor : errorColor;
   const t2Color = trade.t2Hit ? successColor : errorColor;
   const t3Color = trade.t3Hit ? successColor : errorColor;
   const successColor2 = trade.successRate >= 66.67 ? successColor : (trade.successRate >= 33.33 ? '#f59e0b' : errorColor);
   const rowBg = index % 2 === 0 ? 'rgba(255,255,255,0.02)' : 'transparent';
+  // Les colonnes T1/T2/T3 sont un poil plus petites que les autres pour
+  // densifier visuellement (proportion gardée même quand fontSize scale up).
+  const targetFontSize = Math.max(12, fontSize - Math.round(fontSize * 0.09));
 
   return (
     <div style={{
@@ -346,7 +384,7 @@ const TradeRow: React.FC<{
       height: rowHeight,
       alignItems: 'center',
       color: '#fff',
-      fontSize: TABLE_CELL_FONT_SIZE,
+      fontSize,
       fontWeight: 600,
       backgroundColor: rowBg,
       textAlign: 'center',
@@ -355,24 +393,25 @@ const TradeRow: React.FC<{
       <div style={{ textAlign: 'left', fontWeight: 800, color: '#fff' }}>{trade.ticker}</div>
       <div style={{ color: '#cbd5e1' }}>{fmtPrice(trade.entryPrice)}</div>
       <div style={{ color: hodColor, fontWeight: 800 }}>{fmtPrice(trade.hodPrice)}</div>
-      <div style={{ color: t1Color, fontSize: TABLE_CELL_FONT_SIZE - 2 }}>{fmtPrice(trade.t1Price)}</div>
-      <div style={{ color: t2Color, fontSize: TABLE_CELL_FONT_SIZE - 2 }}>{fmtPrice(trade.t2Price)}</div>
-      <div style={{ color: t3Color, fontSize: TABLE_CELL_FONT_SIZE - 2 }}>{fmtPrice(trade.t3Price)}</div>
+      <div style={{ color: t1Color, fontSize: targetFontSize }}>{fmtPrice(trade.t1Price)}</div>
+      <div style={{ color: t2Color, fontSize: targetFontSize }}>{fmtPrice(trade.t2Price)}</div>
+      <div style={{ color: t3Color, fontSize: targetFontSize }}>{fmtPrice(trade.t3Price)}</div>
       <div style={{ display: 'flex', gap: 6, justifyContent: 'center', alignItems: 'center' }}>
-        <CheckMark hit={trade.t1Hit} successColor={successColor} errorColor={errorColor} />
-        <CheckMark hit={trade.t2Hit} successColor={successColor} errorColor={errorColor} />
-        <CheckMark hit={trade.t3Hit} successColor={successColor} errorColor={errorColor} />
+        <CheckMark hit={trade.t1Hit} successColor={successColor} errorColor={errorColor} size={checkSize} />
+        <CheckMark hit={trade.t2Hit} successColor={successColor} errorColor={errorColor} size={checkSize} />
+        <CheckMark hit={trade.t3Hit} successColor={successColor} errorColor={errorColor} size={checkSize} />
       </div>
       <div style={{ color: successColor2, fontWeight: 800 }}>{trade.successRate.toFixed(0)}%</div>
     </div>
   );
 };
 
-const CheckMark: React.FC<{ hit: boolean; successColor: string; errorColor: string }> = ({ hit, successColor, errorColor }) => (
+const CheckMark: React.FC<{ hit: boolean; successColor: string; errorColor: string; size: number }> = ({ hit, successColor, errorColor, size }) => (
   <div style={{
-    width: 22, height: 22, borderRadius: 11,
+    width: size, height: size, borderRadius: size / 2,
     backgroundColor: hit ? successColor : errorColor,
-    color: '#000', fontWeight: 900, fontSize: 16,
+    color: '#000', fontWeight: 900,
+    fontSize: Math.max(12, Math.round(size * 0.72)),
     display: 'flex', alignItems: 'center', justifyContent: 'center',
   }}>
     {hit ? '✓' : '✗'}

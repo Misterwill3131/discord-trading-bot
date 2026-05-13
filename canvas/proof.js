@@ -274,11 +274,17 @@ async function drawRichLine(ctx, text, x, y, fontSize) {
           ctx.rect(cx, pillY, labelW + 6, pillH);
         }
         ctx.fill();
-        // Texte du label par-dessus.
+        // Texte du label par-dessus, centré verticalement dans le pill via
+        // textBaseline = 'middle' à la coordonnée Y du centre du pill.
+        // Évite que le texte soit calé en haut (cas par défaut quand on
+        // dessine à y avec baseline alphabetic).
+        const prevBaseline = ctx.textBaseline;
+        ctx.textBaseline = 'middle';
         ctx.fillStyle = style.color;
-        ctx.fillText(label, cx + 3, y);
-        // Restaurer la couleur précédente pour le texte qui suit.
+        ctx.fillText(label, cx + 3, pillY + pillH / 2);
+        // Restaurer la couleur + baseline pour le texte qui suit.
         ctx.fillStyle = prevFill;
+        ctx.textBaseline = prevBaseline;
         cx += labelW + 6;
       } else {
         const raw = '<@&' + seg.id + '>';
@@ -301,9 +307,12 @@ async function drawRichLine(ctx, text, x, y, fontSize) {
           ctx.rect(cx, pillY, labelW + 6, pillH);
         }
         ctx.fill();
+        const prevBaseline = ctx.textBaseline;
+        ctx.textBaseline = 'middle';
         ctx.fillStyle = style.color;
-        ctx.fillText(label, cx + 3, y);
+        ctx.fillText(label, cx + 3, pillY + pillH / 2);
         ctx.fillStyle = prevFill;
+        ctx.textBaseline = prevBaseline;
         cx += labelW + 6;
       } else {
         const raw = '@' + seg.name;
@@ -432,9 +441,12 @@ async function drawRichLineTruncated(ctx, text, x, y, fontSize, maxWidth) {
         if (typeof ctx.roundRect === 'function') ctx.roundRect(cx, pillY, lblW + 6, pillH, 3);
         else                                      ctx.rect(cx, pillY, lblW + 6, pillH);
         ctx.fill();
+        const prevBaseline = ctx.textBaseline;
+        ctx.textBaseline = 'middle';
         ctx.fillStyle = st.color;
-        ctx.fillText(label, cx + 3, y);
+        ctx.fillText(label, cx + 3, pillY + pillH / 2);
         ctx.fillStyle = prevFill;
+        ctx.textBaseline = prevBaseline;
         cx += lblW + 6;
       } else {
         const raw = '<@&' + seg.id + '>';
@@ -454,9 +466,12 @@ async function drawRichLineTruncated(ctx, text, x, y, fontSize, maxWidth) {
         if (typeof ctx.roundRect === 'function') ctx.roundRect(cx, pillY, lblW + 6, pillH, 3);
         else                                      ctx.rect(cx, pillY, lblW + 6, pillH);
         ctx.fill();
+        const prevBaseline = ctx.textBaseline;
+        ctx.textBaseline = 'middle';
         ctx.fillStyle = st.color;
-        ctx.fillText(label, cx + 3, y);
+        ctx.fillText(label, cx + 3, pillY + pillH / 2);
         ctx.fillStyle = prevFill;
+        ctx.textBaseline = prevBaseline;
         cx += lblW + 6;
       } else {
         const raw = '@' + seg.name;

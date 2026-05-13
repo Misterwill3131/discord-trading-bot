@@ -116,9 +116,35 @@ async function handleStatsCommand(message, ticker) {
 //     preuve qu'il y a un setup chiffré, pas juste une mention de ticker)
 //
 // getMessagesByTicker trie DESC par ts → le premier match est le plus récent.
-function findOriginalAlert({ signalTicker, messageCreatedAt, isReply, parentContent, parentAuthor }) {
+function findOriginalAlert({ signalTicker, messageCreatedAt, isReply, parentContent, parentAuthor, parentCreatedAt }) {
+  // Pour un reply : le parent EST l'entrée d'origine. On préfère
+  // toujours le parent (ground truth — ZZ peut avoir posté plusieurs
+  // entries TDIC, le reply pointe explicitement vers l'une d'elles), mais
+  // on enrichit ts + entry_price depuis la DB si on les trouve via une
+  // fenêtre temporelle de ±2 min autour du parentCreatedAt + match ticker.
   if (isReply && parentContent && parentAuthor) {
-    return { author: parentAuthor, content: parentContent, ts: null };
+    const parentTs = parentCreatedAt instanceof Date ? parentCreatedAt.toISOString() : null;
+    let dbMatch = null;
+    if (parentTs) {
+      const since = new Date(parentCreatedAt.getTime() - 2 * 60 * 1000).toISOString();
+      const until = new Date(parentCreatedAt.getTime() + 2 * 60 * 1000).toISOString();
+      try {
+        const rows = getMessagesByTicker(signalTicker.toUpperCase(), since);
+        dbMatch = rows.find(m =>
+          m.type === 'entry' &&
+          m.entry_price != null &&
+          m.ts >= since && m.ts <= until
+        ) || null;
+      } catch { /* DB hiccup — pas bloquant, on retombe sur les infos parent */ }
+    }
+    return {
+      author: parentAuthor,
+      content: parentContent,
+      // Si rien en DB : on utilise parentCreatedAt directement. Mieux que
+      // null (qui causait le bail "skip replies sans parent ts").
+      ts: dbMatch ? dbMatch.ts : parentTs,
+      entry_price: dbMatch ? dbMatch.entry_price : null,
+    };
   }
 
   const sinceIso = new Date(messageCreatedAt.getTime() - 30 * 86400000).toISOString();
@@ -134,6 +160,7 @@ function findOriginalAlert({ signalTicker, messageCreatedAt, isReply, parentCont
     author: found.author,
     content: found.content || found.preview || '',
     ts: found.ts,
+    entry_price: found.entry_price,
   };
 }
 
@@ -391,6 +418,7 @@ function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhoo
     // ── Détection de réponse + enrichissement ─────────────────────────
     let parentContent = null;
     let parentAuthor = null;
+    let parentCreatedAt = null;
     let isReply = false;
 
     if (message.reference && message.reference.messageId) {
@@ -398,6 +426,10 @@ function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhoo
         const parentMsg = await message.channel.messages.fetch(message.reference.messageId);
         parentContent = parentMsg.content || '';
         parentAuthor = (parentMsg.author && parentMsg.author.username) || null;
+        // Capturé pour findOriginalAlert : sans ça, maybeEnqueueProofRender
+        // bail sur "!originalAlert.ts" et aucun job n'est enfilé pour les
+        // exits qui sont des replies.
+        parentCreatedAt = parentMsg.createdAt || null;
         isReply = true;
         console.log('[REPLY] Parent: ' + parentContent.substring(0, 60));
       } catch (e) {
@@ -565,7 +597,7 @@ function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhoo
         const originalAlert = findOriginalAlert({
           signalTicker,
           messageCreatedAt: message.createdAt,
-          isReply, parentContent, parentAuthor,
+          isReply, parentContent, parentAuthor, parentCreatedAt,
         });
 
         if (originalAlert) {
@@ -595,7 +627,7 @@ function registerTradingHandler(client, { tradingChannel, railwayUrl, makeWebhoo
       const exitOriginalAlert = findOriginalAlert({
         signalTicker,
         messageCreatedAt: message.createdAt,
-        isReply, parentContent, parentAuthor,
+        isReply, parentContent, parentAuthor, parentCreatedAt,
       });
       // computePnlString : multi-fallback (explicite +X%, "up X%",
       // "locked in X%", range "X-Y" calculé). Permet d'auto-render des

@@ -9,8 +9,8 @@ process.env.DATA_DIR = tmpDir;
 // Now safe to require modules that load db/sqlite
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { formatAnalystEntryEmail, maybeEnqueueProofRender } = require('./handler');
-const { getPendingRenderJobs } = require('../db/sqlite');
+const { formatAnalystEntryEmail, maybeEnqueueProofRender, findOriginalAlert } = require('./handler');
+const { getPendingRenderJobs, insertMessage } = require('../db/sqlite');
 
 // ── formatAnalystEntryEmail ──────────────────────────────────────────
 // L'email est essentiellement une image inline (cf. notifications/email.js).
@@ -285,4 +285,96 @@ test('registerTradingHandler enqueue un BoomRecap quand ZZ post un RECAP:', asyn
   const recapJobs = newJobs.filter(j => j.composition === 'BoomRecap');
   assert.strictEqual(recapJobs.length, 1, 'should enqueue exactly one BoomRecap job');
   assert.ok(recapJobs[0].recap_data, 'recap_data should be populated');
+});
+
+// ── findOriginalAlert : reply branch propage parent ts + entry_price ──
+test('findOriginalAlert (reply) uses parentCreatedAt as ts when no DB match', () => {
+  const parentTs = new Date('2026-05-13T13:32:00-04:00');
+  const result = findOriginalAlert({
+    signalTicker: 'NEVER_SEEN',
+    messageCreatedAt: new Date('2026-05-13T14:00:00-04:00'),
+    isReply: true,
+    parentContent: '$NEVER_SEEN 0.50 entry',
+    parentAuthor: 'ZZ',
+    parentCreatedAt: parentTs,
+  });
+  assert.ok(result);
+  assert.strictEqual(result.author, 'ZZ');
+  assert.strictEqual(result.ts, parentTs.toISOString());
+  assert.strictEqual(result.entry_price, null);
+});
+
+test('findOriginalAlert (reply) enriches with DB entry_price when ticker+ts match', () => {
+  // Seed DB avec une entry TDIC postée à parentTs.
+  const parentTs = new Date('2026-05-13T13:32:00-04:00');
+  insertMessage({
+    id: 'reply-test-entry-1',
+    ts: parentTs.toISOString(),
+    author: 'ZZ',
+    channel: 'trading-floor',
+    content: '$TDIC 0.95 -11.18',
+    preview: '$TDIC 0.95 -11.18',
+    passed: true,
+    type: 'entry',
+    reason: 'Accepted',
+    confidence: 90,
+    ticker: 'TDIC',
+    entry_price: 0.95,
+    isReply: false,
+  });
+
+  const result = findOriginalAlert({
+    signalTicker: 'TDIC',
+    messageCreatedAt: new Date('2026-05-13T14:37:00-04:00'),
+    isReply: true,
+    parentContent: 'TDIC 0.95 -11.18 with a lot of handholding',
+    parentAuthor: 'ZZ',
+    parentCreatedAt: parentTs,
+  });
+  assert.ok(result);
+  assert.strictEqual(result.author, 'ZZ');
+  assert.strictEqual(result.ts, parentTs.toISOString());
+  assert.strictEqual(result.entry_price, 0.95);
+});
+
+test('findOriginalAlert (reply without parentCreatedAt) returns ts=null (back-compat)', () => {
+  // Si parentCreatedAt manque (parent fetch échoué), on tombe sur null
+  // — meilleur que de planter, mais maybeEnqueueProofRender skippera.
+  const result = findOriginalAlert({
+    signalTicker: 'TDIC',
+    messageCreatedAt: new Date('2026-05-13T14:00:00-04:00'),
+    isReply: true,
+    parentContent: 'TDIC 0.95',
+    parentAuthor: 'ZZ',
+    parentCreatedAt: null,
+  });
+  assert.ok(result);
+  assert.strictEqual(result.ts, null);
+});
+
+test('maybeEnqueueProofRender accepts a reply-based originalAlert with parentCreatedAt-derived ts', async () => {
+  // Régression : avant le fix, ts était toujours null pour les replies
+  // → bail "skip replies sans parent ts" → aucune vidéo générée pour
+  // les exits postés en mode reply (cas ZZ "TDIC 1018%").
+  const before = getPendingRenderJobs().length;
+  await maybeEnqueueProofRender({
+    filterType: 'exit',
+    signalTicker: 'TDIC',
+    pnl: '+1018%',
+    originalAlert: {
+      author: 'ZZ',
+      content: 'TDIC 0.95 -11.18',
+      ts: '2026-05-13T13:32:00-04:00',
+      entry_price: 0.95,
+    },
+    authorName: 'ZZ',
+    content: 'TDIC 1018% and you got at least 4 alerts',
+    messageCreatedAt: new Date('2026-05-13T14:37:00-04:00'),
+  });
+  const after = getPendingRenderJobs();
+  assert.strictEqual(after.length, before + 1);
+  const job = after[after.length - 1];
+  assert.strictEqual(job.ticker, 'TDIC');
+  assert.strictEqual(job.pnl, '+1018%');
+  assert.strictEqual(job.entry_price, 0.95);
 });

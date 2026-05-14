@@ -442,7 +442,8 @@ test('buildAlertImagesBase64 (synthetic, default) generates 1 card per trade row
       { ticker: '$HAO', entryPrice: 0.046, hodPrice: 0.071 },
     ],
     deps: {
-      // mode default = 'synthetic', pas besoin de le spécifier
+      mode: 'synthetic',
+      getMessagesByTsRange: () => [], // évite la lookup DB en test
       generateImage: (author, content, ts) => {
         generated.push({ author, content, ts });
         return Promise.resolve(Buffer.from(`PNG-${content}`));
@@ -522,6 +523,42 @@ test('buildAlertImagesBase64 (synthetic) auto-scales beyond default max (16 trad
     deps: { generateImage: () => Promise.resolve(Buffer.from('p')) },
   });
   assert.strictEqual(result.length, 16);
+});
+
+// ── buildAlertImagesBase64 — hybrid mode (default) ──────────────────
+test('buildAlertImagesBase64 (hybrid, default) reuses real Discord messages when prices match', async () => {
+  // Setup : 3 trades, 2 ont un vrai message en DB matchant le prix exact.
+  // Le 3e n'a aucun match → fallback synthétique.
+  const messages = [
+    { id: 1, type: 'entry', author: 'ZZ', content: 'AEHL 1.44 entry 🔥', ts: '2026-05-13T17:30:00Z', ticker: 'AEHL' },
+    { id: 2, type: 'entry', author: 'ZZ', content: 'QUCY 0.44 lotto', ts: '2026-05-13T16:00:00Z', ticker: 'QUCY' },
+    // Pas de MOBX en DB → MOBX trade → synthétique
+  ];
+  const generated = [];
+  const result = await buildAlertImagesBase64({
+    trades: [
+      { ticker: '$AEHL', entryPrice: 1.44, hodPrice: 6.27 },
+      { ticker: '$QUCY', entryPrice: 0.44, hodPrice: 2.11 },
+      { ticker: '$MOBX', entryPrice: 2.62, hodPrice: 3.08 },
+    ],
+    deps: {
+      mode: 'hybrid',
+      getMessagesByTsRange: () => messages,
+      generateImage: (author, content, ts) => {
+        generated.push({ author, content });
+        return Promise.resolve(Buffer.from(`PNG-${content}`));
+      },
+      now: '2026-05-14T13:22:00Z',
+      dateKey: '2026-05-14',
+    },
+  });
+  assert.strictEqual(result.length, 3);
+  // AEHL et QUCY = vrais messages (contenu authentique de ZZ)
+  assert.strictEqual(generated[0].content, 'AEHL 1.44 entry 🔥');
+  assert.strictEqual(generated[1].content, 'QUCY 0.44 lotto');
+  // MOBX = synthétique (pas en DB) avec content $TICKER PRICE🔥
+  assert.strictEqual(generated[2].content, '$MOBX 2.62🔥');
+  assert.strictEqual(generated[2].author, 'ZZ');
 });
 
 test('buildAlertImagesBase64 (synthetic) skips trades whose render fails but continues', async () => {

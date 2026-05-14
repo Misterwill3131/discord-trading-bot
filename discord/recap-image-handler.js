@@ -35,13 +35,17 @@ const { generateImage } = require('../canvas/proof');
 const DEFAULT_MAX_ALERTS = parseInt(process.env.TOB_RECAP_MAX_ALERTS || '12', 10);
 
 // Mode de génération des cartes pour la parade :
-//   'synthetic' (default) : génère des Discord-cards à partir du tableau OCR.
-//                            Pas de query DB, garanti que ça matche le récap.
-//   'db-lookup'           : ancien comportement — cherche les messages dans
-//                            la DB par ticker + prix. Sujet aux mismatches
-//                            quand ZZ a posté des updates plutôt que des
-//                            calls explicites avec le bon prix.
-const ALERT_MODE = (process.env.TOB_RECAP_ALERT_MODE || 'synthetic').toLowerCase();
+//   'hybrid' (default)  : pour chaque trade, tente un VRAI message Discord
+//                          en DB (match ticker + prix exact). Si trouvé,
+//                          utilise le contenu authentique de ZZ. Sinon,
+//                          synthétise une carte placeholder. → Best of
+//                          both worlds : pas de régénération si la carte
+//                          existe déjà, fallback safe sinon.
+//   'synthetic'          : génère TOUT en synthétique (skip query DB).
+//                          Utile pour des tests ou si la DB est vide.
+//   'db-lookup'          : ancien comportement — pas de fallback synthétique,
+//                          juste les vrais messages. Conservé pour rétrocompat.
+const ALERT_MODE = (process.env.TOB_RECAP_ALERT_MODE || 'hybrid').toLowerCase();
 
 // Auteur affiché sur les cartes synthétiques. Surchargeable via env si
 // quelqu'un d'autre relaie les signaux dans le futur.
@@ -258,16 +262,104 @@ async function buildSyntheticAlertImages(trades, deps = {}, maxAlerts = DEFAULT_
   return out;
 }
 
+// Génère N cartes en mode hybride : VRAI message Discord d'abord (si ZZ
+// l'a posté avec le prix exact du récap), synthétique sinon. Garantit que
+// les cartes existantes sont réutilisées sans régénération, et qu'aucune
+// ligne du récap n'est laissée sans carte.
+async function buildHybridAlertImages(trades, deps = {}, maxAlerts = DEFAULT_MAX_ALERTS) {
+  const _getMessagesByTsRange = deps.getMessagesByTsRange || getMessagesByTsRange;
+  const _generateImage = deps.generateImage || generateImage;
+  const author = deps.syntheticAuthor || SYNTHETIC_AUTHOR;
+  const now = deps.now ? new Date(deps.now) : new Date();
+  const today = deps.dateKey || todayNyDateKey();
+
+  if (!Array.isArray(trades) || trades.length === 0) return [];
+
+  // Fetch real entries from today + yesterday NY pour avoir un large pool.
+  const allRealEntries = [];
+  for (const dk of [today, addDaysToDateKey(today, -1)]) {
+    try {
+      const [s, e] = nyDateKeyToUtcRange(dk);
+      const msgs = _getMessagesByTsRange(s, e) || [];
+      for (const m of msgs) if (m.type === 'entry') allRealEntries.push(m);
+    } catch (err) {
+      console.warn(`[recap-image-handler] DB query failed for ${dk}: ${err.message}`);
+    }
+  }
+
+  const msgKey = (m) => m.id != null ? `id:${m.id}` : `ts:${m.ts}:${m.author}`;
+  const usedMessages = new Set();
+  const out = [];
+  let realCount = 0;
+  let syntheticCount = 0;
+
+  const effectiveMax = Math.max(maxAlerts, trades.length);
+
+  for (let i = 0; i < Math.min(trades.length, effectiveMax); i++) {
+    const trade = trades[i];
+    if (!trade || !trade.ticker) continue;
+    const ticker = String(trade.ticker).replace(/^\$+/, '');
+    const tNorm = normalizeTicker(ticker);
+
+    // ① Priorité : un vrai message Discord pour ce trade.
+    // Match strict : même ticker + content contient le prix d'entrée exact.
+    const candidates = allRealEntries.filter(m => normalizeTicker(m.ticker) === tNorm);
+    const variants = priceVariants(trade.entryPrice);
+    let realMatch = null;
+    for (const v of variants) {
+      realMatch = candidates.find(m => !usedMessages.has(msgKey(m)) && contentContainsPrice(m.content, v));
+      if (realMatch) break;
+    }
+
+    let card = null;
+    if (realMatch) {
+      usedMessages.add(msgKey(realMatch));
+      try {
+        const buf = await _generateImage(
+          realMatch.author || author,
+          realMatch.content || '',
+          realMatch.ts,
+          { scale: 2 },
+        );
+        card = { base64: buf.toString('base64'), ticker };
+        realCount++;
+      } catch (err) {
+        console.warn(`[recap-image-handler] real alert render failed for ${ticker}: ${err.message}`);
+      }
+    }
+
+    // ② Fallback synthétique si aucun vrai message ne matche.
+    if (!card) {
+      const entryStr = fmtPriceForCard(trade.entryPrice);
+      const content = entryStr ? `$${ticker} ${entryStr}🔥` : `$${ticker}🔥`;
+      const offsetMs = (trades.length - i) * 60_000;
+      const ts = new Date(now.getTime() - offsetMs).toISOString();
+      try {
+        const buf = await _generateImage(author, content, ts, { scale: 2 });
+        card = { base64: buf.toString('base64'), ticker };
+        syntheticCount++;
+      } catch (err) {
+        console.warn(`[recap-image-handler] synthetic alert ${i + 1} render failed: ${err.message}`);
+      }
+    }
+
+    if (card) out.push(card);
+  }
+
+  console.log(`[recap-image-handler] parade: ${realCount} real Discord cards + ${syntheticCount} synthetic = ${out.length} total`);
+  return out;
+}
+
 async function buildAlertImagesBase64({
   maxAlerts = DEFAULT_MAX_ALERTS,
   trades = null,
   deps = {},
 } = {}) {
-  // Mode synthétique : génère les cartes directement depuis le récap OCR.
-  // Default activé via env TOB_RECAP_ALERT_MODE. Ce mode est déterministe
-  // et évite tous les bugs de matching DB (mauvais jour, mauvais message,
-  // ticker manquant, etc.).
+  // Dispatch sur le mode demandé. 'hybrid' (default) = best of both worlds.
   const mode = deps.mode || ALERT_MODE;
+  if (mode === 'hybrid') {
+    return buildHybridAlertImages(trades, deps, maxAlerts);
+  }
   if (mode === 'synthetic') {
     return buildSyntheticAlertImages(trades, deps, maxAlerts);
   }
@@ -544,6 +636,7 @@ module.exports = {
   buildRecapJobPayload,
   buildAlertImagesBase64,
   buildSyntheticAlertImages,
+  buildHybridAlertImages,
   todayNyDateKey,
   nyDateKeyToUtcRange,
   addDaysToDateKey,

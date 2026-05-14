@@ -146,6 +146,18 @@ function priceVariants(price) {
   return [...variants].filter(v => v && v.length >= 2);
 }
 
+// Vérifie qu'une chaîne `content` contient le prix `priceStr` avec des
+// bornes propres (pas de chiffre/point juste avant ou de chiffre juste
+// après). Évite "1.43" matchant "1.434".
+function contentContainsPrice(content, priceStr) {
+  const c = String(content || '');
+  const idx = c.indexOf(priceStr);
+  if (idx === -1) return false;
+  const before = idx === 0 ? ' ' : c[idx - 1];
+  const after = idx + priceStr.length >= c.length ? ' ' : c[idx + priceStr.length];
+  return !/[\d.]/.test(before) && !/\d/.test(after);
+}
+
 // Pour un trade donné (ticker + entryPrice), trouve l'alerte la + pertinente
 // parmi les candidats (entries du jour ce ticker, ordre ASC).
 //
@@ -160,16 +172,7 @@ function pickAlertForTrade(candidatesAsc, trade) {
   if (!candidatesAsc || candidatesAsc.length === 0) return null;
   const variants = priceVariants(trade.entryPrice);
   for (const v of variants) {
-    const match = candidatesAsc.find(m => {
-      const c = String(m.content || '');
-      // \b évite "1.43" matchant "1.434". On utilise un check char-bornes
-      // simple — les content sont du texte libre, regex coûte.
-      const idx = c.indexOf(v);
-      if (idx === -1) return false;
-      const before = idx === 0 ? ' ' : c[idx - 1];
-      const after = idx + v.length >= c.length ? ' ' : c[idx + v.length];
-      return !/[\d.]/.test(before) && !/\d/.test(after);
-    });
+    const match = candidatesAsc.find(m => contentContainsPrice(m.content, v));
     if (match) return match;
   }
   // Fallback : la première (la plus ancienne) entry du jour pour ce ticker.
@@ -245,24 +248,53 @@ async function buildAlertImagesBase64({
       console.log(`[recap-image-handler] using ${best.dk} alerts (${best.matchCount} matches) instead of ${today} — recap appears to cover ${best.dk}`);
     }
     const allEntriesAsc = best.entries.slice().reverse();
-    const seenIds = new Set();
+
+    // Helper : clé d'identification d'un message pour le tracking "déjà
+    // utilisé" (préfère m.id quand dispo, fallback sur ts+author).
+    const msgKey = (m) => m.id != null ? `id:${m.id}` : `ts:${m.ts}:${m.author}`;
+
+    // Pour chaque trade du récap, sélectionne UN message. Pour les tickers
+    // dupliqués (ex: $LNKS 1.39 puis $LNKS 1.66) on préfère un message
+    // différent pour chaque trade (= 2 cartes distinctes dans la parade)
+    // mais si ZZ a tout posté en un seul call ("LNKS 1.39 to 1.66"), on
+    // accepte de réutiliser le même message — mieux que de skip la ligne.
+    const usedMessages = new Set();
     const picked = [];
     for (const trade of trades) {
       const tNorm = normalizeTicker(trade && trade.ticker);
       if (!tNorm) continue;
       const candidates = allEntriesAsc.filter(m => normalizeTicker(m.ticker) === tNorm);
-      const chosen = pickAlertForTrade(candidates, trade);
+      if (candidates.length === 0) continue;
+
+      // Priorité 1 : un message NON-utilisé contenant le prix exact du trade.
+      const variants = priceVariants(trade.entryPrice);
+      let chosen = null;
+      for (const v of variants) {
+        chosen = candidates.find(m => !usedMessages.has(msgKey(m)) && contentContainsPrice(m.content, v));
+        if (chosen) break;
+      }
+      // Priorité 2 : n'importe quel message non-utilisé pour ce ticker
+      // (sans match prix → on prend le plus ancien).
+      if (!chosen) {
+        chosen = candidates.find(m => !usedMessages.has(msgKey(m))) || null;
+      }
+      // Priorité 3 : fallback complet — réutilise un message déjà pris
+      // (mieux qu'un trou dans la parade pour des tickers dupliqués où
+      // ZZ n'a fait qu'un seul call multi-prix).
+      if (!chosen) {
+        chosen = pickAlertForTrade(candidates, trade);
+      }
       if (!chosen) continue;
-      // Dedupe : si le même message a été choisi pour 2 trades (ex: le call
-      // mentionne plusieurs prix), on ne le rend qu'une fois.
-      const key = chosen.id != null ? `id:${chosen.id}` : `ts:${chosen.ts}:${chosen.author}`;
-      if (seenIds.has(key)) continue;
-      seenIds.add(key);
+
+      usedMessages.add(msgKey(chosen));
       picked.push(chosen);
     }
     // Tri chronologique (la première à apparaître à l'écran = la + ancienne)
     picked.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
-    entryAlerts = picked.slice(0, maxAlerts);
+    // Cap : permet de monter au-delà du default si le récap a beaucoup
+    // de trades — l'utilisateur veut une carte par ligne, on respecte.
+    const effectiveMax = Math.max(maxAlerts, trades.length);
+    entryAlerts = picked.slice(0, effectiveMax);
   } else {
     // Legacy : toutes les entries du jour (today seulement), capées à
     // maxAlerts (plus anciennes en 1er).

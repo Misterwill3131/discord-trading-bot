@@ -229,8 +229,33 @@ test('buildAlertImagesBase64 only includes tickers from trades (drops $AAPL not 
   assert.strictEqual(result[0].ticker, 'TDIC');
 });
 
-test('buildAlertImagesBase64 dedupes when same alert is picked for multiple trades', async () => {
-  // Un seul message qui contient les 2 prix → ne doit apparaître qu'une fois.
+test('buildAlertImagesBase64 prefers different messages for duplicate-ticker trades', async () => {
+  // ZZ a posté 2 calls LNKS distincts (1.39 puis 1.66). Le récap a aussi
+  // 2 lignes LNKS. → Chaque ligne doit obtenir son propre message.
+  const messages = [
+    { id: 1, type: 'entry', author: 'ZZ', content: 'LNKS 1.66 re-entry', ts: '2026-05-13T15:00:00Z', ticker: 'LNKS' },
+    { id: 2, type: 'entry', author: 'ZZ', content: 'LNKS 1.39 entry', ts: '2026-05-13T13:00:00Z', ticker: 'LNKS' },
+  ];
+  const result = await buildAlertImagesBase64({
+    trades: [
+      { ticker: '$LNKS', entryPrice: 1.39, hodPrice: 2.47 },
+      { ticker: '$LNKS', entryPrice: 1.66, hodPrice: 2.47 },
+    ],
+    deps: {
+      getMessagesByTsRange: () => messages,
+      generateImage: (author, content) => Promise.resolve(Buffer.from(`PNG-${content}`)),
+      dateKey: '2026-05-13',
+    },
+  });
+  assert.strictEqual(result.length, 2);
+  const contents = result.map(r => Buffer.from(r.base64, 'base64').toString());
+  assert.ok(contents.includes('PNG-LNKS 1.39 entry'));
+  assert.ok(contents.includes('PNG-LNKS 1.66 re-entry'));
+});
+
+test('buildAlertImagesBase64 reuses same message when ZZ posted only one multi-price call', async () => {
+  // ZZ a posté UN SEUL call multi-prix → on accepte de réutiliser ce
+  // message pour les 2 trades du récap (mieux qu'un trou).
   const messages = [
     { id: 1, type: 'entry', author: 'ZZ', content: 'OCG 2.10 and re-entry at 2.25', ts: '2026-05-13T13:00:00Z', ticker: 'OCG' },
   ];
@@ -245,7 +270,28 @@ test('buildAlertImagesBase64 dedupes when same alert is picked for multiple trad
       dateKey: '2026-05-13',
     },
   });
-  assert.strictEqual(result.length, 1);
+  assert.strictEqual(result.length, 2);
+});
+
+test('buildAlertImagesBase64 returns 16 alerts when recap has 16 trades (cap auto-scales)', async () => {
+  // 16 tickers uniques, un message chacun. Default maxAlerts=12 ne doit
+  // PAS couper la parade — l'utilisateur veut une carte par ligne.
+  const tickers = ['AIIO','AEHL','DGXX','LNKS','QUCY','SNAL','RUBI','YOOV','OCG','EDBL','MOBX','WOK','POET','TSLA','NVDA','META'];
+  const messages = tickers.map((t, i) => ({
+    id: i + 1, type: 'entry', author: 'ZZ',
+    content: `${t} entry`, ts: `2026-05-13T${String(13 + i % 6).padStart(2, '0')}:${String(i * 3 % 60).padStart(2, '0')}:00Z`,
+    ticker: t,
+  }));
+  const trades = tickers.map(t => ({ ticker: '$' + t, entryPrice: 1.0, hodPrice: 2.0 }));
+  const result = await buildAlertImagesBase64({
+    trades,
+    deps: {
+      getMessagesByTsRange: () => messages,
+      generateImage: () => Promise.resolve(Buffer.from('p')),
+      dateKey: '2026-05-13',
+    },
+  });
+  assert.strictEqual(result.length, 16);
 });
 
 test('buildAlertImagesBase64 with empty trades keeps all entries (legacy)', async () => {

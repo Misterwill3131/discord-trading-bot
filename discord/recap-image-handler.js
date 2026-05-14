@@ -80,6 +80,17 @@ function todayNyDateKey() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
 }
 
+// Décale une dateKey "YYYY-MM-DD" de N jours (positif ou négatif). Géré via
+// Date.UTC pour que les bornes mois/année soient propres.
+function addDaysToDateKey(key, days) {
+  const [y, m, d] = String(key).split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d + days));
+  const yy = date.getUTCFullYear();
+  const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(date.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
 // Convertit "YYYY-MM-DD" (date NY) en [startUtcIso, endUtcIso] couvrant
 // minuit NY à minuit NY le lendemain.
 //
@@ -185,24 +196,55 @@ async function buildAlertImagesBase64({
 } = {}) {
   const _getMessagesByTsRange = deps.getMessagesByTsRange || getMessagesByTsRange;
   const _generateImage = deps.generateImage || generateImage;
-  const dateKey = deps.dateKey || todayNyDateKey();
-  const [startIso, endIso] = nyDateKeyToUtcRange(dateKey);
+  const today = deps.dateKey || todayNyDateKey();
 
-  let messages = [];
-  try {
-    messages = _getMessagesByTsRange(startIso, endIso) || [];
-  } catch (err) {
-    console.warn(`[recap-image-handler] DB query failed for ${dateKey}: ${err.message}`);
-    return [];
+  // Détection auto du jour pertinent : on query today ET yesterday (NY)
+  // puis on prend le jour qui a le plus d'entries matchant les tickers du
+  // récap. Couvre le cas typique où ZZ post le récap le lendemain matin
+  // (la journée courante a 0 alerte pour les tickers d'hier, mais hier en
+  // a plein).
+  //
+  // Si trades non fourni → mode legacy, juste today.
+  const dateKeys = Array.isArray(trades) && trades.length > 0
+    ? [today, addDaysToDateKey(today, -1)]
+    : [today];
+
+  // Fetch messages for each candidate date.
+  const dayCandidates = [];
+  for (const dk of dateKeys) {
+    try {
+      const [s, e] = nyDateKeyToUtcRange(dk);
+      const msgs = _getMessagesByTsRange(s, e) || [];
+      dayCandidates.push({ dk, entries: msgs.filter(m => m.type === 'entry') });
+    } catch (err) {
+      console.warn(`[recap-image-handler] DB query failed for ${dk}: ${err.message}`);
+      dayCandidates.push({ dk, entries: [] });
+    }
   }
-
-  // getMessagesByTsRange retourne DESC — on inverse pour ordre ASC (chronologique).
-  const allEntriesAsc = messages.filter(m => m.type === 'entry').reverse();
 
   // Mode "récap" : per-trade matching → one alert per trade row, in
   // chronological order.
   let entryAlerts;
   if (Array.isArray(trades) && trades.length > 0) {
+    // Score chaque jour : combien d'entries matchent les tickers du récap ?
+    const recapSet = new Set(
+      trades.map(t => normalizeTicker(t && t.ticker)).filter(Boolean)
+    );
+    const scored = dayCandidates.map(d => ({
+      ...d,
+      matchCount: d.entries.filter(e => recapSet.has(normalizeTicker(e.ticker))).length,
+    }));
+    // Pick le jour avec le plus de matches. En cas d'égalité, le premier
+    // dans dateKeys gagne (= today préféré sur yesterday).
+    const best = scored.reduce((a, b) => b.matchCount > a.matchCount ? b : a);
+    if (best.matchCount === 0) {
+      console.log('[recap-image-handler] no alert matches recap tickers in last 2 days → empty parade');
+      return [];
+    }
+    if (best.dk !== today) {
+      console.log(`[recap-image-handler] using ${best.dk} alerts (${best.matchCount} matches) instead of ${today} — recap appears to cover ${best.dk}`);
+    }
+    const allEntriesAsc = best.entries.slice().reverse();
     const seenIds = new Set();
     const picked = [];
     for (const trade of trades) {
@@ -222,8 +264,10 @@ async function buildAlertImagesBase64({
     picked.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
     entryAlerts = picked.slice(0, maxAlerts);
   } else {
-    // Legacy : toutes les entries du jour, capées à maxAlerts (plus anciennes en 1er).
-    entryAlerts = allEntriesAsc.slice(0, maxAlerts);
+    // Legacy : toutes les entries du jour (today seulement), capées à
+    // maxAlerts (plus anciennes en 1er).
+    const todayAsc = (dayCandidates[0] && dayCandidates[0].entries.slice().reverse()) || [];
+    entryAlerts = todayAsc.slice(0, maxAlerts);
   }
 
   if (entryAlerts.length === 0) return [];
@@ -392,4 +436,5 @@ module.exports = {
   buildAlertImagesBase64,
   todayNyDateKey,
   nyDateKeyToUtcRange,
+  addDaysToDateKey,
 };

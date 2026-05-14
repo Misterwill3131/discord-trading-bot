@@ -7,6 +7,7 @@ const {
   buildRecapJobPayload,
   buildAlertImagesBase64,
   nyDateKeyToUtcRange,
+  addDaysToDateKey,
 } = require('./recap-image-handler');
 
 // ── pickImageAttachment ────────────────────────────────────────────
@@ -96,6 +97,13 @@ test('nyDateKeyToUtcRange uses UTC-5 (EST) in winter', () => {
   const [start, end] = nyDateKeyToUtcRange('2026-01-15');
   assert.strictEqual(start, '2026-01-15T05:00:00.000Z');
   assert.strictEqual(end, '2026-01-16T05:00:00.000Z');
+});
+
+test('addDaysToDateKey shifts day correctly (incl. month boundary)', () => {
+  assert.strictEqual(addDaysToDateKey('2026-05-14', -1), '2026-05-13');
+  assert.strictEqual(addDaysToDateKey('2026-05-01', -1), '2026-04-30');
+  assert.strictEqual(addDaysToDateKey('2026-01-01', -1), '2025-12-31');
+  assert.strictEqual(addDaysToDateKey('2026-05-14', +1), '2026-05-15');
 });
 
 // ── buildAlertImagesBase64 ─────────────────────────────────────────
@@ -253,6 +261,71 @@ test('buildAlertImagesBase64 with empty trades keeps all entries (legacy)', asyn
     },
   });
   assert.strictEqual(result.length, 1);
+});
+
+test('buildAlertImagesBase64 falls back to yesterday when today has 0 matches', async () => {
+  // Scénario : on est le 14 mai 09:22 ET. Aucun ticker du récap n'a
+  // d'entry aujourd'hui (vide), mais ils sont tous présents le 13.
+  // → Le code doit basculer sur le 13.
+  const todayRange = ['2026-05-14T04:00:00.000Z', '2026-05-15T04:00:00.000Z'];
+  const yesterdayRange = ['2026-05-13T04:00:00.000Z', '2026-05-14T04:00:00.000Z'];
+  const todayMsgs = []; // aucune entry pour le récap aujourd'hui
+  const yesterdayMsgs = [
+    { type: 'entry', author: 'ZZ', content: 'AEHL 1.44 entry', ts: '2026-05-13T17:30:00Z', ticker: 'AEHL' },
+    { type: 'entry', author: 'ZZ', content: 'QUCY 0.44 entry', ts: '2026-05-13T16:00:00Z', ticker: 'QUCY' },
+  ];
+  const result = await buildAlertImagesBase64({
+    trades: [
+      { ticker: '$AEHL', entryPrice: 1.44, hodPrice: 6.27 },
+      { ticker: '$QUCY', entryPrice: 0.44, hodPrice: 2.11 },
+    ],
+    deps: {
+      getMessagesByTsRange: (from, to) => {
+        if (from === todayRange[0] && to === todayRange[1]) return todayMsgs;
+        if (from === yesterdayRange[0] && to === yesterdayRange[1]) return yesterdayMsgs;
+        return [];
+      },
+      generateImage: (author, content) => Promise.resolve(Buffer.from(`PNG-${content}`)),
+      dateKey: '2026-05-14',
+    },
+  });
+  assert.strictEqual(result.length, 2);
+  const contents = result.map(r => Buffer.from(r.base64, 'base64').toString());
+  assert.ok(contents.some(c => c.includes('AEHL 1.44')));
+  assert.ok(contents.some(c => c.includes('QUCY 0.44')));
+});
+
+test('buildAlertImagesBase64 prefers today when both days have matches', async () => {
+  // Égalité ou today gagne (today posté en premier dans dateKeys).
+  const todayMsgs = [
+    { type: 'entry', author: 'ZZ', content: 'WOK 2.00-2.40', ts: '2026-05-14T13:08:00Z', ticker: 'WOK' },
+  ];
+  const yesterdayMsgs = [
+    { type: 'entry', author: 'ZZ', content: 'WOK 1 to 3', ts: '2026-05-13T14:27:00Z', ticker: 'WOK' },
+  ];
+  const result = await buildAlertImagesBase64({
+    trades: [{ ticker: '$WOK', entryPrice: 2.00, hodPrice: 2.40 }],
+    deps: {
+      getMessagesByTsRange: (from) => from.startsWith('2026-05-14') ? todayMsgs : yesterdayMsgs,
+      generateImage: (author, content) => Promise.resolve(Buffer.from(`PNG-${content}`)),
+      dateKey: '2026-05-14',
+    },
+  });
+  assert.strictEqual(result.length, 1);
+  // Today gagne → on doit avoir le call du 14 (WOK 2.00-2.40), pas celui du 13
+  assert.strictEqual(Buffer.from(result[0].base64, 'base64').toString(), 'PNG-WOK 2.00-2.40');
+});
+
+test('buildAlertImagesBase64 returns [] when neither day has any match', async () => {
+  const result = await buildAlertImagesBase64({
+    trades: [{ ticker: '$TDIC', entryPrice: 1.43, hodPrice: 3.71 }],
+    deps: {
+      getMessagesByTsRange: () => [], // aucune entry nulle part
+      generateImage: () => Promise.resolve(Buffer.from('p')),
+      dateKey: '2026-05-14',
+    },
+  });
+  assert.deepStrictEqual(result, []);
 });
 
 test('buildAlertImagesBase64 honors maxAlerts cap', async () => {

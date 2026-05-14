@@ -62,3 +62,49 @@ test('enqueueRenderJob accepte recap_data optionnel', () => {
   const job = jobs.find(j => j.id === id);
   assert.strictEqual(job.recap_data, recapData);
 });
+
+// ── tracked_messages (analyst-watchlist module) ─────────────────────
+const {
+  insertTrackedMessage,
+  getTrackedMessage,
+} = require('./sqlite');
+
+test('insertTrackedMessage stores a non-bot message with ticker+price', () => {
+  insertTrackedMessage({
+    messageId: 'msg-aw-1',
+    channelId: 'chan-1',
+    authorId: 'user-1',
+    authorUsername: 'alice',
+    isBot: 0,
+    content: 'Watch $AAPL @ $200',
+    embedJson: null,
+    extractedTicker: 'AAPL',
+    extractedPrice: 200,
+    createdAt: 1700000000000,
+  });
+  const row = getTrackedMessage('msg-aw-1');
+  assert.strictEqual(row.author_username, 'alice');
+  assert.strictEqual(row.is_bot, 0);
+  assert.strictEqual(row.extracted_ticker, 'AAPL');
+  assert.strictEqual(row.extracted_price, 200);
+});
+
+test('insertTrackedMessage is idempotent on message_id (INSERT OR IGNORE)', () => {
+  insertTrackedMessage({
+    messageId: 'msg-aw-2',
+    channelId: 'c', authorId: 'u', authorUsername: 'a',
+    isBot: 0, content: 'first', embedJson: null,
+    extractedTicker: null, extractedPrice: null,
+    createdAt: 1700000000000,
+  });
+  // Second call with same messageId should be a no-op (no throw)
+  insertTrackedMessage({
+    messageId: 'msg-aw-2',
+    channelId: 'c', authorId: 'u', authorUsername: 'a',
+    isBot: 0, content: 'second', embedJson: null,
+    extractedTicker: null, extractedPrice: null,
+    createdAt: 1700000000000,
+  });
+  const row = getTrackedMessage('msg-aw-2');
+  assert.strictEqual(row.content, 'first');  // first write wins
+});

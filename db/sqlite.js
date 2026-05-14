@@ -418,6 +418,28 @@ db.exec(`
     last_bearish_reversal_at     INTEGER,
     last_scan_at                 INTEGER
   );
+
+  -- Audit log de tous les messages du trading-floor channel.
+  -- Chaque ligne = 1 message Discord (bot ou humain).
+  -- Base de données brute pour l'analyst-watchlist et milestone-alerts :
+  -- on stocke tout, on filtre au moment de la lecture.
+  CREATE TABLE IF NOT EXISTS tracked_messages (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id        TEXT NOT NULL UNIQUE,
+    channel_id        TEXT NOT NULL,
+    author_id         TEXT NOT NULL,
+    author_username   TEXT,
+    is_bot            INTEGER NOT NULL DEFAULT 0,
+    content           TEXT,
+    embed_json        TEXT,
+    extracted_ticker  TEXT,
+    extracted_price   REAL,
+    created_at        INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_tracked_messages_ticker
+    ON tracked_messages(extracted_ticker);
+  CREATE INDEX IF NOT EXISTS idx_tracked_messages_created
+    ON tracked_messages(created_at);
 `);
 
 db.exec(`
@@ -1884,6 +1906,39 @@ function getRecapByDate(date) {
   return stmtGetRecapByDate.get(date) || null;
 }
 
+// ── tracked_messages (analyst-watchlist audit) ──────────────────────
+const stmtTrackedMessageInsert = db.prepare(`
+  INSERT OR IGNORE INTO tracked_messages
+    (message_id, channel_id, author_id, author_username, is_bot,
+     content, embed_json, extracted_ticker, extracted_price, created_at)
+  VALUES
+    (@messageId, @channelId, @authorId, @authorUsername, @isBot,
+     @content, @embedJson, @extractedTicker, @extractedPrice, @createdAt)
+`);
+
+const stmtTrackedMessageGet = db.prepare(`
+  SELECT * FROM tracked_messages WHERE message_id = ?
+`);
+
+function insertTrackedMessage(entry) {
+  stmtTrackedMessageInsert.run({
+    messageId:       String(entry.messageId),
+    channelId:       String(entry.channelId),
+    authorId:        String(entry.authorId),
+    authorUsername:  entry.authorUsername ?? null,
+    isBot:           entry.isBot ? 1 : 0,
+    content:         entry.content ?? null,
+    embedJson:       entry.embedJson ?? null,
+    extractedTicker: entry.extractedTicker ?? null,
+    extractedPrice:  Number.isFinite(entry.extractedPrice) ? entry.extractedPrice : null,
+    createdAt:       Number(entry.createdAt),
+  });
+}
+
+function getTrackedMessage(messageId) {
+  return stmtTrackedMessageGet.get(String(messageId)) || null;
+}
+
 module.exports = {
   db,
   DB_PATH,
@@ -2030,4 +2085,8 @@ module.exports = {
   tryClaimRecapDate,
   setRecapRenderJobId,
   getRecapByDate,
+
+  // analyst-watchlist audit
+  insertTrackedMessage,
+  getTrackedMessage,
 };

@@ -147,8 +147,8 @@ ${sidebarHTML('/welcome-log')}
     </div>
   </div>
   <div class="note">
-    <strong>Rétention :</strong> 100 derniers événements en mémoire — reset au restart du bot.
-    Pour l'historique long terme, filtre Railway logs sur <code>[welcome]</code>.
+    <strong>Rétention :</strong> tous les événements persistés en DB (table <code>welcome_log</code>).
+    Pour l'historique long terme, filtre Railway logs sur <code>[welcome]</code> ou consulte le DB Viewer.
     Types : <code>sent</code> = welcome posté, <code>error-channel</code> / <code>error-send</code> = échec Discord API, <code>config-missing</code> = vars d'env manquantes au boot.
   </div>
   <div class="card" style="padding: 0;">

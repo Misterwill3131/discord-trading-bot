@@ -13,9 +13,14 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const { appendWelcomeLog } = require('../state/welcome-log');
+const {
+  DEFAULT_WELCOME_TEMPLATE,
+  applyTemplate,
+  getEffectiveTemplate,
+} = require('./welcome-template');
 
 function formatWelcomeMessage(userId, startHereChannelId) {
-  return `<@${userId}> welcome to TOB! Please start with <#${startHereChannelId}> and watch us for a week or so to get familiar with the discord.`;
+  return applyTemplate(DEFAULT_WELCOME_TEMPLATE, { userId, startHereId: startHereChannelId });
 }
 
 // True only when the subscriber role just transitioned from absent → present
@@ -61,7 +66,8 @@ function registerWelcomeListener(client, {
         appendWelcomeLog({ type: 'error-channel', userId, username, detail });
         return;
       }
-      const msg = formatWelcomeMessage(userId, startHereChannelId);
+      const { template } = getEffectiveTemplate();
+      const msg = applyTemplate(template, { userId, startHereId: startHereChannelId });
       await ch.send(msg);
       console.log('[welcome] sent to ' + userId);
       appendWelcomeLog({ type: 'sent', userId, username, detail: null });

@@ -12,6 +12,8 @@
 // Spec : docs/superpowers/specs/2026-05-13-tob-welcome-message-design.md
 // ─────────────────────────────────────────────────────────────────────
 
+const { appendWelcomeLog } = require('../state/welcome-log');
+
 function formatWelcomeMessage(userId, startHereChannelId) {
   return `<@${userId}> welcome to TOB! Please start with <#${startHereChannelId}> and watch us for a week or so to get familiar with the discord.`;
 }
@@ -36,22 +38,36 @@ function registerWelcomeListener(client, {
   startHereChannelId,
 }) {
   if (!guildId || !subscriberRoleId || !welcomeChannelId || !startHereChannelId) {
-    console.warn('[welcome] missing config — disabled (need TOB_WELCOME_GUILD_ID, TOB_SUBSCRIBER_ROLE_ID, TOB_WELCOME_CHANNEL_ID, TOB_START_HERE_CHANNEL_ID)');
+    const missing = [
+      !guildId            && 'TOB_WELCOME_GUILD_ID',
+      !subscriberRoleId   && 'TOB_SUBSCRIBER_ROLE_ID',
+      !welcomeChannelId   && 'TOB_WELCOME_CHANNEL_ID',
+      !startHereChannelId && 'TOB_START_HERE_CHANNEL_ID',
+    ].filter(Boolean).join(', ');
+    console.warn('[welcome] missing config — disabled (need ' + missing + ')');
+    appendWelcomeLog({ type: 'config-missing', userId: null, username: null, detail: missing });
     return;
   }
 
   client.on('guildMemberUpdate', async (oldMember, newMember) => {
     if (!shouldWelcome(oldMember, newMember, { roleId: subscriberRoleId, guildId })) return;
+    const userId = newMember.user.id;
+    const username = newMember.user.tag || newMember.user.username || null;
     try {
       const ch = await client.channels.fetch(welcomeChannelId);
       if (!ch || !ch.isTextBased || !ch.isTextBased()) {
-        console.error('[welcome] welcome channel not text-based or not found:', welcomeChannelId);
+        const detail = 'channel ' + welcomeChannelId + ' not text-based or not found';
+        console.error('[welcome] ' + detail);
+        appendWelcomeLog({ type: 'error-channel', userId, username, detail });
         return;
       }
-      const msg = formatWelcomeMessage(newMember.user.id, startHereChannelId);
+      const msg = formatWelcomeMessage(userId, startHereChannelId);
       await ch.send(msg);
+      console.log('[welcome] sent to ' + userId);
+      appendWelcomeLog({ type: 'sent', userId, username, detail: null });
     } catch (err) {
       console.error('[welcome] send failed:', err.message);
+      appendWelcomeLog({ type: 'error-send', userId, username, detail: err.message });
     }
   });
 

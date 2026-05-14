@@ -13,6 +13,8 @@
 
 // Regex prix : $XX, $XX.XX, $X,XXX.XX (avec virgules de milliers).
 // Prend le PREMIER match — convention "prix d'entrée" si plage donnée.
+// Le lookahead (?!\d) interdit un chiffre trailing : empêche un partial-match
+// de "$200000" en "$2000" (cap à 4 chiffres avant la virgule).
 const PRICE_REGEX = /\$\s*(\d{1,4}(?:,\d{3})*(?:\.\d{1,4})?)(?!\d)/;
 
 function extractPrice(text) {
@@ -20,7 +22,7 @@ function extractPrice(text) {
   const m = text.match(PRICE_REGEX);
   if (!m) return null;
   const price = parseFloat(m[1].replace(/,/g, ''));
-  // Sanity range : 0.01 < prix < 100,000.
+  // Sanity range : 0 < prix < 100,000 (bornes exclues).
   // Filtre les faux positifs (codes ZIP, années en $, prix BTC pris pour stock).
   if (!Number.isFinite(price) || price <= 0 || price >= 100_000) return null;
   return price;

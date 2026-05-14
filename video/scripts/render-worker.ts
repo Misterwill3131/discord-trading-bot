@@ -394,18 +394,21 @@ function buildLocalFilename(job: RenderJob): string {
   return `${datePart}_${timeNoColon}_${tick}_${suffix}.mp4`;
 }
 
-// Décode les alertImagesBase64 (du recap_data) vers des PNG sous
-// publicDir (default = video/public/recap-alerts/). Retourne la liste
-// des paths staticFile (relatifs au dossier public) à utiliser comme
-// alertImages dans la composition. Idempotent : nettoie les anciens
-// alert-*.png puis écrit les nouveaux.
+// Décode les alertImagesBase64 (du recap_data) vers des data URLs inline.
+// Pas d'écriture FS : on évite le pb du bundle Remotion qui snapshot
+// public/ au boot du worker (fichiers écrits après ne sont pas servis,
+// d'où les 404 sur alert-13.png et co).
 //
-// `publicDir` est customisable pour les tests (sinon ils polluent les
-// fixtures dev dans video/public/recap-alerts/).
+// Retourne la liste des { imagePath: "data:image/png;base64,...", ticker }
+// que la composition AlertsParadePhase consomme directement via <Img src>.
+//
+// `opts.publicDir` est gardé pour compat des tests mais ignoré (plus
+// d'écriture FS).
 export function prepareRecapAlertImages(
   recapDataJson: string | null | undefined,
-  opts: { publicDir?: string } = {},
+  _opts: { publicDir?: string } = {},
 ): Array<{ imagePath: string; ticker?: string | null }> {
+  void _opts; // kept for backward-compat signature
   if (!recapDataJson) return [];
   let parsed: { alertImagesBase64?: Array<{ base64: string; ticker?: string | null }> };
   try {
@@ -416,30 +419,14 @@ export function prepareRecapAlertImages(
   const items = Array.isArray(parsed.alertImagesBase64) ? parsed.alertImagesBase64 : [];
   if (items.length === 0) return [];
 
-  const publicDir = opts.publicDir || path.join(__dirname, '..', 'public', 'recap-alerts');
-  fs.mkdirSync(publicDir, { recursive: true });
-
-  // Clean les anciens alert-*.png (vieux récap), garde les autres fichiers.
-  try {
-    for (const f of fs.readdirSync(publicDir)) {
-      if (/^alert-\d+\.png$/.test(f)) {
-        fs.unlinkSync(path.join(publicDir, f));
-      }
-    }
-  } catch { /* swallow */ }
-
   const out: Array<{ imagePath: string; ticker?: string | null }> = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     if (!it || typeof it.base64 !== 'string' || !it.base64) continue;
-    const fileName = `alert-${i + 1}.png`;
-    const fullPath = path.join(publicDir, fileName);
-    try {
-      fs.writeFileSync(fullPath, Buffer.from(it.base64, 'base64'));
-      out.push({ imagePath: `recap-alerts/${fileName}`, ticker: it.ticker || null });
-    } catch (err) {
-      console.warn(`[worker] failed to write ${fileName}: ${(err as Error).message}`);
-    }
+    out.push({
+      imagePath: `data:image/png;base64,${it.base64}`,
+      ticker: it.ticker || null,
+    });
   }
   return out;
 }

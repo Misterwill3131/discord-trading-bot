@@ -210,50 +210,42 @@ describe('jobPropsToRemotion TobTradeRecap', () => {
 });
 
 describe('prepareRecapAlertImages', () => {
-  // Tmp dir isolé pour éviter de polluer video/public/recap-alerts/ (les
-  // fixtures dev y vivent et sont check-in dans git).
-  const tmpDir = path.join(__dirname, '..', '..', 'tmp', `recap-alerts-test-${process.pid}`);
-
   test('returns [] for null/empty/invalid recap_data', () => {
-    expect(prepareRecapAlertImages(null, { publicDir: tmpDir })).toEqual([]);
-    expect(prepareRecapAlertImages(undefined, { publicDir: tmpDir })).toEqual([]);
-    expect(prepareRecapAlertImages('', { publicDir: tmpDir })).toEqual([]);
-    expect(prepareRecapAlertImages('not-json', { publicDir: tmpDir })).toEqual([]);
-    expect(prepareRecapAlertImages(JSON.stringify({}), { publicDir: tmpDir })).toEqual([]);
-    expect(prepareRecapAlertImages(JSON.stringify({ alertImagesBase64: [] }), { publicDir: tmpDir })).toEqual([]);
+    expect(prepareRecapAlertImages(null)).toEqual([]);
+    expect(prepareRecapAlertImages(undefined)).toEqual([]);
+    expect(prepareRecapAlertImages('')).toEqual([]);
+    expect(prepareRecapAlertImages('not-json')).toEqual([]);
+    expect(prepareRecapAlertImages(JSON.stringify({}))).toEqual([]);
+    expect(prepareRecapAlertImages(JSON.stringify({ alertImagesBase64: [] }))).toEqual([]);
   });
 
-  test('writes PNGs and returns staticFile paths', () => {
+  test('returns inline data URLs (no FS writes — bundle Remotion safe)', () => {
     const png = Buffer.from('FAKE_PNG_BYTES').toString('base64');
     const result = prepareRecapAlertImages(JSON.stringify({
       alertImagesBase64: [
         { base64: png, ticker: '$RVI' },
         { base64: png, ticker: '$REA' },
       ],
-    }), { publicDir: tmpDir });
+    }));
     expect(result).toHaveLength(2);
-    expect(result[0].imagePath).toBe('recap-alerts/alert-1.png');
-    expect(result[1].imagePath).toBe('recap-alerts/alert-2.png');
+    expect(result[0].imagePath).toBe(`data:image/png;base64,${png}`);
+    expect(result[1].imagePath).toBe(`data:image/png;base64,${png}`);
     expect(result[0].ticker).toBe('$RVI');
-    // Verify file exists and decodes correctly
-    const onDisk = fs.readFileSync(path.join(tmpDir, 'alert-1.png'));
-    expect(onDisk.toString()).toBe('FAKE_PNG_BYTES');
+    expect(result[1].ticker).toBe('$REA');
   });
 
   test('skips entries with missing/invalid base64', () => {
+    const okPng = Buffer.from('OK').toString('base64');
     const result = prepareRecapAlertImages(JSON.stringify({
       alertImagesBase64: [
         { base64: '', ticker: '$A' },
-        { base64: Buffer.from('OK').toString('base64'), ticker: '$B' },
+        { base64: okPng, ticker: '$B' },
         { ticker: '$C' },
       ],
-    }), { publicDir: tmpDir });
+    }));
     expect(result).toHaveLength(1);
     expect(result[0].ticker).toBe('$B');
-  });
-
-  afterAll(() => {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    expect(result[0].imagePath).toBe(`data:image/png;base64,${okPng}`);
   });
 });
 

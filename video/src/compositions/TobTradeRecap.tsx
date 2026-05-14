@@ -42,7 +42,11 @@ const longTermSchema = z.object({
 });
 
 const alertImageSchema = z.object({
-  imagePath: z.string().describe('Path staticFile vers PNG alerte (ex: "recap-alerts/alert-1.png")'),
+  // Soit un chemin staticFile (legacy "recap-alerts/alert-1.png"), soit
+  // une data URL inline ("data:image/png;base64,..."). Les data URLs
+  // contournent le pb du bundle Remotion qui snapshot public/ au boot
+  // du worker — fichiers ajoutés après ne sont pas servis.
+  imagePath: z.string().describe('staticFile path OU data:image/png;base64,...'),
   ticker: z.string().nullable().optional(),
 });
 
@@ -524,7 +528,7 @@ const AlertsParadePhase: React.FC<{
               opacity,
             }}>
               <Img
-                src={staticFile(alert.imagePath)}
+                src={alert.imagePath.startsWith('data:') ? alert.imagePath : staticFile(alert.imagePath)}
                 style={{
                   width: '100%',
                   maxHeight: ALERT_MAX_HEIGHT,

@@ -110,6 +110,7 @@ test('addDaysToDateKey shifts day correctly (incl. month boundary)', () => {
 test('buildAlertImagesBase64 returns [] when DB query throws', async () => {
   const result = await buildAlertImagesBase64({
     deps: {
+      mode: 'db-lookup',
       getMessagesByTsRange: () => { throw new Error('DB locked'); },
       generateImage: () => Promise.resolve(Buffer.from('')),
       dateKey: '2026-05-13',
@@ -123,6 +124,7 @@ test('buildAlertImagesBase64 queries DB with NY-tz UTC range, not raw date subst
   let capturedTo = null;
   await buildAlertImagesBase64({
     deps: {
+      mode: 'db-lookup',
       getMessagesByTsRange: (from, to) => { capturedFrom = from; capturedTo = to; return []; },
       generateImage: () => Promise.resolve(Buffer.from('p')),
       dateKey: '2026-05-13',
@@ -144,6 +146,7 @@ test('buildAlertImagesBase64 filters to type=entry, reverses order (chronologica
   const result = await buildAlertImagesBase64({
     maxAlerts: 5,
     deps: {
+      mode: 'db-lookup',
       getMessagesByTsRange: () => messages,
       generateImage: (author, content) => Promise.resolve(Buffer.from(`PNG-${author}-${content}`)),
       dateKey: '2026-05-13',
@@ -168,6 +171,7 @@ test('buildAlertImagesBase64 picks the entry whose content contains the trade pr
   const result = await buildAlertImagesBase64({
     trades: [{ ticker: '$TDIC', entryPrice: 1.43, hodPrice: 3.71 }],
     deps: {
+      mode: 'db-lookup',
       getMessagesByTsRange: () => messages,
       generateImage: (author, content) => Promise.resolve(Buffer.from(`PNG-${content}`)),
       dateKey: '2026-05-13',
@@ -186,6 +190,7 @@ test('buildAlertImagesBase64 falls back to earliest entry when price is not in a
   const result = await buildAlertImagesBase64({
     trades: [{ ticker: '$TDIC', entryPrice: 1.43, hodPrice: 3.71 }],
     deps: {
+      mode: 'db-lookup',
       getMessagesByTsRange: () => messages,
       generateImage: (author, content) => Promise.resolve(Buffer.from(`PNG-${content}`)),
       dateKey: '2026-05-13',
@@ -203,6 +208,7 @@ test('buildAlertImagesBase64 with leading-zero price variants (".046" matches 0.
   const result = await buildAlertImagesBase64({
     trades: [{ ticker: '$HAO', entryPrice: 0.046, hodPrice: 0.071 }],
     deps: {
+      mode: 'db-lookup',
       getMessagesByTsRange: () => messages,
       generateImage: (author, content) => Promise.resolve(Buffer.from(`PNG-${content}`)),
       dateKey: '2026-05-13',
@@ -220,6 +226,7 @@ test('buildAlertImagesBase64 only includes tickers from trades (drops $AAPL not 
   const result = await buildAlertImagesBase64({
     trades: [{ ticker: '$TDIC', entryPrice: 1.43, hodPrice: 3.71 }],
     deps: {
+      mode: 'db-lookup',
       getMessagesByTsRange: () => messages,
       generateImage: (author, content) => Promise.resolve(Buffer.from(`PNG-${content}`)),
       dateKey: '2026-05-13',
@@ -242,6 +249,7 @@ test('buildAlertImagesBase64 prefers different messages for duplicate-ticker tra
       { ticker: '$LNKS', entryPrice: 1.66, hodPrice: 2.47 },
     ],
     deps: {
+      mode: 'db-lookup',
       getMessagesByTsRange: () => messages,
       generateImage: (author, content) => Promise.resolve(Buffer.from(`PNG-${content}`)),
       dateKey: '2026-05-13',
@@ -265,6 +273,7 @@ test('buildAlertImagesBase64 reuses same message when ZZ posted only one multi-p
       { ticker: '$OCG', entryPrice: 2.25, hodPrice: 2.60 },
     ],
     deps: {
+      mode: 'db-lookup',
       getMessagesByTsRange: () => messages,
       generateImage: () => Promise.resolve(Buffer.from('p')),
       dateKey: '2026-05-13',
@@ -286,6 +295,7 @@ test('buildAlertImagesBase64 returns 16 alerts when recap has 16 trades (cap aut
   const result = await buildAlertImagesBase64({
     trades,
     deps: {
+      mode: 'db-lookup',
       getMessagesByTsRange: () => messages,
       generateImage: () => Promise.resolve(Buffer.from('p')),
       dateKey: '2026-05-13',
@@ -301,6 +311,7 @@ test('buildAlertImagesBase64 with empty trades keeps all entries (legacy)', asyn
   const result = await buildAlertImagesBase64({
     trades: [],
     deps: {
+      mode: 'db-lookup',
       getMessagesByTsRange: () => messages,
       generateImage: () => Promise.resolve(Buffer.from('p')),
       dateKey: '2026-05-13',
@@ -326,6 +337,7 @@ test('buildAlertImagesBase64 falls back to yesterday when today has 0 matches', 
       { ticker: '$QUCY', entryPrice: 0.44, hodPrice: 2.11 },
     ],
     deps: {
+      mode: 'db-lookup',
       getMessagesByTsRange: (from, to) => {
         if (from === todayRange[0] && to === todayRange[1]) return todayMsgs;
         if (from === yesterdayRange[0] && to === yesterdayRange[1]) return yesterdayMsgs;
@@ -352,6 +364,7 @@ test('buildAlertImagesBase64 prefers today when both days have matches', async (
   const result = await buildAlertImagesBase64({
     trades: [{ ticker: '$WOK', entryPrice: 2.00, hodPrice: 2.40 }],
     deps: {
+      mode: 'db-lookup',
       getMessagesByTsRange: (from) => from.startsWith('2026-05-14') ? todayMsgs : yesterdayMsgs,
       generateImage: (author, content) => Promise.resolve(Buffer.from(`PNG-${content}`)),
       dateKey: '2026-05-14',
@@ -366,6 +379,7 @@ test('buildAlertImagesBase64 returns [] when neither day has any match', async (
   const result = await buildAlertImagesBase64({
     trades: [{ ticker: '$TDIC', entryPrice: 1.43, hodPrice: 3.71 }],
     deps: {
+      mode: 'db-lookup',
       getMessagesByTsRange: () => [], // aucune entry nulle part
       generateImage: () => Promise.resolve(Buffer.from('p')),
       dateKey: '2026-05-14',
@@ -381,6 +395,7 @@ test('buildAlertImagesBase64 honors maxAlerts cap', async () => {
   const result = await buildAlertImagesBase64({
     maxAlerts: 4,
     deps: {
+      mode: 'db-lookup',
       getMessagesByTsRange: () => messages,
       generateImage: () => Promise.resolve(Buffer.from('p')),
       dateKey: '2026-05-13',
@@ -398,6 +413,7 @@ test('buildAlertImagesBase64 skips alerts whose render fails', async () => {
   let i = 0;
   const result = await buildAlertImagesBase64({
     deps: {
+      mode: 'db-lookup',
       getMessagesByTsRange: () => messages,
       generateImage: () => {
         i++;
@@ -412,6 +428,121 @@ test('buildAlertImagesBase64 skips alerts whose render fails', async () => {
   // L'item 2 (B) fail, donc on garde [C, A].
   assert.strictEqual(result[0].ticker, 'C');
   assert.strictEqual(result[1].ticker, 'A');
+});
+
+// ── buildAlertImagesBase64 — synthetic mode (default) ───────────────
+test('buildAlertImagesBase64 (synthetic, default) generates 1 card per trade row', async () => {
+  // Mode synthétique = default. Génère une carte par trade, contenu
+  // "$TICKER ENTRY_PRICE🔥" rendu via le canvas habituel.
+  const generated = [];
+  const result = await buildAlertImagesBase64({
+    trades: [
+      { ticker: '$AEHL', entryPrice: 1.44, hodPrice: 6.27 },
+      { ticker: '$QUCY', entryPrice: 0.44, hodPrice: 2.11 },
+      { ticker: '$HAO', entryPrice: 0.046, hodPrice: 0.071 },
+    ],
+    deps: {
+      // mode default = 'synthetic', pas besoin de le spécifier
+      generateImage: (author, content, ts) => {
+        generated.push({ author, content, ts });
+        return Promise.resolve(Buffer.from(`PNG-${content}`));
+      },
+      now: '2026-05-14T13:22:00Z',
+    },
+  });
+  assert.strictEqual(result.length, 3);
+  assert.strictEqual(result[0].ticker, 'AEHL');
+  assert.strictEqual(result[1].ticker, 'QUCY');
+  assert.strictEqual(result[2].ticker, 'HAO');
+  // Author "ZZ" par défaut
+  assert.strictEqual(generated[0].author, 'ZZ');
+  // Content avec $ prefix, prix formaté
+  assert.strictEqual(generated[0].content, '$AEHL 1.44🔥');
+  assert.strictEqual(generated[1].content, '$QUCY 0.44🔥'); // 2 décimales sous 1
+  assert.strictEqual(generated[2].content, '$HAO 0.046🔥'); // 3 décimales sous 0.01
+});
+
+test('buildAlertImagesBase64 (synthetic) staggers timestamps chronologically', async () => {
+  const generated = [];
+  await buildAlertImagesBase64({
+    trades: [
+      { ticker: '$A', entryPrice: 1, hodPrice: 2 },
+      { ticker: '$B', entryPrice: 1, hodPrice: 2 },
+      { ticker: '$C', entryPrice: 1, hodPrice: 2 },
+    ],
+    deps: {
+      generateImage: (author, content, ts) => {
+        generated.push(ts);
+        return Promise.resolve(Buffer.from('p'));
+      },
+      now: '2026-05-14T13:22:00Z',
+    },
+  });
+  // Premier (A) = now - 3min, dernier (C) = now - 1min, ordre chrono.
+  assert.strictEqual(generated[0], '2026-05-14T13:19:00.000Z');
+  assert.strictEqual(generated[1], '2026-05-14T13:20:00.000Z');
+  assert.strictEqual(generated[2], '2026-05-14T13:21:00.000Z');
+});
+
+test('buildAlertImagesBase64 (synthetic) supports duplicate tickers (LNKS×2)', async () => {
+  // Le récap a 2 lignes $LNKS avec prix différents → 2 cartes différentes.
+  const generated = [];
+  const result = await buildAlertImagesBase64({
+    trades: [
+      { ticker: '$LNKS', entryPrice: 1.39, hodPrice: 2.47 },
+      { ticker: '$LNKS', entryPrice: 1.66, hodPrice: 2.47 },
+    ],
+    deps: {
+      generateImage: (author, content) => {
+        generated.push(content);
+        return Promise.resolve(Buffer.from(`PNG-${content}`));
+      },
+      now: '2026-05-14T13:22:00Z',
+    },
+  });
+  assert.strictEqual(result.length, 2);
+  assert.strictEqual(generated[0], '$LNKS 1.39🔥');
+  assert.strictEqual(generated[1], '$LNKS 1.66🔥');
+});
+
+test('buildAlertImagesBase64 (synthetic) returns [] with empty trades', async () => {
+  const result = await buildAlertImagesBase64({
+    trades: [],
+    deps: { generateImage: () => Promise.resolve(Buffer.from('p')) },
+  });
+  assert.deepStrictEqual(result, []);
+});
+
+test('buildAlertImagesBase64 (synthetic) auto-scales beyond default max (16 trades)', async () => {
+  const trades = Array.from({ length: 16 }, (_, i) => ({
+    ticker: '$T' + i, entryPrice: 1, hodPrice: 2,
+  }));
+  const result = await buildAlertImagesBase64({
+    trades,
+    deps: { generateImage: () => Promise.resolve(Buffer.from('p')) },
+  });
+  assert.strictEqual(result.length, 16);
+});
+
+test('buildAlertImagesBase64 (synthetic) skips trades whose render fails but continues', async () => {
+  let i = 0;
+  const result = await buildAlertImagesBase64({
+    trades: [
+      { ticker: '$A', entryPrice: 1, hodPrice: 2 },
+      { ticker: '$B', entryPrice: 1, hodPrice: 2 },
+      { ticker: '$C', entryPrice: 1, hodPrice: 2 },
+    ],
+    deps: {
+      generateImage: () => {
+        i++;
+        if (i === 2) throw new Error('canvas oops');
+        return Promise.resolve(Buffer.from('ok'));
+      },
+    },
+  });
+  assert.strictEqual(result.length, 2);
+  assert.strictEqual(result[0].ticker, 'A');
+  assert.strictEqual(result[1].ticker, 'C');
 });
 
 // ── handleRecapImageMessage ────────────────────────────────────────

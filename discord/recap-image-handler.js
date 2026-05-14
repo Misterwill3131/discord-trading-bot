@@ -34,6 +34,31 @@ const { generateImage } = require('../canvas/proof');
 // 4 de plus qui scroll en haut. Plus que ça = phase trop longue.
 const DEFAULT_MAX_ALERTS = parseInt(process.env.TOB_RECAP_MAX_ALERTS || '12', 10);
 
+// Mode de génération des cartes pour la parade :
+//   'synthetic' (default) : génère des Discord-cards à partir du tableau OCR.
+//                            Pas de query DB, garanti que ça matche le récap.
+//   'db-lookup'           : ancien comportement — cherche les messages dans
+//                            la DB par ticker + prix. Sujet aux mismatches
+//                            quand ZZ a posté des updates plutôt que des
+//                            calls explicites avec le bon prix.
+const ALERT_MODE = (process.env.TOB_RECAP_ALERT_MODE || 'synthetic').toLowerCase();
+
+// Auteur affiché sur les cartes synthétiques. Surchargeable via env si
+// quelqu'un d'autre relaie les signaux dans le futur.
+const SYNTHETIC_AUTHOR = process.env.TOB_RECAP_SYNTHETIC_AUTHOR || 'ZZ';
+
+// Format prix pour les cartes synthétiques. Pour les prix >= 1, on garde
+// 2 décimales (ex: "1.43", "33.00") — c'est le style ZZ standard.
+// Pour les sub-1, on strip les zéros traînants (0.440 → 0.44) pour matcher
+// l'affichage du tableau OCR du récap.
+function fmtPriceForCard(n) {
+  if (!Number.isFinite(n)) return '';
+  if (n >= 1) return n.toFixed(2);
+  const s = n >= 0.01 ? n.toFixed(3) : n.toFixed(4);
+  // Strip trailing zeros : "0.440" → "0.44", "0.0460" → "0.046"
+  return s.replace(/0+$/, '').replace(/\.$/, '');
+}
+
 const IMAGE_EXT_BY_CT = {
   'image/png': '.png',
   'image/jpeg': '.jpg',
@@ -192,11 +217,63 @@ function pickAlertForTrade(candidatesAsc, trade) {
 //
 // Si trades est vide/non fourni, toutes les entries du jour sont prises
 // (comportement legacy).
+// Génère N cartes Discord-style synthétiques (une par trade du récap).
+// Pas de query DB. Chaque carte ressemble à un call ZZ standard :
+//   author = "ZZ", content = "$TICKER ENTRY_PRICE🔥", ts staggered chrono.
+//
+// Garanti que chaque ligne du tableau OCR a sa carte dans la parade —
+// supprime tous les mismatches dus aux updates/target hits/recaps absents.
+async function buildSyntheticAlertImages(trades, deps = {}, maxAlerts = DEFAULT_MAX_ALERTS) {
+  const _generateImage = deps.generateImage || generateImage;
+  const author = deps.syntheticAuthor || SYNTHETIC_AUTHOR;
+  const now = deps.now ? new Date(deps.now) : new Date();
+
+  if (!Array.isArray(trades) || trades.length === 0) return [];
+
+  // Auto-scale : une carte par ligne, même si on dépasse le default.
+  const effectiveMax = Math.max(maxAlerts, trades.length);
+  const slice = trades.slice(0, effectiveMax);
+
+  const out = [];
+  for (let i = 0; i < slice.length; i++) {
+    const trade = slice[i];
+    if (!trade || !trade.ticker) continue;
+    const ticker = String(trade.ticker).replace(/^\$+/, '');
+    const entryStr = fmtPriceForCard(trade.entryPrice);
+    // Stagger 1 min : la 1ère carte = now - N min, la dernière = now - 1 min.
+    // Donne une illusion de flow chronologique pendant la parade.
+    const offsetMs = (slice.length - i) * 60_000;
+    const ts = new Date(now.getTime() - offsetMs).toISOString();
+    const content = entryStr ? `$${ticker} ${entryStr}🔥` : `$${ticker}🔥`;
+    try {
+      const buf = await _generateImage(author, content, ts, { scale: 2 });
+      out.push({
+        base64: buf.toString('base64'),
+        ticker,
+      });
+    } catch (err) {
+      console.warn(`[recap-image-handler] synthetic alert ${i + 1} render failed: ${err.message}`);
+    }
+  }
+  return out;
+}
+
 async function buildAlertImagesBase64({
   maxAlerts = DEFAULT_MAX_ALERTS,
   trades = null,
   deps = {},
 } = {}) {
+  // Mode synthétique : génère les cartes directement depuis le récap OCR.
+  // Default activé via env TOB_RECAP_ALERT_MODE. Ce mode est déterministe
+  // et évite tous les bugs de matching DB (mauvais jour, mauvais message,
+  // ticker manquant, etc.).
+  const mode = deps.mode || ALERT_MODE;
+  if (mode === 'synthetic') {
+    return buildSyntheticAlertImages(trades, deps, maxAlerts);
+  }
+
+  // Mode legacy : DB lookup. Conservé pour rétrocompat ou si quelqu'un
+  // veut vraiment les vrais messages Discord (au risque des mismatches).
   const _getMessagesByTsRange = deps.getMessagesByTsRange || getMessagesByTsRange;
   const _generateImage = deps.generateImage || generateImage;
   const today = deps.dateKey || todayNyDateKey();
@@ -466,6 +543,7 @@ module.exports = {
   pickImageAttachment,
   buildRecapJobPayload,
   buildAlertImagesBase64,
+  buildSyntheticAlertImages,
   todayNyDateKey,
   nyDateKeyToUtcRange,
   addDaysToDateKey,

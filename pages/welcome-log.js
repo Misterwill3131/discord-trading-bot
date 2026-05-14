@@ -10,6 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const { COMMON_CSS, sidebarHTML } = require('./common');
+const { DEFAULT_WELCOME_TEMPLATE } = require('../discord/welcome-template');
 
 function escHtml(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -36,7 +37,23 @@ function userCell(entry) {
   return name + (name && id ? ' ' : '') + id;
 }
 
-function renderWelcomeLogPage(entries) {
+// Static preview: render the template with example user/channel placeholders.
+// Pure string operation; does NOT touch Discord or DB.
+function applyTemplatePreview(template) {
+  return String(template == null ? '' : template)
+    .split('{user}').join('@newuser')
+    .split('{start_here}').join('#🚩│start-here');
+}
+
+function renderWelcomeLogPage(entries, tpl) {
+  // Default to the hardcoded template when called without the second arg
+  // (existing callers + tests that pass only `entries`).
+  const effective = tpl && typeof tpl.template === 'string'
+    ? tpl
+    : { template: DEFAULT_WELCOME_TEMPLATE, isDefault: true };
+  const tplText = effective.template;
+  const previewText = applyTemplatePreview(tplText);
+
   // Most recent first
   const reversed = entries.slice().reverse();
   const rows = !reversed.length
@@ -81,6 +98,23 @@ function renderWelcomeLogPage(entries) {
   td.detail { color: #c5c8ce; font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; font-size: 12px; word-break: break-word; }
   td.empty, .empty { color: #4f545c; }
   td.empty { text-align: center; font-style: italic; padding: 30px !important; }
+  .template-card { background: rgba(99,102,241,0.04); border: 1px solid rgba(99,102,241,0.15); border-radius: 8px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+  .template-card-header { display: flex; align-items: center; gap: 12px; font-size: 13px; color: #c4b5fd; }
+  .template-card textarea { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; color: #e3e5e8; font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; font-size: 12px; padding: 10px 12px; resize: vertical; min-height: 80px; line-height: 1.5; }
+  .template-card textarea:focus { outline: none; border-color: rgba(139,92,246,0.5); }
+  .template-help { font-size: 11px; color: #a0a0b0; }
+  .template-help code { background: rgba(0,0,0,0.3); padding: 1px 6px; border-radius: 4px; font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; color: #c7d2fe; }
+  .template-preview { font-size: 12px; color: #a0a0b0; }
+  .template-preview-label { color: #80848e; margin-right: 6px; }
+  #tpl-preview { color: #e3e5e8; font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; }
+  .template-actions { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+  .template-actions button { background: #6366f1; color: #fff; border: none; border-radius: 6px; padding: 6px 14px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .template-actions button:hover { background: #4f46e5; }
+  .template-actions button.secondary { background: transparent; color: #c4b5fd; border: 1px solid rgba(139,92,246,0.4); }
+  .template-actions button.secondary:hover { background: rgba(139,92,246,0.1); }
+  .template-status { font-size: 12px; }
+  .template-status.ok { color: #6ee7b7; }
+  .template-status.err { color: #f87171; }
 </style>
 </head>
 <body>
@@ -91,6 +125,27 @@ ${sidebarHTML('/welcome-log')}
   <span class="summary" style="margin-left:auto;">${summary}</span>
 </div>
 <div id="wrap">
+  <div class="template-card">
+    <div class="template-card-header">
+      <strong>Template du message de bienvenue</strong>
+      ${effective.isDefault
+        ? '<span class="chip chip-warn">default (hardcoded)</span>'
+        : '<span class="chip chip-ok">override actif</span>'}
+    </div>
+    <textarea id="tpl-input" rows="4" maxlength="2000">${escHtml(tplText)}</textarea>
+    <div class="template-help">
+      Placeholders : <code>{user}</code> = ping du nouveau membre · <code>{start_here}</code> = lien vers <code>🚩│start-here</code>
+    </div>
+    <div class="template-preview">
+      <span class="template-preview-label">Preview :</span>
+      <span id="tpl-preview">${escHtml(previewText)}</span>
+    </div>
+    <div class="template-actions">
+      <button id="tpl-save" type="button">Save</button>
+      <button id="tpl-reset" type="button" class="secondary">Reset to default</button>
+      <span id="tpl-status" class="template-status"></span>
+    </div>
+  </div>
   <div class="note">
     <strong>Rétention :</strong> 100 derniers événements en mémoire — reset au restart du bot.
     Pour l'historique long terme, filtre Railway logs sur <code>[welcome]</code>.
@@ -108,6 +163,66 @@ ${sidebarHTML('/welcome-log')}
   </div>
 </div>
 </div>
+<script>
+(function () {
+  var input = document.getElementById('tpl-input');
+  var preview = document.getElementById('tpl-preview');
+  var status = document.getElementById('tpl-status');
+  var saveBtn = document.getElementById('tpl-save');
+  var resetBtn = document.getElementById('tpl-reset');
+  if (!input || !preview || !status || !saveBtn || !resetBtn) return;
+
+  function previewOf(text) {
+    return String(text == null ? '' : text)
+      .split('{user}').join('@newuser')
+      .split('{start_here}').join('#🚩│start-here');
+  }
+  function setStatus(kind, text) {
+    status.className = 'template-status ' + kind;
+    status.textContent = text;
+  }
+  input.addEventListener('input', function () {
+    preview.textContent = previewOf(input.value);
+    setStatus('', '');
+  });
+  saveBtn.addEventListener('click', function () {
+    var body = JSON.stringify({ template: input.value });
+    setStatus('', 'Saving…');
+    fetch('/api/welcome-message', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: body,
+      credentials: 'same-origin',
+    }).then(function (r) { return r.json().then(function (j) { return { status: r.status, json: j }; }); })
+      .then(function (res) {
+        if (res.status === 200 && res.json.ok) {
+          setStatus('ok', 'Saved ✓');
+          setTimeout(function () { window.location.reload(); }, 600);
+        } else {
+          setStatus('err', res.json.error || 'Save failed');
+        }
+      })
+      .catch(function (err) { setStatus('err', String(err)); });
+  });
+  resetBtn.addEventListener('click', function () {
+    if (!window.confirm('Reset to the default template ?')) return;
+    setStatus('', 'Resetting…');
+    fetch('/api/welcome-message', {
+      method: 'DELETE',
+      credentials: 'same-origin',
+    }).then(function (r) { return r.json().then(function (j) { return { status: r.status, json: j }; }); })
+      .then(function (res) {
+        if (res.status === 200 && res.json.ok) {
+          setStatus('ok', 'Reset ✓');
+          setTimeout(function () { window.location.reload(); }, 600);
+        } else {
+          setStatus('err', res.json.error || 'Reset failed');
+        }
+      })
+      .catch(function (err) { setStatus('err', String(err)); });
+  });
+})();
+</script>
 </body>
 </html>`;
 }

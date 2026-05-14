@@ -41,3 +41,41 @@ test('renderWelcomeLogPage handles null username gracefully (config-missing entr
   // Should not throw, should produce a valid row
   assert.ok(html.includes('<tr'));
 });
+
+test('renderWelcomeLogPage pre-fills textarea with the provided template', () => {
+  const tpl = { template: '{user} bonjour, voir {start_here}', isDefault: false };
+  const html = renderWelcomeLogPage([], tpl);
+  // Textarea content (between <textarea ...> and </textarea>)
+  assert.ok(html.includes('{user} bonjour, voir {start_here}'),
+    'should render the override template inside the textarea');
+});
+
+test('renderWelcomeLogPage renders a preview substituting @newuser and #🚩│start-here', () => {
+  const tpl = { template: '{user} welcome! Read {start_here}.', isDefault: false };
+  const html = renderWelcomeLogPage([], tpl);
+  assert.ok(html.includes('@newuser welcome! Read #🚩│start-here.'),
+    'preview should substitute both placeholders with example values');
+});
+
+test('renderWelcomeLogPage shows "default" badge when isDefault is true', () => {
+  const tpl = { template: 'whatever', isDefault: true };
+  const html = renderWelcomeLogPage([], tpl);
+  assert.ok(html.toLowerCase().includes('default'),
+    'should indicate the template is the default');
+});
+
+test('renderWelcomeLogPage HTML-escapes the template before injecting into textarea', () => {
+  const tpl = { template: '{user} <script>alert(1)</script>', isDefault: false };
+  const html = renderWelcomeLogPage([], tpl);
+  assert.ok(!html.includes('<script>alert(1)</script>'),
+    'should not emit raw <script>');
+  assert.ok(html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'),
+    'should HTML-escape the script tag in both textarea and preview');
+});
+
+test('renderWelcomeLogPage uses default template when called with no second arg (backward compat)', () => {
+  // The existing 4 tests call renderWelcomeLogPage(entries) with one arg.
+  // This case must not throw.
+  const html = renderWelcomeLogPage([]);
+  assert.ok(html.includes('<textarea'), 'textarea should still render');
+});

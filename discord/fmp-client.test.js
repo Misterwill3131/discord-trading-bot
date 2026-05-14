@@ -178,3 +178,99 @@ test('getQuote does NOT cache failures (next call retries)', async () => {
   assert.deepStrictEqual(ok, { price: 50, volume: 1 });
   assert.strictEqual(attempts, 2);
 });
+
+// ── getQuotesBulk ────────────────────────────────────────────────────────────
+
+function mockFetch(responseBody, { ok = true, status = 200 } = {}) {
+  return async () => ({
+    ok,
+    status,
+    json: async () => responseBody,
+    text: async () => JSON.stringify(responseBody),
+  });
+}
+
+test('getQuotesBulk fetches a single URL with comma-joined tickers', async () => {
+  let capturedUrl = null;
+  const fetchImpl = async (url) => {
+    capturedUrl = url;
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ([
+        { symbol: 'AAPL', price: 200.50, volume: 1000 },
+        { symbol: 'TSLA', price: 250.75, volume: 2000 },
+      ]),
+      text: async () => '',
+    };
+  };
+  const client = createFmpClient({ apiKey: 'TEST', fetchImpl });
+  const quotes = await client.getQuotesBulk(['AAPL', 'TSLA']);
+  assert.ok(capturedUrl.includes('/quote/AAPL,TSLA'));
+  assert.strictEqual(quotes.AAPL.price, 200.50);
+  assert.strictEqual(quotes.TSLA.price, 250.75);
+});
+
+test('getQuotesBulk uppercases ticker symbols before request', async () => {
+  let capturedUrl = null;
+  const fetchImpl = async (url) => {
+    capturedUrl = url;
+    return { ok: true, status: 200, json: async () => [], text: async () => '' };
+  };
+  const client = createFmpClient({ apiKey: 'TEST', fetchImpl });
+  await client.getQuotesBulk(['aapl', 'Tsla']);
+  assert.ok(capturedUrl.includes('AAPL,TSLA'));
+});
+
+test('getQuotesBulk dedups duplicate tickers in input', async () => {
+  let capturedUrl = null;
+  const fetchImpl = async (url) => {
+    capturedUrl = url;
+    return { ok: true, status: 200, json: async () => [], text: async () => '' };
+  };
+  const client = createFmpClient({ apiKey: 'TEST', fetchImpl });
+  await client.getQuotesBulk(['AAPL', 'aapl', 'AAPL']);
+  // exactly one AAPL in the URL
+  const matches = capturedUrl.match(/AAPL/g) || [];
+  assert.strictEqual(matches.length, 1);
+});
+
+test('getQuotesBulk returns empty object for empty input', async () => {
+  const fetchImpl = async () => {
+    throw new Error('fetch must NOT be called for empty input');
+  };
+  const client = createFmpClient({ apiKey: 'TEST', fetchImpl });
+  const quotes = await client.getQuotesBulk([]);
+  assert.deepStrictEqual(quotes, {});
+});
+
+test('getQuotesBulk handles tickers missing from FMP response gracefully', async () => {
+  const fetchImpl = mockFetch([
+    { symbol: 'AAPL', price: 200, volume: 1 },
+    // TSLA missing
+  ]);
+  const client = createFmpClient({ apiKey: 'TEST', fetchImpl });
+  const quotes = await client.getQuotesBulk(['AAPL', 'TSLA']);
+  assert.strictEqual(quotes.AAPL.price, 200);
+  assert.strictEqual(quotes.TSLA, undefined);
+});
+
+test('getQuotesBulk skips rows with non-finite price', async () => {
+  const fetchImpl = mockFetch([
+    { symbol: 'AAPL', price: 200, volume: 1 },
+    { symbol: 'BAD',  price: null, volume: 1 },
+  ]);
+  const client = createFmpClient({ apiKey: 'TEST', fetchImpl });
+  const quotes = await client.getQuotesBulk(['AAPL', 'BAD']);
+  assert.strictEqual(quotes.AAPL.price, 200);
+  assert.strictEqual(quotes.BAD, undefined);
+});
+
+test('getQuotesBulk throws on HTTP error', async () => {
+  const fetchImpl = mockFetch({}, { ok: false, status: 500 });
+  const client = createFmpClient({ apiKey: 'TEST', fetchImpl });
+  await assert.rejects(
+    () => client.getQuotesBulk(['AAPL']),
+    /fmp HTTP 500/,
+  );
+});

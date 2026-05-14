@@ -72,7 +72,10 @@ function channelMatches(channelName) {
   return channelName.toLowerCase().includes(target);
 }
 
-async function handleMessage(message) {
+// Hook FMP injecté pour les tests (par défaut : aucun, le caller injectera
+// via register()). Pas de require global du client réel ici — il a besoin
+// d'une apiKey runtime.
+async function handleMessage(message, { marketClient = null } = {}) {
   if (!message || !message.channel || !message.author) return;
   if (!channelMatches(message.channel.name)) return;
 
@@ -93,6 +96,37 @@ async function handleMessage(message) {
     extractedTicker: ticker,
     extractedPrice:  messagePrice,
     createdAt:       Number(message.createdTimestamp) || Date.now(),
+  });
+
+  // ── Seeding watchlist : non-bot ET ticker détecté ────────────────
+  if (message.author.bot) return;
+  if (!ticker) return;
+
+  let initialPrice = messagePrice;
+  let priceSource = 'message';
+  if (initialPrice == null) {
+    if (!marketClient || typeof marketClient.getQuote !== 'function') return;
+    try {
+      const quote = await marketClient.getQuote(ticker);
+      initialPrice = (quote && Number.isFinite(quote.price)) ? quote.price : null;
+      priceSource = 'market';
+    } catch (err) {
+      console.warn('[analyst-watchlist] market fetch failed for ' + ticker
+        + ': ' + (err.message || err));
+      return;
+    }
+  }
+  if (initialPrice == null) return;
+
+  db.insertWatchlistEntry({
+    ticker,
+    initialPrice,
+    initialPriceSource:  priceSource,
+    sourceMessageId:     String(message.id),
+    sourceChannelId:     String(message.channel.id),
+    mentionedByUserId:   String(message.author.id),
+    mentionedByUsername: message.author.username || null,
+    firstSeenAt:         Number(message.createdTimestamp) || Date.now(),
   });
 }
 

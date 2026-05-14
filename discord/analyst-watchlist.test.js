@@ -104,3 +104,100 @@ test('handleMessage skips entirely when channel does not match', async () => {
   const row = db.getTrackedMessage('skip-1');
   assert.strictEqual(row, null);
 });
+
+test('handleMessage seeds watchlist for non-bot + ticker + price in message', async () => {
+  process.env.TRADING_CHANNEL = 'trading-floor';
+  await watchlist.handleMessage(fakeMessage({
+    id: 'seed-1',
+    authorId: 'analyst-1',
+    authorUsername: 'alice',
+    content: 'Watch $AAPL @ $200 break',
+    ts: 1700000111111,
+  }));
+  const row = db.getWatchlistEntry('AAPL');
+  assert.ok(row, 'watchlist entry should exist');
+  assert.strictEqual(row.initial_price, 200);
+  assert.strictEqual(row.initial_price_source, 'message');
+  assert.strictEqual(row.mentioned_by_username, 'alice');
+  assert.strictEqual(row.first_seen_at, 1700000111111);
+});
+
+test('handleMessage does NOT seed watchlist for bot messages', async () => {
+  process.env.TRADING_CHANNEL = 'trading-floor';
+  await watchlist.handleMessage(fakeMessage({
+    id: 'seed-bot-1',
+    bot: true,
+    content: '$TSLA volume spike at $300',
+  }));
+  // Audit OK, but no watchlist entry
+  assert.ok(db.getTrackedMessage('seed-bot-1'));
+  assert.strictEqual(db.getWatchlistEntry('TSLA'), null);
+});
+
+test('handleMessage seeds with market price fallback when message has no price', async () => {
+  process.env.TRADING_CHANNEL = 'trading-floor';
+  const stubMarket = {
+    getQuote: async (t) => ({ price: 555.55, volume: 100 }),
+  };
+  await watchlist.handleMessage(
+    fakeMessage({
+      id: 'seed-fallback-1',
+      content: 'NVDA is the move',
+    }),
+    { marketClient: stubMarket },
+  );
+  const row = db.getWatchlistEntry('NVDA');
+  assert.ok(row);
+  assert.strictEqual(row.initial_price, 555.55);
+  assert.strictEqual(row.initial_price_source, 'market');
+});
+
+test('handleMessage skips seeding when message has no price AND market fetch fails', async () => {
+  process.env.TRADING_CHANNEL = 'trading-floor';
+  const failingMarket = {
+    getQuote: async () => { throw new Error('FMP down'); },
+  };
+  await watchlist.handleMessage(
+    fakeMessage({
+      id: 'seed-fail-1',
+      content: 'AMD looking strong',
+    }),
+    { marketClient: failingMarket },
+  );
+  // Audit still happens
+  assert.ok(db.getTrackedMessage('seed-fail-1'));
+  // But no seed
+  assert.strictEqual(db.getWatchlistEntry('AMD'), null);
+});
+
+test('handleMessage skips seeding when no ticker detected', async () => {
+  process.env.TRADING_CHANNEL = 'trading-floor';
+  await watchlist.handleMessage(fakeMessage({
+    id: 'no-ticker',
+    content: 'good morning everyone',
+  }));
+  assert.ok(db.getTrackedMessage('no-ticker'));
+  // No watchlist entry created (we'd need to know what to query, just check nothing leaked)
+  const active = db.getActiveWatchlist();
+  assert.ok(!active.find(r => r.source_message_id === 'no-ticker'));
+});
+
+test('handleMessage second mention of same ticker keeps first entry', async () => {
+  process.env.TRADING_CHANNEL = 'trading-floor';
+  await watchlist.handleMessage(fakeMessage({
+    id: 'first-mention',
+    authorUsername: 'alice',
+    content: '$HOOD @ $20',
+    ts: 1700000000000,
+  }));
+  await watchlist.handleMessage(fakeMessage({
+    id: 'second-mention',
+    authorUsername: 'bob',
+    content: '$HOOD @ $25',
+    ts: 1700000999999,
+  }));
+  const row = db.getWatchlistEntry('HOOD');
+  assert.strictEqual(row.initial_price, 20);
+  assert.strictEqual(row.mentioned_by_username, 'alice');
+  assert.strictEqual(row.source_message_id, 'first-mention');
+});

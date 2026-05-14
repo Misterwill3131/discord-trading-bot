@@ -1,12 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────
 // pages/welcome-log.js — Page dashboard /welcome-log
 // ─────────────────────────────────────────────────────────────────────
-// Affiche les 100 derniers événements du welcome listener (sends + erreurs
-// + config-missing au boot). Lit l'état mémoire depuis state/welcome-log.
-// Reset au restart du bot — pour de l'historique long terme, regarder
-// Railway logs filtré sur "[welcome]".
+// Affiche les événements du welcome listener (sends + erreurs +
+// config-missing au boot). Pure renderer : les entries sont passées en
+// argument par la route, qui les lit depuis la table SQLite welcome_log
+// (db/sqlite.js → getWelcomeLog). Persistant entre restarts du bot.
 //
-// Spec : docs/superpowers/specs/2026-05-14-welcome-log-dashboard-design.md
+// Spec : docs/superpowers/specs/2026-05-14-welcome-log-persistence-design.md
 // ─────────────────────────────────────────────────────────────────────
 
 const { COMMON_CSS, sidebarHTML } = require('./common');

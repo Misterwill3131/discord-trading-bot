@@ -89,3 +89,222 @@ test('buildAlertMessage formats decimal prices to 2 places', () => {
   assert.ok(msg.includes('entry $12.35'));
   assert.ok(msg.includes('gain +50.31%'));
 });
+
+const { tick } = require('./milestone-checker');
+
+// Tiny fake DB capturing calls and configurable state.
+function makeFakeDb({ active = [], archiveReturns = 0 } = {}) {
+  const calls = {
+    insertMilestoneAlert: [],
+    updateWatchlistAfterAlert: [],
+    archiveExpiredWatchlist: [],
+  };
+  const fired = new Set();  // tracks (ticker, milestone) tuples
+  return {
+    archiveExpiredWatchlist(cutoff, now) {
+      calls.archiveExpiredWatchlist.push({ cutoff, now });
+      return archiveReturns;
+    },
+    getActiveWatchlist() { return active; },
+    insertMilestoneAlert(entry) {
+      const key = entry.ticker + '|' + entry.milestonePct;
+      calls.insertMilestoneAlert.push(entry);
+      if (fired.has(key)) return false;
+      fired.add(key);
+      return true;
+    },
+    updateWatchlistAfterAlert(entry) {
+      calls.updateWatchlistAfterAlert.push(entry);
+    },
+    _calls: calls,
+  };
+}
+
+// Minimal fake Discord client + channel + message that returns the reply.
+function makeFakeDiscord({ replyId = 'reply-1', failFetch = false } = {}) {
+  const replies = [];
+  const channel = {
+    messages: {
+      fetch: async (id) => {
+        if (failFetch) throw new Error('source message gone');
+        return {
+          reply: async ({ content }) => {
+            replies.push({ messageId: id, content });
+            return { id: replyId };
+          },
+        };
+      },
+    },
+  };
+  return {
+    channels: { fetch: async () => channel },
+    _replies: replies,
+  };
+}
+
+const SAMPLE_ENTRY = {
+  ticker: 'AAPL',
+  initial_price: 200,
+  source_message_id: 'src-1',
+  source_channel_id: 'chan-1',
+  mentioned_by_username: 'alice',
+  first_seen_at: 1700000000000,
+  last_milestone_pct: null,
+  last_alert_at: null,
+};
+
+test('tick is a no-op outside RTH', async () => {
+  const fakeDb = makeFakeDb({ active: [SAMPLE_ENTRY] });
+  const fakeMarket = { getQuotesBulk: async () => { throw new Error('should not call'); } };
+  const fakeClient = makeFakeDiscord();
+  await tick(fakeClient, 1700000000000, {
+    db: fakeDb,
+    marketClient: fakeMarket,
+    isRTH: () => false,
+    milestones: [20, 50],
+    cooldownMs: 3600_000,
+    ttlMs: 30 * 86400_000,
+  });
+  assert.strictEqual(fakeDb._calls.insertMilestoneAlert.length, 0);
+  assert.strictEqual(fakeClient._replies.length, 0);
+});
+
+test('tick fires +20 milestone when gain reaches 25%', async () => {
+  const fakeDb = makeFakeDb({ active: [SAMPLE_ENTRY] });
+  const fakeMarket = { getQuotesBulk: async () => ({ AAPL: { price: 250, volume: 1 } }) };
+  const fakeClient = makeFakeDiscord({ replyId: 'rep-aapl-20' });
+  await tick(fakeClient, 1700001000000, {
+    db: fakeDb,
+    marketClient: fakeMarket,
+    isRTH: () => true,
+    milestones: [20, 50],
+    cooldownMs: 3600_000,
+    ttlMs: 30 * 86400_000,
+  });
+  assert.strictEqual(fakeDb._calls.insertMilestoneAlert.length, 1);
+  assert.strictEqual(fakeDb._calls.insertMilestoneAlert[0].milestonePct, 20);
+  assert.strictEqual(fakeClient._replies.length, 1);
+  assert.ok(fakeClient._replies[0].content.includes('+20%'));
+  // updateWatchlistAfterAlert must have been called with the reply id
+  assert.strictEqual(fakeDb._calls.updateWatchlistAfterAlert.length, 1);
+  assert.strictEqual(fakeDb._calls.updateWatchlistAfterAlert[0].lastMilestonePct, 20);
+});
+
+test('tick respects cooldown', async () => {
+  const now = 1700001000000;
+  const entry = { ...SAMPLE_ENTRY, last_milestone_pct: 20, last_alert_at: now - 1000 };
+  const fakeDb = makeFakeDb({ active: [entry] });
+  const fakeMarket = { getQuotesBulk: async () => ({ AAPL: { price: 300, volume: 1 } }) };
+  const fakeClient = makeFakeDiscord();
+  await tick(fakeClient, now, {
+    db: fakeDb,
+    marketClient: fakeMarket,
+    isRTH: () => true,
+    milestones: [20, 50],
+    cooldownMs: 3600_000,
+    ttlMs: 30 * 86400_000,
+  });
+  assert.strictEqual(fakeDb._calls.insertMilestoneAlert.length, 0);
+  assert.strictEqual(fakeClient._replies.length, 0);
+});
+
+test('tick fires next milestone after cooldown', async () => {
+  const now = 1700005000000;
+  const entry = { ...SAMPLE_ENTRY, last_milestone_pct: 20, last_alert_at: now - 4_000_000 };
+  const fakeDb = makeFakeDb({ active: [entry] });
+  const fakeMarket = { getQuotesBulk: async () => ({ AAPL: { price: 300, volume: 1 } }) };
+  const fakeClient = makeFakeDiscord({ replyId: 'rep-aapl-50' });
+  await tick(fakeClient, now, {
+    db: fakeDb,
+    marketClient: fakeMarket,
+    isRTH: () => true,
+    milestones: [20, 50],
+    cooldownMs: 3600_000,
+    ttlMs: 30 * 86400_000,
+  });
+  assert.strictEqual(fakeDb._calls.insertMilestoneAlert[0].milestonePct, 50);
+  assert.strictEqual(fakeClient._replies.length, 1);
+});
+
+test('tick handles FMP bulk failure without throwing', async () => {
+  const fakeDb = makeFakeDb({ active: [SAMPLE_ENTRY] });
+  const fakeMarket = { getQuotesBulk: async () => { throw new Error('FMP down'); } };
+  const fakeClient = makeFakeDiscord();
+  await tick(fakeClient, 1700001000000, {
+    db: fakeDb,
+    marketClient: fakeMarket,
+    isRTH: () => true,
+    milestones: [20, 50],
+    cooldownMs: 3600_000,
+    ttlMs: 30 * 86400_000,
+  });
+  assert.strictEqual(fakeDb._calls.insertMilestoneAlert.length, 0);
+  assert.strictEqual(fakeClient._replies.length, 0);
+});
+
+test('tick skips ticker missing from FMP response', async () => {
+  const fakeDb = makeFakeDb({ active: [SAMPLE_ENTRY] });
+  const fakeMarket = { getQuotesBulk: async () => ({}) };  // empty
+  const fakeClient = makeFakeDiscord();
+  await tick(fakeClient, 1700001000000, {
+    db: fakeDb,
+    marketClient: fakeMarket,
+    isRTH: () => true,
+    milestones: [20, 50],
+    cooldownMs: 3600_000,
+    ttlMs: 30 * 86400_000,
+  });
+  assert.strictEqual(fakeDb._calls.insertMilestoneAlert.length, 0);
+});
+
+test('tick does not call FMP when watchlist is empty', async () => {
+  const fakeDb = makeFakeDb({ active: [] });
+  const fakeMarket = { getQuotesBulk: async () => { throw new Error('should not call'); } };
+  const fakeClient = makeFakeDiscord();
+  await tick(fakeClient, 1700001000000, {
+    db: fakeDb,
+    marketClient: fakeMarket,
+    isRTH: () => true,
+    milestones: [20, 50],
+    cooldownMs: 3600_000,
+    ttlMs: 30 * 86400_000,
+  });
+  // No throw, no insert.
+  assert.strictEqual(fakeDb._calls.insertMilestoneAlert.length, 0);
+});
+
+test('tick archives expired entries before polling', async () => {
+  const now = 1700_000_000_000;
+  const fakeDb = makeFakeDb({ active: [], archiveReturns: 3 });
+  const fakeMarket = { getQuotesBulk: async () => ({}) };
+  const fakeClient = makeFakeDiscord();
+  const ttl = 30 * 86400_000;
+  await tick(fakeClient, now, {
+    db: fakeDb,
+    marketClient: fakeMarket,
+    isRTH: () => true,
+    milestones: [20, 50],
+    cooldownMs: 3600_000,
+    ttlMs: ttl,
+  });
+  assert.strictEqual(fakeDb._calls.archiveExpiredWatchlist.length, 1);
+  assert.strictEqual(fakeDb._calls.archiveExpiredWatchlist[0].cutoff, now - ttl);
+});
+
+test('tick keeps milestone_alerts row even when Discord reply fails', async () => {
+  const fakeDb = makeFakeDb({ active: [SAMPLE_ENTRY] });
+  const fakeMarket = { getQuotesBulk: async () => ({ AAPL: { price: 250, volume: 1 } }) };
+  const fakeClient = makeFakeDiscord({ failFetch: true });
+  await tick(fakeClient, 1700001000000, {
+    db: fakeDb,
+    marketClient: fakeMarket,
+    isRTH: () => true,
+    milestones: [20, 50],
+    cooldownMs: 3600_000,
+    ttlMs: 30 * 86400_000,
+  });
+  // Mark-then-send: insert happened, but no reply and no watchlist update.
+  assert.strictEqual(fakeDb._calls.insertMilestoneAlert.length, 1);
+  assert.strictEqual(fakeClient._replies.length, 0);
+  assert.strictEqual(fakeDb._calls.updateWatchlistAfterAlert.length, 0);
+});

@@ -50,7 +50,124 @@ function buildAlertMessage({
     + 'first flagged by @' + name;
 }
 
+// Parse les paliers depuis l'env var (CSV d'entiers positifs, trié).
+function parseMilestones(raw, fallback) {
+  const parsed = String(raw || '').split(',')
+    .map(s => parseInt(s.trim(), 10))
+    .filter(n => Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+  return parsed.length > 0 ? parsed : fallback;
+}
+
+// Lit la config depuis process.env avec des défauts sains. Exposé pour
+// les tests qui peuvent override.
+function readConfig() {
+  return {
+    milestones: parseMilestones(
+      process.env.MILESTONE_THRESHOLDS,
+      [20, 50, 100, 200, 300, 500, 1000],
+    ),
+    cooldownMs: Math.max(0, parseFloat(process.env.MILESTONE_COOLDOWN_HOURS || '1')) * 3600_000,
+    ttlMs:      Math.max(1, parseInt(process.env.WATCHLIST_TTL_DAYS || '30', 10)) * 86400_000,
+  };
+}
+
+async function tick(client, nowMs, deps = {}) {
+  const db = deps.db || require('../db/sqlite');
+  const isRTH = deps.isRTH || require('./market-alerts').isRTH;
+  const marketClient = deps.marketClient;  // required at runtime
+  const cfg = readConfig();
+  const milestones = deps.milestones || cfg.milestones;
+  const cooldownMs = (deps.cooldownMs != null) ? deps.cooldownMs : cfg.cooldownMs;
+  const ttlMs      = (deps.ttlMs      != null) ? deps.ttlMs      : cfg.ttlMs;
+
+  const now = Number(nowMs) || Date.now();
+
+  // RTH guard — pas de poll hors marché US régulier.
+  if (!isRTH(new Date(now))) return;
+
+  // Archive les entrées trop anciennes AVANT de poll → pas de quota FMP gaspillé.
+  try {
+    db.archiveExpiredWatchlist(now - ttlMs, now);
+  } catch (err) {
+    console.error('[milestone-checker] archive failed: ' + err.message);
+  }
+
+  const entries = db.getActiveWatchlist();
+  if (!Array.isArray(entries) || entries.length === 0) return;
+
+  // Pas de marketClient = pas de poll possible.
+  if (!marketClient || typeof marketClient.getQuotesBulk !== 'function') {
+    console.warn('[milestone-checker] no marketClient available, skipping tick');
+    return;
+  }
+
+  const tickers = [...new Set(entries.map(e => e.ticker))];
+  let quotes;
+  try {
+    quotes = await marketClient.getQuotesBulk(tickers);
+  } catch (err) {
+    console.error('[milestone-checker] FMP bulk failed: ' + err.message);
+    return;
+  }
+
+  for (const entry of entries) {
+    const quote = quotes[entry.ticker];
+    if (!quote || !Number.isFinite(quote.price)) continue;
+
+    const gainPct = ((quote.price - entry.initial_price) / entry.initial_price) * 100;
+    const target = nextMilestone(gainPct, entry.last_milestone_pct, milestones);
+    if (target == null) continue;
+
+    if (entry.last_alert_at != null && (now - entry.last_alert_at) < cooldownMs) continue;
+
+    // Mark-then-send atomique : si UNIQUE bloque (palier déjà tiré),
+    // insertMilestoneAlert renvoie false → on skip.
+    const fired = db.insertMilestoneAlert({
+      ticker: entry.ticker,
+      milestonePct: target,
+      initialPrice: entry.initial_price,
+      currentPrice: quote.price,
+      gainPct,
+      firedAt: now,
+      discordMessageId: null,
+    });
+    if (!fired) continue;
+
+    // Reply Discord. Si fail (msg supprimé, perms), on garde l'insert :
+    // perdre 1 alerte vaut mieux qu'en spammer au tick suivant.
+    try {
+      const channel = await client.channels.fetch(entry.source_channel_id);
+      const sourceMsg = await channel.messages.fetch(entry.source_message_id);
+      const text = buildAlertMessage({
+        ticker: entry.ticker,
+        milestonePct: target,
+        initialPrice: entry.initial_price,
+        currentPrice: quote.price,
+        gainPct,
+        mentionedByUsername: entry.mentioned_by_username,
+      });
+      const reply = await sourceMsg.reply({
+        content: text,
+        allowedMentions: { parse: [] },
+      });
+      db.updateWatchlistAfterAlert({
+        ticker: entry.ticker,
+        lastMilestonePct: target,
+        lastAlertAt: now,
+      });
+    } catch (err) {
+      console.error('[milestone-checker] reply failed for ' + entry.ticker
+        + ': ' + err.message);
+    }
+  }
+}
+
 module.exports = {
   nextMilestone,
   buildAlertMessage,
+  tick,
+  // exposed for tests
+  parseMilestones,
+  readConfig,
 };

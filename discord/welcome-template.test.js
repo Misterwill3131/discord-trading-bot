@@ -72,3 +72,68 @@ test('validateTemplate rejects non-string input', () => {
   assert.strictEqual(validateTemplate(42).ok, false);
   assert.strictEqual(validateTemplate({}).ok, false);
 });
+
+// ─────────────────────────────────────────────────────────────────────
+// DB-backed persistence tests (Task 2)
+// ─────────────────────────────────────────────────────────────────────
+
+const { getEffectiveTemplate, setTemplate, resetTemplate, SETTING_KEY } = require('./welcome-template');
+const db = require('../db/sqlite');
+
+// Helper: reset state before each persistence test.
+function resetSetting() {
+  db.setSetting(SETTING_KEY, null);
+}
+
+test('SETTING_KEY is "welcome_message_template"', () => {
+  assert.strictEqual(SETTING_KEY, 'welcome_message_template');
+});
+
+test('getEffectiveTemplate returns the default when setting is absent', () => {
+  resetSetting();
+  const r = getEffectiveTemplate();
+  assert.strictEqual(r.template, DEFAULT_WELCOME_TEMPLATE);
+  assert.strictEqual(r.isDefault, true);
+});
+
+test('setTemplate writes and getEffectiveTemplate reads it back as override', () => {
+  resetSetting();
+  setTemplate('{user} hello world!');
+  const r = getEffectiveTemplate();
+  assert.strictEqual(r.template, '{user} hello world!');
+  assert.strictEqual(r.isDefault, false);
+});
+
+test('setTemplate throws on invalid input (missing {user})', () => {
+  resetSetting();
+  assert.throws(() => setTemplate('Bonjour sans placeholder'), /\{user\}/);
+});
+
+test('setTemplate throws on empty input', () => {
+  resetSetting();
+  assert.throws(() => setTemplate(''), /vide/i);
+});
+
+test('resetTemplate clears the override and getEffectiveTemplate returns the default again', () => {
+  resetSetting();
+  setTemplate('{user} override here');
+  assert.strictEqual(getEffectiveTemplate().isDefault, false);
+  resetTemplate();
+  const r = getEffectiveTemplate();
+  assert.strictEqual(r.template, DEFAULT_WELCOME_TEMPLATE);
+  assert.strictEqual(r.isDefault, true);
+});
+
+test('getEffectiveTemplate treats null/empty stored value as missing (fallback to default)', () => {
+  resetSetting();
+  // Direct DB write of null and empty to simulate edge cases
+  db.setSetting(SETTING_KEY, null);
+  assert.strictEqual(getEffectiveTemplate().isDefault, true);
+  db.setSetting(SETTING_KEY, '');
+  assert.strictEqual(getEffectiveTemplate().isDefault, true);
+});
+
+// Cleanup after this file's tests so we don't leave state for other test files.
+test('cleanup: reset setting', () => {
+  resetSetting();
+});

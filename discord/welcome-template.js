@@ -35,8 +35,43 @@ function validateTemplate(text) {
   return { ok: true };
 }
 
+const db = require('../db/sqlite');
+
+const SETTING_KEY = 'welcome_message_template';
+
+// Returns { template, isDefault }. Treats null, '', and missing all as
+// "no override" (fallback to default).
+function getEffectiveTemplate() {
+  const stored = db.getSetting(SETTING_KEY, null);
+  if (typeof stored !== 'string' || !stored.trim()) {
+    return { template: DEFAULT_WELCOME_TEMPLATE, isDefault: true };
+  }
+  return { template: stored, isDefault: false };
+}
+
+// Validates then writes. Throws if validation fails. Caller is responsible
+// for catching and surfacing the error message.
+function setTemplate(text) {
+  const v = validateTemplate(text);
+  if (!v.ok) {
+    const err = new Error(v.error);
+    err.code = 'INVALID_TEMPLATE';
+    throw err;
+  }
+  db.setSetting(SETTING_KEY, text);
+}
+
+// Clears the override. Future getEffectiveTemplate calls return the default.
+function resetTemplate() {
+  db.setSetting(SETTING_KEY, null);
+}
+
 module.exports = {
   DEFAULT_WELCOME_TEMPLATE,
+  SETTING_KEY,
   applyTemplate,
   validateTemplate,
+  getEffectiveTemplate,
+  setTemplate,
+  resetTemplate,
 };

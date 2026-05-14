@@ -308,3 +308,27 @@ test('tick keeps milestone_alerts row even when Discord reply fails', async () =
   assert.strictEqual(fakeClient._replies.length, 0);
   assert.strictEqual(fakeDb._calls.updateWatchlistAfterAlert.length, 0);
 });
+
+test('readConfig falls back to defaults when MILESTONE_COOLDOWN_HOURS is non-numeric', () => {
+  const prev = process.env.MILESTONE_COOLDOWN_HOURS;
+  process.env.MILESTONE_COOLDOWN_HOURS = 'abc';
+  try {
+    const cfg = require('./milestone-checker').readConfig();
+    assert.strictEqual(cfg.cooldownMs, 3600_000);  // 1h default, not NaN
+  } finally {
+    if (prev === undefined) delete process.env.MILESTONE_COOLDOWN_HOURS;
+    else process.env.MILESTONE_COOLDOWN_HOURS = prev;
+  }
+});
+
+test('readConfig falls back to defaults when WATCHLIST_TTL_DAYS is non-numeric', () => {
+  const prev = process.env.WATCHLIST_TTL_DAYS;
+  process.env.WATCHLIST_TTL_DAYS = 'xyz';
+  try {
+    const cfg = require('./milestone-checker').readConfig();
+    assert.strictEqual(cfg.ttlMs, 30 * 86400_000);  // 30d default, not NaN
+  } finally {
+    if (prev === undefined) delete process.env.WATCHLIST_TTL_DAYS;
+    else process.env.WATCHLIST_TTL_DAYS = prev;
+  }
+});

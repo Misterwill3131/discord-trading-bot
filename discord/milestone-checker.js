@@ -62,13 +62,21 @@ function parseMilestones(raw, fallback) {
 // Lit la config depuis process.env avec des défauts sains. Exposé pour
 // les tests qui peuvent override.
 function readConfig() {
+  // Parse cooldown / TTL with NaN guards. If env var is non-numeric we fall
+  // back to the documented default (1h / 30d) rather than NaN, which would
+  // silently bypass the cooldown check or the archive cutoff.
+  const cooldownHoursRaw = parseFloat(process.env.MILESTONE_COOLDOWN_HOURS || '1');
+  const cooldownHours = Number.isFinite(cooldownHoursRaw) ? cooldownHoursRaw : 1;
+  const ttlDaysRaw = parseInt(process.env.WATCHLIST_TTL_DAYS || '30', 10);
+  const ttlDays = Number.isFinite(ttlDaysRaw) ? ttlDaysRaw : 30;
+
   return {
     milestones: parseMilestones(
       process.env.MILESTONE_THRESHOLDS,
       [20, 50, 100, 200, 300, 500, 1000],
     ),
-    cooldownMs: Math.max(0, parseFloat(process.env.MILESTONE_COOLDOWN_HOURS || '1')) * 3600_000,
-    ttlMs:      Math.max(1, parseInt(process.env.WATCHLIST_TTL_DAYS || '30', 10)) * 86400_000,
+    cooldownMs: Math.max(0, cooldownHours) * 3600_000,
+    ttlMs:      Math.max(1, ttlDays) * 86400_000,
   };
 }
 

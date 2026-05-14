@@ -108,8 +108,14 @@ async function handleMessage(message, { marketClient = null } = {}) {
     if (!marketClient || typeof marketClient.getQuote !== 'function') return;
     try {
       const quote = await marketClient.getQuote(ticker);
-      initialPrice = (quote && Number.isFinite(quote.price)) ? quote.price : null;
-      priceSource = 'market';
+      const p = quote && Number.isFinite(quote.price) ? quote.price : null;
+      // Apply the same sanity range as extractPrice: prevents seeding with
+      // 0 (halted/delisted tickers) which would cause div-by-zero downstream
+      // in milestone-checker. Same upper bound to be consistent.
+      if (p != null && p > 0 && p < 100_000) {
+        initialPrice = p;
+        priceSource = 'market';
+      }
     } catch (err) {
       console.warn('[analyst-watchlist] market fetch failed for ' + ticker
         + ': ' + (err.message || err));

@@ -201,3 +201,37 @@ test('handleMessage second mention of same ticker keeps first entry', async () =
   assert.strictEqual(row.mentioned_by_username, 'alice');
   assert.strictEqual(row.source_message_id, 'first-mention');
 });
+
+test('handleMessage skips seeding when FMP returns price=0 (halted ticker)', async () => {
+  process.env.TRADING_CHANNEL = 'trading-floor';
+  const haltedMarket = {
+    getQuote: async () => ({ price: 0, volume: 0 }),
+  };
+  await watchlist.handleMessage(
+    fakeMessage({
+      id: 'halted-1',
+      content: 'GME looking interesting',
+    }),
+    { marketClient: haltedMarket },
+  );
+  // Audit still happens
+  assert.ok(db.getTrackedMessage('halted-1'));
+  // But no seed (price=0 would cause div-by-zero downstream)
+  assert.strictEqual(db.getWatchlistEntry('GME'), null);
+});
+
+test('handleMessage skips seeding when FMP returns negative price', async () => {
+  process.env.TRADING_CHANNEL = 'trading-floor';
+  const negativeMarket = {
+    getQuote: async () => ({ price: -50, volume: 100 }),
+  };
+  await watchlist.handleMessage(
+    fakeMessage({
+      id: 'neg-1',
+      content: 'F looking strong',
+    }),
+    { marketClient: negativeMarket },
+  );
+  assert.ok(db.getTrackedMessage('neg-1'));
+  assert.strictEqual(db.getWatchlistEntry('F'), null);
+});

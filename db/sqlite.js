@@ -456,6 +456,18 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_watchlist_active
     ON analyst_watchlist(archived_at);
+
+  CREATE TABLE IF NOT EXISTS milestone_alerts (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker              TEXT NOT NULL,
+    milestone_pct       INTEGER NOT NULL,
+    initial_price       REAL NOT NULL,
+    current_price       REAL NOT NULL,
+    gain_pct            REAL NOT NULL,
+    fired_at            INTEGER NOT NULL,
+    discord_message_id  TEXT,
+    UNIQUE (ticker, milestone_pct)
+  );
 `);
 
 db.exec(`
@@ -2027,6 +2039,31 @@ function archiveExpiredWatchlist(cutoffMs, nowMs = Date.now()) {
   return result.changes;
 }
 
+// ── milestone_alerts (atomic dedup via UNIQUE constraint) ───────────
+const stmtMilestoneAlertInsert = db.prepare(`
+  INSERT OR IGNORE INTO milestone_alerts
+    (ticker, milestone_pct, initial_price, current_price,
+     gain_pct, fired_at, discord_message_id)
+  VALUES
+    (@ticker, @milestonePct, @initialPrice, @currentPrice,
+     @gainPct, @firedAt, @discordMessageId)
+`);
+
+// Returns true when the insert actually wrote (= this caller may post).
+// Returns false when UNIQUE constraint blocked it (= already fired).
+function insertMilestoneAlert(entry) {
+  const result = stmtMilestoneAlertInsert.run({
+    ticker:           String(entry.ticker).toUpperCase(),
+    milestonePct:     Number(entry.milestonePct),
+    initialPrice:     Number(entry.initialPrice),
+    currentPrice:     Number(entry.currentPrice),
+    gainPct:          Number(entry.gainPct),
+    firedAt:          Number(entry.firedAt),
+    discordMessageId: entry.discordMessageId ?? null,
+  });
+  return result.changes > 0;
+}
+
 module.exports = {
   db,
   DB_PATH,
@@ -2184,4 +2221,7 @@ module.exports = {
   getActiveWatchlist,
   updateWatchlistAfterAlert,
   archiveExpiredWatchlist,
+
+  // analyst-watchlist module — milestone dedup
+  insertMilestoneAlert,
 };

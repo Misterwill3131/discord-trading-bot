@@ -206,3 +206,46 @@ test('archiveExpiredWatchlist soft-archives entries older than cutoff', () => {
   const active = getActiveWatchlist();
   assert.ok(!active.find(r => r.ticker === 'OLD'));
 });
+
+// ── milestone_alerts (atomic dedup of fired milestones) ─────────────
+const { insertMilestoneAlert } = require('./sqlite');
+
+test('insertMilestoneAlert returns true on first insert', () => {
+  const fired = insertMilestoneAlert({
+    ticker: 'AAPL',
+    milestonePct: 20,
+    initialPrice: 200,
+    currentPrice: 240,
+    gainPct: 20,
+    firedAt: 1700000000000,
+  });
+  assert.strictEqual(fired, true);
+});
+
+test('insertMilestoneAlert returns false on duplicate (ticker, milestone_pct)', () => {
+  insertMilestoneAlert({
+    ticker: 'NVDA', milestonePct: 50,
+    initialPrice: 100, currentPrice: 150, gainPct: 50,
+    firedAt: 1700000000000,
+  });
+  const secondFired = insertMilestoneAlert({
+    ticker: 'NVDA', milestonePct: 50,
+    initialPrice: 100, currentPrice: 155, gainPct: 55,
+    firedAt: 1700000999999,
+  });
+  assert.strictEqual(secondFired, false);
+});
+
+test('insertMilestoneAlert allows same ticker for different milestone_pct', () => {
+  insertMilestoneAlert({
+    ticker: 'TSLA', milestonePct: 20,
+    initialPrice: 100, currentPrice: 120, gainPct: 20,
+    firedAt: 1700000000000,
+  });
+  const fired50 = insertMilestoneAlert({
+    ticker: 'TSLA', milestonePct: 50,
+    initialPrice: 100, currentPrice: 150, gainPct: 50,
+    firedAt: 1700000999999,
+  });
+  assert.strictEqual(fired50, true);
+});

@@ -50,6 +50,7 @@ const { registerProfitRoutes } = require('./routes/profits');
 const { registerConfigRoutes } = require('./routes/config');
 const { registerDbViewerRoutes } = require('./routes/db-viewer');
 const { registerBackupLogRoutes } = require('./routes/backup-log');
+const { registerWelcomeLogRoutes } = require('./routes/welcome-log');
 const { registerDbSnapshotRoutes } = require('./routes/db-snapshot');
 const { registerChartTestRoutes } = require('./routes/chart-test');
 const imageState = require('./state/images');
@@ -173,6 +174,9 @@ registerDbViewerRoutes(app, requireAuth);
 
 // Backup log (historique des 30 derniers runs en mémoire).
 registerBackupLogRoutes(app, requireAuth);
+
+// Welcome log (log des joins).
+registerWelcomeLogRoutes(app, requireAuth);
 
 // DB snapshot download (VACUUM INTO + stream, auth-protected).
 registerDbSnapshotRoutes(app, requireAuth);

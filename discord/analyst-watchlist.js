@@ -11,6 +11,9 @@
 // Le module milestone-checker.js consomme cette table via le cron 30 min.
 // ─────────────────────────────────────────────────────────────────────
 
+const db = require('../db/sqlite');
+const { extractTicker } = require('./screener-ingest');
+
 // Regex prix : $XX, $XX.XX, $X,XXX.XX (avec virgules de milliers).
 // Prend le PREMIER match — convention "prix d'entrée" si plage donnée.
 // Le lookahead (?!\d) interdit un chiffre trailing : empêche un partial-match
@@ -28,6 +31,73 @@ function extractPrice(text) {
   return price;
 }
 
+// Sérialise les embeds Discord en JSON léger pour stockage. Mirror du
+// pattern utilisé dans screener-ingest.js (même format, donc analyses
+// cross-table possibles plus tard).
+function serializeEmbeds(embeds) {
+  if (!Array.isArray(embeds) || embeds.length === 0) return null;
+  return embeds.map((e) => ({
+    title:       e.title       || e.data?.title       || null,
+    description: e.description || e.data?.description || null,
+    url:         e.url         || e.data?.url         || null,
+    color:       e.color       || e.data?.color       || null,
+    image:       e.image?.url     || e.data?.image?.url     || null,
+    thumbnail:   e.thumbnail?.url || e.data?.thumbnail?.url || null,
+    fields: Array.isArray(e.fields || e.data?.fields)
+      ? (e.fields || e.data.fields).map((f) => ({
+          name:   f.name   || '',
+          value:  f.value  || '',
+          inline: !!f.inline,
+        }))
+      : [],
+  }));
+}
+
+// Combine content + textes d'embeds pour maximiser le hit rate du
+// ticker/price extractor (les bots TrendVision postent souvent en embed).
+function combinedSearchText(message) {
+  const content = message.content || '';
+  const embedJson = serializeEmbeds(message.embeds);
+  const embedText = embedJson
+    ? embedJson.map(e => (e.title || '') + ' ' + (e.description || '')).join(' ')
+    : '';
+  return { text: content + ' ' + embedText, embedJson };
+}
+
+// Le filtre channel utilise le même pattern que le bot trading existant
+// (substring match) — donc pas de nouvelle env var de canal à gérer.
+function channelMatches(channelName) {
+  if (typeof channelName !== 'string' || channelName.length === 0) return false;
+  const target = (process.env.TRADING_CHANNEL || 'trading-floor').toLowerCase();
+  return channelName.toLowerCase().includes(target);
+}
+
+async function handleMessage(message) {
+  if (!message || !message.channel || !message.author) return;
+  if (!channelMatches(message.channel.name)) return;
+
+  const { text, embedJson } = combinedSearchText(message);
+  const content = (message.content || '').slice(0, 4000);
+  const ticker = extractTicker(text);
+  const messagePrice = extractPrice(text);
+
+  // Audit : stocke TOUT, analystes + bots.
+  db.insertTrackedMessage({
+    messageId:       String(message.id),
+    channelId:       String(message.channel.id),
+    authorId:        String(message.author.id),
+    authorUsername:  message.author.username || null,
+    isBot:           message.author.bot ? 1 : 0,
+    content,
+    embedJson:       embedJson ? JSON.stringify(embedJson) : null,
+    extractedTicker: ticker,
+    extractedPrice:  messagePrice,
+    createdAt:       Number(message.createdTimestamp) || Date.now(),
+  });
+}
+
 module.exports = {
   extractPrice,
+  serializeEmbeds,
+  handleMessage,
 };

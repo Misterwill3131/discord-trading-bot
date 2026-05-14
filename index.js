@@ -71,6 +71,7 @@ const { registerGuildGuard } = require('./saas/guards');
 const { registerSaasCommands } = require('./saas/commands');
 const { register: registerSaasRelay } = require('./saas/relay');
 const { register: registerScreenerIngest } = require('./discord/screener-ingest');
+const { register: registerAnalystWatchlist } = require('./discord/analyst-watchlist');
 const licenseSync = require('./saas/license-sync');
 
 // Site public de vente (landing, pricing, FAQ, legal, funnel post-action).
@@ -448,6 +449,11 @@ if (SAAS_BOT_TOKEN) {
   // Postgres screener_alerts. Les channels sont distincts de
   // SOURCE_CHANNEL_IDS donc pas de double-handling.
   registerScreenerIngest(client);
+
+  // Watchlist auto-alimentée par les mentions analystes dans TRADING_CHANNEL.
+  // Audit complet (analystes + bots) dans tracked_messages ; seed
+  // analyst_watchlist seulement pour les non-bots avec ticker détecté.
+  registerAnalystWatchlist(client);
 
   clientSaas.once('ready', () => {
     console.log('[saas] Bot connected as ' + clientSaas.user.tag);

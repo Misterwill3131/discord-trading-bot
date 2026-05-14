@@ -136,8 +136,41 @@ async function handleMessage(message, { marketClient = null } = {}) {
   });
 }
 
+// Wire-up : enregistre le listener messageCreate. Le client FMP est créé
+// ici (1 fois par process) à partir de FMP_API_KEY. Si la key est absente,
+// on log et on continue sans fallback marché — l'extraction de prix
+// depuis le message reste fonctionnelle.
+function register(client) {
+  if (!client || typeof client.on !== 'function') {
+    console.warn('[analyst-watchlist] no client passed, listener not registered');
+    return;
+  }
+
+  let marketClient = null;
+  const apiKey = process.env.FMP_API_KEY || '';
+  if (apiKey) {
+    try {
+      const { createFmpClient } = require('./fmp-client');
+      marketClient = createFmpClient({ apiKey });
+    } catch (err) {
+      console.error('[analyst-watchlist] FMP init failed: ' + err.message);
+    }
+  } else {
+    console.warn('[analyst-watchlist] FMP_API_KEY empty — message-price-only mode');
+  }
+
+  client.on('messageCreate', (msg) => {
+    handleMessage(msg, { marketClient }).catch((err) =>
+      console.error('[analyst-watchlist] handler error: ' + err.message)
+    );
+  });
+  console.log('[analyst-watchlist] listener registered (channel substring: '
+    + (process.env.TRADING_CHANNEL || 'trading-floor') + ')');
+}
+
 module.exports = {
   extractPrice,
   serializeEmbeds,
   handleMessage,
+  register,
 };

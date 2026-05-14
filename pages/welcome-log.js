@@ -1,12 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────
 // pages/welcome-log.js — Page dashboard /welcome-log
 // ─────────────────────────────────────────────────────────────────────
-// Affiche les 100 derniers événements du welcome listener (sends + erreurs
-// + config-missing au boot). Lit l'état mémoire depuis state/welcome-log.
-// Reset au restart du bot — pour de l'historique long terme, regarder
-// Railway logs filtré sur "[welcome]".
+// Affiche les événements du welcome listener (sends + erreurs +
+// config-missing au boot). Pure renderer : les entries sont passées en
+// argument par la route, qui les lit depuis la table SQLite welcome_log
+// (db/sqlite.js → getWelcomeLog). Persistant entre restarts du bot.
 //
-// Spec : docs/superpowers/specs/2026-05-14-welcome-log-dashboard-design.md
+// Spec : docs/superpowers/specs/2026-05-14-welcome-log-persistence-design.md
 // ─────────────────────────────────────────────────────────────────────
 
 const { COMMON_CSS, sidebarHTML } = require('./common');
@@ -54,8 +54,9 @@ function renderWelcomeLogPage(entries, tpl) {
   const tplText = effective.template;
   const previewText = applyTemplatePreview(tplText);
 
-  // Most recent first
-  const reversed = entries.slice().reverse();
+  // Entries come from getWelcomeLog() already ordered newest-first (id DESC).
+  // No reverse needed — just iterate directly.
+  const reversed = entries;
   const rows = !reversed.length
     ? '<tr><td colspan="4" class="empty">Aucun événement welcome depuis le démarrage du bot.</td></tr>'
     : reversed.map(e => (
@@ -147,8 +148,8 @@ ${sidebarHTML('/welcome-log')}
     </div>
   </div>
   <div class="note">
-    <strong>Rétention :</strong> 100 derniers événements en mémoire — reset au restart du bot.
-    Pour l'historique long terme, filtre Railway logs sur <code>[welcome]</code>.
+    <strong>Rétention :</strong> tous les événements persistés en DB (table <code>welcome_log</code>).
+    Pour l'historique long terme, filtre Railway logs sur <code>[welcome]</code> ou consulte le DB Viewer.
     Types : <code>sent</code> = welcome posté, <code>error-channel</code> / <code>error-send</code> = échec Discord API, <code>config-missing</code> = vars d'env manquantes au boot.
   </div>
   <div class="card" style="padding: 0;">

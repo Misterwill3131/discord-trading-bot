@@ -12,7 +12,7 @@
 // Spec : docs/superpowers/specs/2026-05-13-tob-welcome-message-design.md
 // ─────────────────────────────────────────────────────────────────────
 
-const { appendWelcomeLog } = require('../state/welcome-log');
+const { insertWelcomeLog } = require('../db/sqlite');
 const {
   DEFAULT_WELCOME_TEMPLATE,
   applyTemplate,
@@ -50,7 +50,7 @@ function registerWelcomeListener(client, {
       !startHereChannelId && 'TOB_START_HERE_CHANNEL_ID',
     ].filter(Boolean).join(', ');
     console.warn('[welcome] missing config — disabled (need ' + missing + ')');
-    appendWelcomeLog({ type: 'config-missing', userId: null, username: null, detail: missing });
+    insertWelcomeLog({ type: 'config-missing', userId: null, username: null, detail: missing });
     return;
   }
 
@@ -63,17 +63,17 @@ function registerWelcomeListener(client, {
       if (!ch || !ch.isTextBased || !ch.isTextBased()) {
         const detail = 'channel ' + welcomeChannelId + ' not text-based or not found';
         console.error('[welcome] ' + detail);
-        appendWelcomeLog({ type: 'error-channel', userId, username, detail });
+        insertWelcomeLog({ type: 'error-channel', userId, username, detail });
         return;
       }
       const { template } = getEffectiveTemplate();
       const msg = applyTemplate(template, { userId, startHereId: startHereChannelId });
       await ch.send(msg);
       console.log('[welcome] sent to ' + userId);
-      appendWelcomeLog({ type: 'sent', userId, username, detail: null });
+      insertWelcomeLog({ type: 'sent', userId, username, detail: null });
     } catch (err) {
       console.error('[welcome] send failed:', err.message);
-      appendWelcomeLog({ type: 'error-send', userId, username, detail: err.message });
+      insertWelcomeLog({ type: 'error-send', userId, username, detail: err.message });
     }
   });
 

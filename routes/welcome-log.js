@@ -8,7 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 const { renderWelcomeLogPage } = require('../pages/welcome-log');
-const { getWelcomeLog } = require('../state/welcome-log');
+const { getWelcomeLog } = require('../db/sqlite');
 const {
   DEFAULT_WELCOME_TEMPLATE,
   getEffectiveTemplate,

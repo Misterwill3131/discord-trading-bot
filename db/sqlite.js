@@ -122,6 +122,21 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_news_items_ts ON news_items(ts);
 
+  -- Welcome events log : sent + error-channel + error-send + config-missing.
+  -- Persiste les événements du welcome listener pour qu'ils survivent
+  -- aux restarts. Pas de cap — la dashboard page /welcome-log render tout
+  -- (à 1-2 events/jour, ~700 lignes/an, négligeable). Source : spec
+  -- 2026-05-14-welcome-log-persistence-design.md.
+  CREATE TABLE IF NOT EXISTS welcome_log (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts       TEXT NOT NULL,
+    type     TEXT NOT NULL,
+    user_id  TEXT,
+    username TEXT,
+    detail   TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_welcome_log_ts ON welcome_log(ts);
+
   -- Galerie d'images générées (signal proof + promo). Persiste les
   -- buffers PNG pour que /gallery et /gallery/image/:id fonctionnent
   -- après un restart du bot. Cap à 100 items — buffer type ~20 KB,
@@ -914,6 +929,41 @@ const stmtNewsPurge = db.prepare(
 function purgeNewsOlderThan(days) {
   // SQLite datetime('now', '-7 days') accepte le modifier comme string.
   return stmtNewsPurge.run('-' + (days | 0) + ' days').changes;
+}
+
+// ═════════════════════════════════════════════════════════════════════
+//  Welcome log — events persistés par discord/welcome-listener
+// ═════════════════════════════════════════════════════════════════════
+
+const stmtWelcomeLogInsert = db.prepare(`
+  INSERT INTO welcome_log (ts, type, user_id, username, detail)
+  VALUES (@ts, @type, @user_id, @username, @detail)
+`);
+const stmtWelcomeLogList = db.prepare(`
+  SELECT id, ts, type, user_id AS userId, username, detail
+  FROM welcome_log
+  ORDER BY id DESC
+`);
+
+// Append a single welcome event. Accepts the camelCase shape used by the
+// listener; this layer translates to snake_case columns. ts is auto-filled
+// with the current ISO time if not provided. Nullables (userId, username,
+// detail) are coerced to strings when present, kept as null when absent.
+function insertWelcomeLog({ ts, type, userId, username, detail }) {
+  stmtWelcomeLogInsert.run({
+    ts:       ts || new Date().toISOString(),
+    type,
+    user_id:  userId != null ? String(userId) : null,
+    username: username != null ? String(username) : null,
+    detail:   detail != null ? String(detail) : null,
+  });
+}
+
+// Return ALL entries, most recent first (id DESC). No LIMIT — the
+// dashboard renders the full history. If volume ever grows past what
+// the page can render comfortably, add an optional `limit` param.
+function getWelcomeLog() {
+  return stmtWelcomeLogList.all();
 }
 
 // ═════════════════════════════════════════════════════════════════════
@@ -1869,6 +1919,10 @@ module.exports = {
   getRecentNewsItems,
   trimNewsItems,
   purgeNewsOlderThan,
+
+  // welcome log
+  insertWelcomeLog,
+  getWelcomeLog,
 
   // gallery items
   insertGalleryItem,

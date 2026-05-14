@@ -440,6 +440,22 @@ db.exec(`
     ON tracked_messages(extracted_ticker);
   CREATE INDEX IF NOT EXISTS idx_tracked_messages_created
     ON tracked_messages(created_at);
+
+  CREATE TABLE IF NOT EXISTS analyst_watchlist (
+    ticker                  TEXT PRIMARY KEY,
+    initial_price           REAL NOT NULL,
+    initial_price_source    TEXT NOT NULL,
+    source_message_id       TEXT NOT NULL,
+    source_channel_id       TEXT NOT NULL,
+    mentioned_by_user_id    TEXT NOT NULL,
+    mentioned_by_username   TEXT,
+    first_seen_at           INTEGER NOT NULL,
+    last_milestone_pct      INTEGER,
+    last_alert_at           INTEGER,
+    archived_at             INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_watchlist_active
+    ON analyst_watchlist(archived_at);
 `);
 
 db.exec(`
@@ -1939,6 +1955,78 @@ function getTrackedMessage(messageId) {
   return stmtTrackedMessageGet.get(String(messageId)) || null;
 }
 
+// ── analyst_watchlist (active tickers tracked for milestones) ───────
+const stmtWatchlistInsert = db.prepare(`
+  INSERT OR IGNORE INTO analyst_watchlist
+    (ticker, initial_price, initial_price_source, source_message_id,
+     source_channel_id, mentioned_by_user_id, mentioned_by_username,
+     first_seen_at)
+  VALUES
+    (@ticker, @initialPrice, @initialPriceSource, @sourceMessageId,
+     @sourceChannelId, @mentionedByUserId, @mentionedByUsername,
+     @firstSeenAt)
+`);
+
+const stmtWatchlistGet = db.prepare(`
+  SELECT * FROM analyst_watchlist WHERE ticker = ?
+`);
+
+const stmtWatchlistActive = db.prepare(`
+  SELECT * FROM analyst_watchlist
+  WHERE archived_at IS NULL
+  ORDER BY first_seen_at ASC
+`);
+
+const stmtWatchlistUpdateAfterAlert = db.prepare(`
+  UPDATE analyst_watchlist
+  SET last_milestone_pct = @lastMilestonePct,
+      last_alert_at      = @lastAlertAt
+  WHERE ticker = @ticker
+`);
+
+const stmtWatchlistArchiveExpired = db.prepare(`
+  UPDATE analyst_watchlist
+  SET archived_at = @now
+  WHERE archived_at IS NULL AND first_seen_at < @cutoff
+`);
+
+function insertWatchlistEntry(entry) {
+  stmtWatchlistInsert.run({
+    ticker:              String(entry.ticker).toUpperCase(),
+    initialPrice:        Number(entry.initialPrice),
+    initialPriceSource:  String(entry.initialPriceSource),
+    sourceMessageId:     String(entry.sourceMessageId),
+    sourceChannelId:     String(entry.sourceChannelId),
+    mentionedByUserId:   String(entry.mentionedByUserId),
+    mentionedByUsername: entry.mentionedByUsername ?? null,
+    firstSeenAt:         Number(entry.firstSeenAt),
+  });
+}
+
+function getWatchlistEntry(ticker) {
+  return stmtWatchlistGet.get(String(ticker).toUpperCase()) || null;
+}
+
+function getActiveWatchlist() {
+  return stmtWatchlistActive.all();
+}
+
+function updateWatchlistAfterAlert({ ticker, lastMilestonePct, lastAlertAt }) {
+  stmtWatchlistUpdateAfterAlert.run({
+    ticker:           String(ticker).toUpperCase(),
+    lastMilestonePct: Number(lastMilestonePct),
+    lastAlertAt:      Number(lastAlertAt),
+  });
+}
+
+function archiveExpiredWatchlist(cutoffMs, nowMs = Date.now()) {
+  const result = stmtWatchlistArchiveExpired.run({
+    cutoff: Number(cutoffMs),
+    now:    Number(nowMs),
+  });
+  return result.changes;
+}
+
 module.exports = {
   db,
   DB_PATH,
@@ -2089,4 +2177,11 @@ module.exports = {
   // analyst-watchlist audit
   insertTrackedMessage,
   getTrackedMessage,
+
+  // analyst-watchlist module
+  insertWatchlistEntry,
+  getWatchlistEntry,
+  getActiveWatchlist,
+  updateWatchlistAfterAlert,
+  archiveExpiredWatchlist,
 };

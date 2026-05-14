@@ -108,3 +108,101 @@ test('insertTrackedMessage is idempotent on message_id (INSERT OR IGNORE)', () =
   const row = getTrackedMessage('msg-aw-2');
   assert.strictEqual(row.content, 'first');  // first write wins
 });
+
+// ── analyst_watchlist (active tickers tracked for milestones) ───────
+const {
+  insertWatchlistEntry,
+  getWatchlistEntry,
+  getActiveWatchlist,
+  updateWatchlistAfterAlert,
+  archiveExpiredWatchlist,
+} = require('./sqlite');
+
+test('insertWatchlistEntry creates a new entry', () => {
+  insertWatchlistEntry({
+    ticker: 'AAPL',
+    initialPrice: 200,
+    initialPriceSource: 'message',
+    sourceMessageId: 'msg-1',
+    sourceChannelId: 'chan-1',
+    mentionedByUserId: 'user-1',
+    mentionedByUsername: 'alice',
+    firstSeenAt: 1700000000000,
+  });
+  const row = getWatchlistEntry('AAPL');
+  assert.strictEqual(row.initial_price, 200);
+  assert.strictEqual(row.initial_price_source, 'message');
+  assert.strictEqual(row.mentioned_by_username, 'alice');
+  assert.strictEqual(row.last_milestone_pct, null);
+  assert.strictEqual(row.last_alert_at, null);
+  assert.strictEqual(row.archived_at, null);
+});
+
+test('insertWatchlistEntry on existing ticker is a no-op (first mention wins)', () => {
+  insertWatchlistEntry({
+    ticker: 'TSLA', initialPrice: 100, initialPriceSource: 'market',
+    sourceMessageId: 'msg-a', sourceChannelId: 'c',
+    mentionedByUserId: 'u1', mentionedByUsername: 'alice',
+    firstSeenAt: 1700000000000,
+  });
+  insertWatchlistEntry({
+    ticker: 'TSLA', initialPrice: 999, initialPriceSource: 'market',
+    sourceMessageId: 'msg-b', sourceChannelId: 'c',
+    mentionedByUserId: 'u2', mentionedByUsername: 'bob',
+    firstSeenAt: 1700000999999,
+  });
+  const row = getWatchlistEntry('TSLA');
+  assert.strictEqual(row.initial_price, 100);          // first wins
+  assert.strictEqual(row.mentioned_by_username, 'alice');
+});
+
+test('getActiveWatchlist returns only non-archived entries', () => {
+  insertWatchlistEntry({
+    ticker: 'NVDA', initialPrice: 50, initialPriceSource: 'message',
+    sourceMessageId: 'm1', sourceChannelId: 'c',
+    mentionedByUserId: 'u', mentionedByUsername: 'a',
+    firstSeenAt: 1700000000000,
+  });
+  const active = getActiveWatchlist();
+  const tickers = active.map(r => r.ticker);
+  assert.ok(tickers.includes('NVDA'));
+});
+
+test('updateWatchlistAfterAlert sets last_milestone_pct + last_alert_at', () => {
+  insertWatchlistEntry({
+    ticker: 'MSFT', initialPrice: 300, initialPriceSource: 'market',
+    sourceMessageId: 'm', sourceChannelId: 'c',
+    mentionedByUserId: 'u', mentionedByUsername: 'a',
+    firstSeenAt: 1700000000000,
+  });
+  updateWatchlistAfterAlert({
+    ticker: 'MSFT', lastMilestonePct: 20, lastAlertAt: 1700001000000,
+  });
+  const row = getWatchlistEntry('MSFT');
+  assert.strictEqual(row.last_milestone_pct, 20);
+  assert.strictEqual(row.last_alert_at, 1700001000000);
+});
+
+test('archiveExpiredWatchlist soft-archives entries older than cutoff', () => {
+  insertWatchlistEntry({
+    ticker: 'OLD', initialPrice: 10, initialPriceSource: 'market',
+    sourceMessageId: 'm', sourceChannelId: 'c',
+    mentionedByUserId: 'u', mentionedByUsername: 'a',
+    firstSeenAt: 1000,   // very old
+  });
+  insertWatchlistEntry({
+    ticker: 'NEW', initialPrice: 10, initialPriceSource: 'market',
+    sourceMessageId: 'm2', sourceChannelId: 'c',
+    mentionedByUserId: 'u', mentionedByUsername: 'a',
+    firstSeenAt: 9_999_999_999_999,  // very new
+  });
+  const archivedCount = archiveExpiredWatchlist(5000);  // cutoff: ts < 5000 → archive
+  assert.ok(archivedCount >= 1);
+  const oldRow = getWatchlistEntry('OLD');
+  assert.ok(oldRow.archived_at != null);
+  const newRow = getWatchlistEntry('NEW');
+  assert.strictEqual(newRow.archived_at, null);
+  // Active list excludes archived
+  const active = getActiveWatchlist();
+  assert.ok(!active.find(r => r.ticker === 'OLD'));
+});

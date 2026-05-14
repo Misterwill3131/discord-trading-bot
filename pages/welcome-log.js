@@ -54,8 +54,9 @@ function renderWelcomeLogPage(entries, tpl) {
   const tplText = effective.template;
   const previewText = applyTemplatePreview(tplText);
 
-  // Most recent first
-  const reversed = entries.slice().reverse();
+  // Entries come from getWelcomeLog() already ordered newest-first (id DESC).
+  // No reverse needed — just iterate directly.
+  const reversed = entries;
   const rows = !reversed.length
     ? '<tr><td colspan="4" class="empty">Aucun événement welcome depuis le démarrage du bot.</td></tr>'
     : reversed.map(e => (

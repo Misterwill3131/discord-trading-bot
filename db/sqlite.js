@@ -2064,6 +2064,24 @@ function insertMilestoneAlert(entry) {
   return result.changes > 0;
 }
 
+const stmtMilestoneAlertSetDiscordId = db.prepare(`
+  UPDATE milestone_alerts
+  SET discord_message_id = @discordMessageId
+  WHERE ticker = @ticker AND milestone_pct = @milestonePct
+`);
+
+// Updates the discord_message_id for an already-inserted milestone alert.
+// Called from milestone-checker after a successful Discord reply.
+// Returns true if a row was updated, false otherwise.
+function setMilestoneAlertDiscordId({ ticker, milestonePct, discordMessageId }) {
+  const result = stmtMilestoneAlertSetDiscordId.run({
+    ticker:           String(ticker).toUpperCase(),
+    milestonePct:     Number(milestonePct),
+    discordMessageId: discordMessageId == null ? null : String(discordMessageId),
+  });
+  return result.changes > 0;
+}
+
 module.exports = {
   db,
   DB_PATH,
@@ -2224,4 +2242,5 @@ module.exports = {
 
   // analyst-watchlist module — milestone dedup
   insertMilestoneAlert,
+  setMilestoneAlertDiscordId,
 };

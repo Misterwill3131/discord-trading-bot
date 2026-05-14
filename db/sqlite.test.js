@@ -249,3 +249,35 @@ test('insertMilestoneAlert allows same ticker for different milestone_pct', () =
   });
   assert.strictEqual(fired50, true);
 });
+
+// ── milestone_alerts.discord_message_id update ──────────────────────
+const { setMilestoneAlertDiscordId } = require('./sqlite');
+
+test('setMilestoneAlertDiscordId sets the discord_message_id on an existing row', () => {
+  insertMilestoneAlert({
+    ticker: 'GOOG', milestonePct: 100,
+    initialPrice: 100, currentPrice: 200, gainPct: 100,
+    firedAt: 1700000000000,
+  });
+  const updated = setMilestoneAlertDiscordId({
+    ticker: 'GOOG', milestonePct: 100, discordMessageId: 'discord-reply-42',
+  });
+  assert.strictEqual(updated, true);
+  // Verify via direct query (no getter helper, use raw db)
+  const Database = require('better-sqlite3');
+  const path = require('path');
+  const dbPath = path.join(process.env.DATA_DIR, 'boom.db');
+  const directDb = new Database(dbPath, { readonly: true });
+  const row = directDb.prepare(
+    'SELECT discord_message_id FROM milestone_alerts WHERE ticker = ? AND milestone_pct = ?'
+  ).get('GOOG', 100);
+  directDb.close();
+  assert.strictEqual(row.discord_message_id, 'discord-reply-42');
+});
+
+test('setMilestoneAlertDiscordId returns false when no matching row', () => {
+  const updated = setMilestoneAlertDiscordId({
+    ticker: 'NOPE', milestonePct: 9999, discordMessageId: 'whatever',
+  });
+  assert.strictEqual(updated, false);
+});

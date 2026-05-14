@@ -98,6 +98,7 @@ function makeFakeDb({ active = [], archiveReturns = 0 } = {}) {
     insertMilestoneAlert: [],
     updateWatchlistAfterAlert: [],
     archiveExpiredWatchlist: [],
+    setMilestoneAlertDiscordId: [],
   };
   const fired = new Set();  // tracks (ticker, milestone) tuples
   return {
@@ -115,6 +116,10 @@ function makeFakeDb({ active = [], archiveReturns = 0 } = {}) {
     },
     updateWatchlistAfterAlert(entry) {
       calls.updateWatchlistAfterAlert.push(entry);
+    },
+    setMilestoneAlertDiscordId(entry) {
+      calls.setMilestoneAlertDiscordId = calls.setMilestoneAlertDiscordId || [];
+      calls.setMilestoneAlertDiscordId.push(entry);
     },
     _calls: calls,
   };
@@ -331,4 +336,39 @@ test('readConfig falls back to defaults when WATCHLIST_TTL_DAYS is non-numeric',
     if (prev === undefined) delete process.env.WATCHLIST_TTL_DAYS;
     else process.env.WATCHLIST_TTL_DAYS = prev;
   }
+});
+
+test('tick backfills discord_message_id after successful reply', async () => {
+  const fakeDb = makeFakeDb({ active: [SAMPLE_ENTRY] });
+  const fakeMarket = { getQuotesBulk: async () => ({ AAPL: { price: 250, volume: 1 } }) };
+  const fakeClient = makeFakeDiscord({ replyId: 'rep-aapl-backfill' });
+  await tick(fakeClient, 1700001000000, {
+    db: fakeDb,
+    marketClient: fakeMarket,
+    isRTH: () => true,
+    milestones: [20, 50],
+    cooldownMs: 3600_000,
+    ttlMs: 30 * 86400_000,
+  });
+  assert.strictEqual(fakeDb._calls.setMilestoneAlertDiscordId.length, 1);
+  assert.strictEqual(fakeDb._calls.setMilestoneAlertDiscordId[0].ticker, 'AAPL');
+  assert.strictEqual(fakeDb._calls.setMilestoneAlertDiscordId[0].milestonePct, 20);
+  assert.strictEqual(fakeDb._calls.setMilestoneAlertDiscordId[0].discordMessageId, 'rep-aapl-backfill');
+});
+
+test('tick does not backfill discord_message_id when reply fails', async () => {
+  const fakeDb = makeFakeDb({ active: [SAMPLE_ENTRY] });
+  const fakeMarket = { getQuotesBulk: async () => ({ AAPL: { price: 250, volume: 1 } }) };
+  const fakeClient = makeFakeDiscord({ failFetch: true });
+  await tick(fakeClient, 1700001000000, {
+    db: fakeDb,
+    marketClient: fakeMarket,
+    isRTH: () => true,
+    milestones: [20, 50],
+    cooldownMs: 3600_000,
+    ttlMs: 30 * 86400_000,
+  });
+  // Insert happened, but reply failed → no backfill call
+  assert.strictEqual(fakeDb._calls.insertMilestoneAlert.length, 1);
+  assert.strictEqual(fakeDb._calls.setMilestoneAlertDiscordId.length, 0);
 });

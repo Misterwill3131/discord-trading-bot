@@ -159,6 +159,21 @@ async function tick(client, nowMs, deps = {}) {
         content: text,
         allowedMentions: { parse: [] },
       });
+      // Backfill the discord_message_id on the milestone_alerts row we
+      // just inserted. Non-blocking : if this update fails, the alert
+      // was still posted — we just lose the audit link.
+      if (reply && reply.id && typeof db.setMilestoneAlertDiscordId === 'function') {
+        try {
+          db.setMilestoneAlertDiscordId({
+            ticker: entry.ticker,
+            milestonePct: target,
+            discordMessageId: String(reply.id),
+          });
+        } catch (err) {
+          console.error('[milestone-checker] failed to backfill discord_message_id: '
+            + err.message);
+        }
+      }
       db.updateWatchlistAfterAlert({
         ticker: entry.ticker,
         lastMilestonePct: target,

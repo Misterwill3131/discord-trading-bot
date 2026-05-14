@@ -28,6 +28,29 @@ function nextMilestone(gainPct, lastFiredPct, milestones) {
   return null;
 }
 
+// Format anglais (cf memory feedback : bot replies en EN).
+// Mention `@username` en plain text — le caller met allowedMentions:[]
+// pour empêcher Discord de ping l'utilisateur à chaque palier.
+//
+// toFixed2 uses Math.round(n*100)/100 before .toFixed(2) to get
+// consistent half-up rounding (IEEE 754 .toFixed rounds half-to-even,
+// which yields '18.55' for 18.555 in Node.js).
+function toFixed2(n) {
+  return (Math.round(Number(n) * 100) / 100).toFixed(2);
+}
+
+function buildAlertMessage({
+  ticker, milestonePct, initialPrice, currentPrice, gainPct, mentionedByUsername,
+}) {
+  const name = mentionedByUsername || 'analyst';
+  return '🚀 **$' + ticker + '** hit **+' + milestonePct + '%** milestone — '
+    + 'now $' + toFixed2(currentPrice)
+    + ' (entry $' + toFixed2(initialPrice)
+    + ', gain +' + toFixed2(gainPct) + '%) — '
+    + 'first flagged by @' + name;
+}
+
 module.exports = {
   nextMilestone,
+  buildAlertMessage,
 };

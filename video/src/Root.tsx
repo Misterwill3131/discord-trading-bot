@@ -36,6 +36,7 @@ const chartTemplateDefaults = {
   sfxEnabled: true,
   lifestyleSeedOverride: undefined,
   narrationDataUrl: null,
+  narrationText: null,
 };
 
 const boomRecapDefaults = {

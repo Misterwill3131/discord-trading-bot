@@ -12,6 +12,7 @@ const { fontFamily } = loadInter('normal', {
   weights: ['400', '600', '700', '900'],
 });
 import { Stinger } from '../components/Stinger';
+import { NarrationSubtitles } from '../components/NarrationSubtitles';
 import { LifestyleHook } from '../components/LifestyleHook';
 import { ResultTease } from '../components/ResultTease';
 import { TimePassAct } from '../components/TimePassAct';
@@ -70,6 +71,11 @@ export const chartTemplateSchema = z.object({
     .nullable()
     .optional()
     .describe('Data URL MP3 voice-over (data:audio/mpeg;base64,...). Vide = pas de voix off.'),
+  narrationText: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('Texte narration pour subtitles burned-in (autoplay muet). Vide = pas de subs.'),
 });
 
 // Inferred TypeScript type — cohérent avec le schema, plus de duplication.
@@ -96,7 +102,7 @@ export const ChartTemplate = ({
   exitAuthor, exitMessage: _exitMessage, exitTimestamp, pnl,
   proofImageDataUrl, chartImageDataUrl, teaseSubtext, ctaUrl,
   accentColor, musicVolume, sfxEnabled, lifestyleSeedOverride,
-  narrationDataUrl,
+  narrationDataUrl, narrationText,
 }: ChartTemplateProps) => {
   const lifestyleSeed = lifestyleSeedOverride || `${ticker}-${entryTimestamp}`;
   // Caption pour la phase ProofImage : ticker + auteur(s) + pnl.
@@ -117,6 +123,12 @@ export const ChartTemplate = ({
       <Audio src={staticFile('audio/proof-track.mp3')} volume={duckedMusicVolume} />
       {narrationDataUrl && (
         <Audio src={narrationDataUrl} volume={1} />
+      )}
+      {narrationText && (
+        <NarrationSubtitles
+          text={narrationText}
+          totalFrames={TRANSITION_SERIES_END + SHARED_OUTRO_FRAMES}
+        />
       )}
 
       {sfxEnabled && (

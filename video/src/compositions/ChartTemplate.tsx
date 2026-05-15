@@ -64,6 +64,12 @@ export const chartTemplateSchema = z.object({
     .string()
     .optional()
     .describe('Override du seed lifestyle hook. Vide = auto depuis ticker+entryTimestamp.'),
+  // ─── TTS narration (optionnel) ───
+  narrationDataUrl: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('Data URL MP3 voice-over (data:audio/mpeg;base64,...). Vide = pas de voix off.'),
 });
 
 // Inferred TypeScript type — cohérent avec le schema, plus de duplication.
@@ -90,6 +96,7 @@ export const ChartTemplate = ({
   exitAuthor, exitMessage: _exitMessage, exitTimestamp, pnl,
   proofImageDataUrl, chartImageDataUrl, teaseSubtext, ctaUrl,
   accentColor, musicVolume, sfxEnabled, lifestyleSeedOverride,
+  narrationDataUrl,
 }: ChartTemplateProps) => {
   const lifestyleSeed = lifestyleSeedOverride || `${ticker}-${entryTimestamp}`;
   // Caption pour la phase ProofImage : ticker + auteur(s) + pnl.
@@ -100,10 +107,17 @@ export const ChartTemplate = ({
     ? `$${ticker} · ${entryAuthor} · ${pnl}`
     : `$${ticker} · ${entryAuthor} → ${exitAuthor} · ${pnl}`;
 
+  // Music volume ducké à ~0.3× quand TTS narration active, pour ne pas
+  // masquer la voix off. Sans narration, volume normal du template.
+  const duckedMusicVolume = narrationDataUrl ? musicVolume * 0.3 : musicVolume;
+
   return (
     <AbsoluteFill style={{ backgroundColor: 'black', fontFamily }}>
       {/* === AUDIO === */}
-      <Audio src={staticFile('audio/proof-track.mp3')} volume={musicVolume} />
+      <Audio src={staticFile('audio/proof-track.mp3')} volume={duckedMusicVolume} />
+      {narrationDataUrl && (
+        <Audio src={narrationDataUrl} volume={1} />
+      )}
 
       {sfxEnabled && (
         <>

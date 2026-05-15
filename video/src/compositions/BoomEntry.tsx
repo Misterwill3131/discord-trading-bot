@@ -70,6 +70,12 @@ export const boomEntrySchema = z.object({
     .enum(['fade', 'slide', 'wipe', 'flip'])
     .default('fade')
     .describe('Type de transition entre les phases (fade, slide, wipe, flip)'),
+  // ─── TTS narration (optionnel) ───
+  narrationDataUrl: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('Data URL MP3 voice-over. Vide = pas de voix off.'),
 });
 
 export type BoomEntryProps = z.infer<typeof boomEntrySchema>;
@@ -235,15 +241,21 @@ export const BoomEntry = ({
   ctaTitle, ctaUrl, ctaSubtitle,
   accentColor, musicVolume, sfxEnabled, lifestyleSeedOverride,
   stingerFontSize, tickerFontSize, ctaTitleFontSize, transitionType,
+  narrationDataUrl,
 }: BoomEntryProps) => {
   const fallbackSrc = staticFile('signal-alert/card-default.png');
   const cardSrc = entryImageDataUrl || fallbackSrc;
   const lifestyleSeed = lifestyleSeedOverride || `entry-${ticker}-${timestamp}`;
   const transitionPresentation = pickTransition(transitionType);
+  // Duck music quand TTS narration active.
+  const duckedMusicVolume = narrationDataUrl ? musicVolume * 0.3 : musicVolume;
   return (
     <AbsoluteFill style={{ backgroundColor: 'black', fontFamily }}>
       {/* === AUDIO === */}
-      <Audio src={staticFile('audio/proof-track.mp3')} volume={musicVolume} />
+      <Audio src={staticFile('audio/proof-track.mp3')} volume={duckedMusicVolume} />
+      {narrationDataUrl && (
+        <Audio src={narrationDataUrl} volume={1} />
+      )}
       {sfxEnabled && (
         <>
           <Sequence from={0} durationInFrames={45}>

@@ -39,6 +39,7 @@ export const boomRecapSchema = z.object({
   sfxEnabled:    z.boolean().default(true),
   showTop3Phase: z.boolean().default(true),
   lifestyleSeed: z.number().default(0),
+  narrationDataUrl: z.string().nullable().optional(),
 });
 
 export type BoomRecapProps = z.infer<typeof boomRecapSchema>;
@@ -154,16 +155,20 @@ export const BoomRecap: React.FC<BoomRecapProps> = (props) => {
         <SharedOutro seed={`recap-${props.date}`} />
       </Sequence>
 
-      {/* Background music (Task 12 finalise le mix) */}
+      {/* Background music. Ducké à 0.3× quand TTS narration active. */}
       <Audio
         src={staticFile('audio/proof-track.mp3')}
         volume={(f) => {
           const totalFrames = computeTotalFrames(props);
           const fadeStart = totalFrames - 60;
-          if (f < fadeStart) return musicVolume;
-          return interpolate(f, [fadeStart, totalFrames], [musicVolume, 0], { extrapolateRight: 'clamp' });
+          const baseVol = props.narrationDataUrl ? musicVolume * 0.3 : musicVolume;
+          if (f < fadeStart) return baseVol;
+          return interpolate(f, [fadeStart, totalFrames], [baseVol, 0], { extrapolateRight: 'clamp' });
         }}
       />
+      {props.narrationDataUrl && (
+        <Audio src={props.narrationDataUrl} volume={1} />
+      )}
     </AbsoluteFill>
   );
 };

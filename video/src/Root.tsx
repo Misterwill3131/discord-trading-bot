@@ -35,6 +35,7 @@ const chartTemplateDefaults = {
   musicVolume: 0.55,
   sfxEnabled: true,
   lifestyleSeedOverride: undefined,
+  narrationDataUrl: null,
 };
 
 const boomRecapDefaults = {
@@ -60,6 +61,7 @@ const boomRecapDefaults = {
   sfxEnabled:    true,
   showTop3Phase: true,
   lifestyleSeed: 0,
+  narrationDataUrl: null,
 };
 
 export const Root = () => {
@@ -121,6 +123,7 @@ export const Root = () => {
           tickerFontSize: 280,
           ctaTitleFontSize: 200,
           transitionType: 'fade' as const,
+          narrationDataUrl: null,
         }}
       />
       <Composition

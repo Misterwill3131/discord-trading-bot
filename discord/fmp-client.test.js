@@ -271,3 +271,121 @@ test('getQuotesBulk throws on HTTP error', async () => {
     /fmp HTTP 500/,
   );
 });
+
+// ── getRatiosTtm ──────────────────────────────────────────────────────────────
+
+test('getRatiosTtm returns parsed FMP TTM ratios object', async () => {
+  const fetchImpl = mockFetch([
+    { peRatioTTM: 32.4, netIncomePerShareTTM: 6.13, marketCapTTM: 3e12 },
+  ]);
+  const client = createFmpClient({ apiKey: 'KEY', fetchImpl });
+  const r = await client.getRatiosTtm('AAPL');
+  assert.strictEqual(r.peRatioTTM, 32.4);
+  assert.strictEqual(r.netIncomePerShareTTM, 6.13);
+  assert.strictEqual(r.marketCapTTM, 3e12);
+});
+
+test('getRatiosTtm returns null when FMP returns empty array', async () => {
+  const fetchImpl = mockFetch([]);
+  const client = createFmpClient({ apiKey: 'KEY', fetchImpl });
+  const r = await client.getRatiosTtm('NOPE');
+  assert.strictEqual(r, null);
+});
+
+// ── getPriceTargetSummary ─────────────────────────────────────────────────────
+
+test('getPriceTargetSummary returns parsed FMP price target object', async () => {
+  let capturedUrl = null;
+  const fetchImpl = async (url) => {
+    capturedUrl = url;
+    return {
+      ok: true, status: 200,
+      json: async () => ({
+        symbol: 'AAPL',
+        lastMonth: 12, lastMonthAvgPriceTarget: 215.00,
+        lastQuarter: 32, lastQuarterAvgPriceTarget: 210.50,
+      }),
+      text: async () => '',
+    };
+  };
+  const client = createFmpClient({ apiKey: 'KEY', fetchImpl });
+  const t = await client.getPriceTargetSummary('AAPL');
+  assert.ok(capturedUrl.includes('/price-target-summary'));
+  assert.ok(capturedUrl.includes('symbol=AAPL'));
+  assert.strictEqual(t.lastMonthAvgPriceTarget, 215.00);
+});
+
+// ── getEarningsSurprises ──────────────────────────────────────────────────────
+
+test('getEarningsSurprises returns array sorted most-recent first', async () => {
+  const fetchImpl = mockFetch([
+    { date: '2026-04-30', eps: 1.53, estimatedEps: 1.50 },
+    { date: '2026-01-30', eps: 2.10, estimatedEps: 2.05 },
+  ]);
+  const client = createFmpClient({ apiKey: 'KEY', fetchImpl });
+  const e = await client.getEarningsSurprises('AAPL');
+  assert.strictEqual(e.length, 2);
+  assert.strictEqual(e[0].date, '2026-04-30');
+  assert.strictEqual(e[0].eps, 1.53);
+});
+
+// ── getInsiderTrades ──────────────────────────────────────────────────────────
+
+test('getInsiderTrades sends limit query param and returns array', async () => {
+  let capturedUrl = null;
+  const fetchImpl = async (url) => {
+    capturedUrl = url;
+    return {
+      ok: true, status: 200,
+      json: async () => [
+        { filingDate: '2026-05-12', transactionType: 'S-Sale', reportingName: 'COOK TIMOTHY', securitiesTransacted: 10000, price: 198.00 },
+      ],
+      text: async () => '',
+    };
+  };
+  const client = createFmpClient({ apiKey: 'KEY', fetchImpl });
+  const r = await client.getInsiderTrades('AAPL', 5);
+  assert.ok(capturedUrl.includes('/insider-trading'));
+  assert.ok(capturedUrl.includes('symbol=AAPL'));
+  assert.ok(capturedUrl.includes('limit=5'));
+  assert.strictEqual(r.length, 1);
+  assert.strictEqual(r[0].reportingName, 'COOK TIMOTHY');
+});
+
+// ── getSenateTrades ───────────────────────────────────────────────────────────
+
+test('getSenateTrades returns trimmed array of up to `limit` items', async () => {
+  const fetchImpl = mockFetch([
+    { transactionDate: '2026-05-10', senator: 'Pelosi', type: 'Purchase', amount: '$15,001 - $50,000' },
+    { transactionDate: '2026-04-28', senator: 'Tuberville', type: 'Purchase', amount: '$50,001 - $100,000' },
+    { transactionDate: '2026-04-15', senator: 'Hagerty', type: 'Sale', amount: '$15,001 - $50,000' },
+    { transactionDate: '2026-04-01', senator: 'Cruz', type: 'Sale', amount: '$1,001 - $15,000' },
+    { transactionDate: '2026-03-20', senator: 'Tillis', type: 'Purchase', amount: '$15,001 - $50,000' },
+    { transactionDate: '2026-03-01', senator: 'Other', type: 'Sale', amount: '$1,001 - $15,000' },
+  ]);
+  const client = createFmpClient({ apiKey: 'KEY', fetchImpl });
+  const r = await client.getSenateTrades('AAPL', 5);
+  assert.strictEqual(r.length, 5);
+  assert.strictEqual(r[0].senator, 'Pelosi');
+});
+
+// ── getHouseTrades ────────────────────────────────────────────────────────────
+
+test('getHouseTrades sends correct path and returns trimmed array', async () => {
+  let capturedUrl = null;
+  const fetchImpl = async (url) => {
+    capturedUrl = url;
+    return {
+      ok: true, status: 200,
+      json: async () => [
+        { disclosureDate: '2026-05-05', representative: 'McCaul', type: 'Sale', amount: '$1,001 - $15,000' },
+      ],
+      text: async () => '',
+    };
+  };
+  const client = createFmpClient({ apiKey: 'KEY', fetchImpl });
+  const r = await client.getHouseTrades('AAPL', 5);
+  assert.ok(capturedUrl.includes('/senate-disclosure'));
+  assert.ok(capturedUrl.includes('symbol=AAPL'));
+  assert.strictEqual(r.length, 1);
+});

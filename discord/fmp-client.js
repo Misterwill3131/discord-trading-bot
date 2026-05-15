@@ -75,8 +75,18 @@ function createFmpClient({
   if (!apiKey) throw new Error('FMP apiKey required');
   if (!fetchImpl) throw new Error('fetch not available — provide fetchImpl');
 
+  const FUNDAMENTALS_TTL_MS = 5 * 60_000;   // 5 min
+  const POLITICAL_TTL_MS    = 15 * 60_000;  // 15 min
+
   const quoteCache = new Map();    // ticker → { ts, data } | { inflight }
   const barsCache = new Map();     // ticker → { ts, data } | { inflight }
+
+  const ratiosCache       = new Map();    // TTL 5min
+  const priceTargetCache  = new Map();    // TTL 5min
+  const earningsCache     = new Map();    // TTL 5min
+  const insiderCache      = new Map();    // TTL 15min
+  const senateCache       = new Map();    // TTL 15min
+  const houseCache        = new Map();    // TTL 15min
 
   async function httpJson(url) {
     const res = await withTimeout(fetchImpl(url), timeoutMs);
@@ -202,7 +212,182 @@ function createFmpClient({
     return out;
   }
 
-  return { getQuote, getDailyBars, getQuotesBulk };
+  // ── Fundamentals : Ratios TTM ───────────────────────────────────
+  async function getRatiosTtm(ticker) {
+    const key = String(ticker).toUpperCase();
+    const hit = ratiosCache.get(key);
+    if (hit) {
+      if (hit.data !== undefined && (now() - hit.ts) < FUNDAMENTALS_TTL_MS) return hit.data;
+      if (hit.inflight) return hit.inflight;
+    }
+    const url = base + '/ratios-ttm/' + encodeURIComponent(key)
+      + '?apikey=' + encodeURIComponent(apiKey);
+    const inflight = (async () => {
+      const json = await httpJson(url);
+      return Array.isArray(json) && json.length > 0 ? json[0] : null;
+    })();
+    ratiosCache.set(key, { inflight });
+    try {
+      const data = await inflight;
+      ratiosCache.set(key, { ts: now(), data });
+      return data;
+    } catch (err) {
+      ratiosCache.delete(key);
+      throw err;
+    }
+  }
+
+  // ── Fundamentals : Price Target Summary (v4) ─────────────────────
+  async function getPriceTargetSummary(ticker) {
+    const key = String(ticker).toUpperCase();
+    const hit = priceTargetCache.get(key);
+    if (hit) {
+      if (hit.data !== undefined && (now() - hit.ts) < FUNDAMENTALS_TTL_MS) return hit.data;
+      if (hit.inflight) return hit.inflight;
+    }
+    const v4Base = base.replace('/api/v3', '/api/v4');
+    const url = v4Base + '/price-target-summary?symbol=' + encodeURIComponent(key)
+      + '&apikey=' + encodeURIComponent(apiKey);
+    const inflight = (async () => {
+      const json = await httpJson(url);
+      return json && typeof json === 'object' && !Array.isArray(json) ? json : null;
+    })();
+    priceTargetCache.set(key, { inflight });
+    try {
+      const data = await inflight;
+      priceTargetCache.set(key, { ts: now(), data });
+      return data;
+    } catch (err) {
+      priceTargetCache.delete(key);
+      throw err;
+    }
+  }
+
+  // ── Fundamentals : Earnings Surprises ───────────────────────────
+  async function getEarningsSurprises(ticker) {
+    const key = String(ticker).toUpperCase();
+    const hit = earningsCache.get(key);
+    if (hit) {
+      if (hit.data !== undefined && (now() - hit.ts) < FUNDAMENTALS_TTL_MS) return hit.data;
+      if (hit.inflight) return hit.inflight;
+    }
+    const url = base + '/earnings-surprises/' + encodeURIComponent(key)
+      + '?apikey=' + encodeURIComponent(apiKey);
+    const inflight = (async () => {
+      const json = await httpJson(url);
+      return Array.isArray(json) ? json : null;
+    })();
+    earningsCache.set(key, { inflight });
+    try {
+      const data = await inflight;
+      earningsCache.set(key, { ts: now(), data });
+      return data;
+    } catch (err) {
+      earningsCache.delete(key);
+      throw err;
+    }
+  }
+
+  // ── Insider Trades (v4) ─────────────────────────────────────────
+  async function getInsiderTrades(ticker, limit = 5) {
+    const key = String(ticker).toUpperCase() + '|' + Number(limit);
+    const hit = insiderCache.get(key);
+    if (hit) {
+      if (hit.data !== undefined && (now() - hit.ts) < POLITICAL_TTL_MS) return hit.data;
+      if (hit.inflight) return hit.inflight;
+    }
+    const v4Base = base.replace('/api/v3', '/api/v4');
+    const url = v4Base + '/insider-trading?symbol=' + encodeURIComponent(String(ticker).toUpperCase())
+      + '&limit=' + encodeURIComponent(Number(limit))
+      + '&apikey=' + encodeURIComponent(apiKey);
+    const inflight = (async () => {
+      const json = await httpJson(url);
+      return Array.isArray(json) ? json : null;
+    })();
+    insiderCache.set(key, { inflight });
+    try {
+      const data = await inflight;
+      insiderCache.set(key, { ts: now(), data });
+      return data;
+    } catch (err) {
+      insiderCache.delete(key);
+      throw err;
+    }
+  }
+
+  // ── Senate Trades (v4) ──────────────────────────────────────────
+  async function getSenateTrades(ticker, limit = 5) {
+    const key = String(ticker).toUpperCase();
+    const hit = senateCache.get(key);
+    if (hit) {
+      if (hit.data !== undefined && (now() - hit.ts) < POLITICAL_TTL_MS) {
+        return hit.data ? hit.data.slice(0, Number(limit)) : null;
+      }
+      if (hit.inflight) {
+        const data = await hit.inflight;
+        return data ? data.slice(0, Number(limit)) : null;
+      }
+    }
+    const v4Base = base.replace('/api/v3', '/api/v4');
+    const url = v4Base + '/senate-trading?symbol=' + encodeURIComponent(key)
+      + '&apikey=' + encodeURIComponent(apiKey);
+    const inflight = (async () => {
+      const json = await httpJson(url);
+      return Array.isArray(json) ? json : null;
+    })();
+    senateCache.set(key, { inflight });
+    try {
+      const data = await inflight;
+      senateCache.set(key, { ts: now(), data });
+      return data ? data.slice(0, Number(limit)) : null;
+    } catch (err) {
+      senateCache.delete(key);
+      throw err;
+    }
+  }
+
+  // ── House Trades (v4) — endpoint is named /senate-disclosure  ──
+  async function getHouseTrades(ticker, limit = 5) {
+    const key = String(ticker).toUpperCase();
+    const hit = houseCache.get(key);
+    if (hit) {
+      if (hit.data !== undefined && (now() - hit.ts) < POLITICAL_TTL_MS) {
+        return hit.data ? hit.data.slice(0, Number(limit)) : null;
+      }
+      if (hit.inflight) {
+        const data = await hit.inflight;
+        return data ? data.slice(0, Number(limit)) : null;
+      }
+    }
+    const v4Base = base.replace('/api/v3', '/api/v4');
+    const url = v4Base + '/senate-disclosure?symbol=' + encodeURIComponent(key)
+      + '&apikey=' + encodeURIComponent(apiKey);
+    const inflight = (async () => {
+      const json = await httpJson(url);
+      return Array.isArray(json) ? json : null;
+    })();
+    houseCache.set(key, { inflight });
+    try {
+      const data = await inflight;
+      houseCache.set(key, { ts: now(), data });
+      return data ? data.slice(0, Number(limit)) : null;
+    } catch (err) {
+      houseCache.delete(key);
+      throw err;
+    }
+  }
+
+  return {
+    getQuote,
+    getDailyBars,
+    getQuotesBulk,
+    getRatiosTtm,
+    getPriceTargetSummary,
+    getEarningsSurprises,
+    getInsiderTrades,
+    getSenateTrades,
+    getHouseTrades,
+  };
 }
 
 module.exports = {

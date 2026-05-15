@@ -206,7 +206,7 @@ test('getQuotesBulk fetches a single URL with comma-joined tickers', async () =>
   };
   const client = createFmpClient({ apiKey: 'TEST', fetchImpl });
   const quotes = await client.getQuotesBulk(['AAPL', 'TSLA']);
-  assert.ok(capturedUrl.includes('/quote/AAPL,TSLA'));
+  assert.ok(capturedUrl.includes('/batch-quote?symbols=AAPL,TSLA'));
   assert.strictEqual(quotes.AAPL.price, 200.50);
   assert.strictEqual(quotes.TSLA.price, 250.75);
 });

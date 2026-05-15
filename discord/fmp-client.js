@@ -169,8 +169,8 @@ function createFmpClient({
     }
   }
 
-  // Bulk quote: FMP supports up to ~250 tickers per call via comma-joined
-  // path (`/quote/AAPL,TSLA,NVDA`). Returns { TICKER: { price, volume }, ... }
+  // Bulk quote: FMP supports up to ~250 tickers per call via query-param
+  // (`/batch-quote?symbols=AAPL,TSLA,NVDA`). Returns { TICKER: { price, volume }, ... }
   // keyed by upper-cased symbol. Tickers missing from the response simply
   // don't appear in the output map (no exception). Non-finite prices are
   // skipped — same sanity rule as getQuote.
@@ -181,8 +181,8 @@ function createFmpClient({
         .filter(Boolean)
     ));
     if (list.length === 0) return {};
-    const url = base + '/quote/' + list.map(encodeURIComponent).join(',')
-      + '?apikey=' + encodeURIComponent(apiKey);
+    const url = base + '/batch-quote?symbols=' + list.map(encodeURIComponent).join(',')
+      + '&apikey=' + encodeURIComponent(apiKey);
     const json = await httpJson(url);
     const rows = Array.isArray(json) ? json : [];
     const out = {};

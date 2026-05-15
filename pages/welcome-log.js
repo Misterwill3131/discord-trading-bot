@@ -91,10 +91,6 @@ function renderWelcomeLogPage(entries, tpl) {
   table.welcome-table td { padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: top; }
   table.welcome-table td.ts { font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; color: #e3e5e8; white-space: nowrap; }
   td.type { width: 130px; }
-  .chip { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; }
-  .chip-ok   { background: rgba(59,165,93,0.15);  color: #6ee7b7; }
-  .chip-err  { background: rgba(237,66,69,0.15);  color: #f87171; }
-  .chip-warn { background: rgba(250,166,26,0.15); color: #fbbf24; }
   td.user .uid { color: #80848e; font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; font-size: 11px; }
   td.detail { color: #c5c8ce; font-family: 'JetBrains Mono', ui-monospace, Consolas, monospace; font-size: 12px; word-break: break-word; }
   td.empty, .empty { color: #4f545c; }

@@ -54,7 +54,7 @@ test('createFmpClient throws if apiKey missing', () => {
 
 test('getQuote returns { price, volume } from FMP quote endpoint', async () => {
   const fetcher = makeFakeFetch({
-    'https://financialmodelingprep.com/api/v3/quote/AAPL?apikey=KEY':
+    'https://financialmodelingprep.com/stable/quote?symbol=AAPL&apikey=KEY':
       jsonOk([{ symbol: 'AAPL', price: 185.42, volume: 52_000_000, dayHigh: 186 }]),
   });
   const client = createFmpClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
@@ -64,7 +64,7 @@ test('getQuote returns { price, volume } from FMP quote endpoint', async () => {
 
 test('getQuote returns null for empty FMP response (unknown ticker)', async () => {
   const fetcher = makeFakeFetch({
-    'https://financialmodelingprep.com/api/v3/quote/XXXX?apikey=KEY': jsonOk([]),
+    'https://financialmodelingprep.com/stable/quote?symbol=XXXX&apikey=KEY': jsonOk([]),
   });
   const client = createFmpClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
   assert.strictEqual(await client.getQuote('XXXX'), null);
@@ -72,7 +72,7 @@ test('getQuote returns null for empty FMP response (unknown ticker)', async () =
 
 test('getQuote caches within TTL', async () => {
   const fetcher = makeFakeFetch({
-    'https://financialmodelingprep.com/api/v3/quote/AAPL?apikey=KEY':
+    'https://financialmodelingprep.com/stable/quote?symbol=AAPL&apikey=KEY':
       jsonOk([{ symbol: 'AAPL', price: 100, volume: 10 }]),
   });
   let nowMs = 1_000_000;
@@ -90,7 +90,7 @@ test('getQuote caches within TTL', async () => {
 test('getQuote dedupes concurrent in-flight calls', async () => {
   let resolveFn;
   const fetcher = makeFakeFetch({
-    'https://financialmodelingprep.com/api/v3/quote/AAPL?apikey=KEY':
+    'https://financialmodelingprep.com/stable/quote?symbol=AAPL&apikey=KEY':
       () => new Promise((r) => { resolveFn = () => r(jsonOk([{ price: 1, volume: 1 }])); }),
   });
   const client = createFmpClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
@@ -103,7 +103,7 @@ test('getQuote dedupes concurrent in-flight calls', async () => {
 
 test('getQuote propagates HTTP errors', async () => {
   const fetcher = makeFakeFetch({
-    'https://financialmodelingprep.com/api/v3/quote/AAPL?apikey=KEY': {
+    'https://financialmodelingprep.com/stable/quote?symbol=AAPL&apikey=KEY': {
       ok: false, status: 429, text: async () => 'rate limited', json: async () => ({}),
     },
   });
@@ -114,15 +114,12 @@ test('getQuote propagates HTTP errors', async () => {
 test('getDailyBars returns chronological-ascending array with parsed dates', async () => {
   // FMP envoie newest-first.
   const fetcher = makeFakeFetch({
-    'https://financialmodelingprep.com/api/v3/historical-price-full/AAPL?timeseries=10&apikey=KEY':
-      jsonOk({
-        symbol: 'AAPL',
-        historical: [
-          { date: '2026-04-27', open: 100, high: 105, low: 99, close: 103, volume: 200 },
-          { date: '2026-04-24', open: 95,  high: 100, low: 94, close: 98,  volume: 180 },
-          { date: '2026-04-23', open: 92,  high: 96,  low: 91, close: 94,  volume: 170 },
-        ],
-      }),
+    'https://financialmodelingprep.com/stable/historical-price-eod/full?symbol=AAPL&apikey=KEY':
+      jsonOk([
+        { symbol: 'AAPL', date: '2026-04-27', open: 100, high: 105, low: 99, close: 103, volume: 200 },
+        { symbol: 'AAPL', date: '2026-04-24', open: 95,  high: 100, low: 94, close: 98,  volume: 180 },
+        { symbol: 'AAPL', date: '2026-04-23', open: 92,  high: 96,  low: 91, close: 94,  volume: 170 },
+      ]),
   });
   const client = createFmpClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
   const bars = await client.getDailyBars('AAPL');
@@ -137,8 +134,8 @@ test('getDailyBars returns chronological-ascending array with parsed dates', asy
 
 test('getDailyBars returns [] when historical array is missing', async () => {
   const fetcher = makeFakeFetch({
-    'https://financialmodelingprep.com/api/v3/historical-price-full/XXXX?timeseries=10&apikey=KEY':
-      jsonOk({ symbol: 'XXXX' }),
+    'https://financialmodelingprep.com/stable/historical-price-eod/full?symbol=XXXX&apikey=KEY':
+      jsonOk([]),
   });
   const client = createFmpClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
   const bars = await client.getDailyBars('XXXX');
@@ -147,8 +144,8 @@ test('getDailyBars returns [] when historical array is missing', async () => {
 
 test('getDailyBars caches within TTL', async () => {
   const fetcher = makeFakeFetch({
-    'https://financialmodelingprep.com/api/v3/historical-price-full/AAPL?timeseries=10&apikey=KEY':
-      jsonOk({ symbol: 'AAPL', historical: [{ date: '2026-04-24', open: 1, high: 1, low: 1, close: 1, volume: 1 }] }),
+    'https://financialmodelingprep.com/stable/historical-price-eod/full?symbol=AAPL&apikey=KEY':
+      jsonOk([{ symbol: 'AAPL', date: '2026-04-24', open: 1, high: 1, low: 1, close: 1, volume: 1 }]),
   });
   let nowMs = 0;
   const client = createFmpClient({
@@ -206,7 +203,7 @@ test('getQuotesBulk fetches a single URL with comma-joined tickers', async () =>
   };
   const client = createFmpClient({ apiKey: 'TEST', fetchImpl });
   const quotes = await client.getQuotesBulk(['AAPL', 'TSLA']);
-  assert.ok(capturedUrl.includes('/quote/AAPL,TSLA'));
+  assert.ok(capturedUrl.includes('/batch-quote?symbols=AAPL,TSLA'));
   assert.strictEqual(quotes.AAPL.price, 200.50);
   assert.strictEqual(quotes.TSLA.price, 250.75);
 });

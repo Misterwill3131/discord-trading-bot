@@ -39,7 +39,7 @@ test('start() opens the WS and sends login as the first message after open', () 
   const client = createFmpWsClient({ apiKey: 'KEY', tickers: [], WebSocketImpl: WS });
   client.start();
   assert.strictEqual(WS.instances.length, 1, 'should construct one WS');
-  assert.strictEqual(WS.last().url, 'wss://websockets.financialmodelingprep.com');
+  assert.strictEqual(WS.last().url, 'wss://financialmodelingprep.com/ws/us-stocks');
   WS.last().triggerOpen();
   assert.strictEqual(WS.last().sent.length, 1, 'should have sent exactly one message after open');
   assert.deepStrictEqual(

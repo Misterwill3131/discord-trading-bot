@@ -330,7 +330,7 @@ async function load() {
   const autoHelper = document.getElementById('modal-autopost-helper');
   if (buf && buf.configured) {
     autoCheckbox.disabled = false;
-    autoHelper.textContent = `Cross-poste sur ${buf.profileCount} profile(s) Buffer (Twitter/TikTok/IG selon config).`;
+    autoHelper.textContent = 'Cross-poste sur ' + buf.profileCount + ' profile(s) Buffer (Twitter/TikTok/IG selon config).';
     autoHelper.style.color = '#10b981';
   } else {
     autoCheckbox.disabled = true;

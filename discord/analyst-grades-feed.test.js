@@ -120,9 +120,18 @@ test('evaluate: non-watchlist + non-tier1 firm → no alert', () => {
   assert.strictEqual(r.source, null);
 });
 
-test('evaluate: tier1 firm + magnitude 2 (Hold→Buy) → alert', () => {
+test('evaluate: tier1 firm + Hold→Buy (Hold-pivot, magnitude 1) → alert with reason hold-pivot', () => {
   const watchlist = new Set();
   const e = makeEvent({ gradingCompany: 'Morgan Stanley', previousGrade: 'Hold', newGrade: 'Buy' });
+  const r = evaluate(e, { watchlist, tier1Firms: TIER1 });
+  assert.strictEqual(r.shouldAlert, true);
+  assert.strictEqual(r.source, 'tier1-global');
+  assert.strictEqual(r.reason, 'hold-pivot');
+});
+
+test('evaluate: tier1 firm + Sell→Buy (true magnitude 2) → alert with reason magnitude2', () => {
+  const watchlist = new Set();
+  const e = makeEvent({ gradingCompany: 'Morgan Stanley', previousGrade: 'Sell', newGrade: 'Buy' });
   const r = evaluate(e, { watchlist, tier1Firms: TIER1 });
   assert.strictEqual(r.shouldAlert, true);
   assert.strictEqual(r.source, 'tier1-global');

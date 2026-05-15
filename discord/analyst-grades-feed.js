@@ -118,8 +118,13 @@ function evaluate(event, { watchlist, tier1Firms } = {}) {
   const oldRank = gradeRank(event.previousGrade);
   const newRank = gradeRank(event.newGrade);
   const magnitude = Math.abs((newRank || 0) - (oldRank || 0));
-  if (magnitude >= 2 || (magnitude >= 1 && oldRank === 3)) {
+  if (magnitude >= 2) {
     return { shouldAlert: true, source: 'tier1-global', reason: 'magnitude2', action };
+  }
+  // Hold-pivot: Hold→Buy or Hold→Sell (magnitude 1, but directional from Neutral
+  // — strong signal because the firm shifted off the fence).
+  if (magnitude >= 1 && oldRank === 3) {
+    return { shouldAlert: true, source: 'tier1-global', reason: 'hold-pivot', action };
   }
   return { shouldAlert: false, source: null, reason: null, action };
 }

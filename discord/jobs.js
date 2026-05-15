@@ -463,7 +463,7 @@ function startScheduler({ client, tradingChannel, sendAlert } = {}) {
               watchedTickers,
               tier1Firms,
               isRTH:      isRTHFn,
-              now:        () => now,
+              now:        () => new Date(),
               logger:     console,
             });
             analystPoller.tick({ ignoreRTH: isPreMarketTick }).catch(err =>

@@ -314,3 +314,68 @@ test('formatQuoteMessage renders N/A change when changePercent is null', () => {
   assert.match(msg, /N\/A/);
   assert.doesNotMatch(msg, /NaN/);
 });
+
+test('createYahooClient.getQuoteSummary passes modules through to yahoo.quoteSummary', async () => {
+  const calls = [];
+  const fakeYahoo = {
+    quoteSummary: async (ticker, opts) => {
+      calls.push({ ticker, opts });
+      return { summaryDetail: { trailingPE: 32.4 }, defaultKeyStatistics: { trailingEps: 6.13 } };
+    },
+  };
+  const yc = createYahooClient({ yahoo: fakeYahoo });
+  const r = await yc.getQuoteSummary('AAPL', ['summaryDetail', 'defaultKeyStatistics']);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].ticker, 'AAPL');
+  assert.deepStrictEqual(calls[0].opts.modules, ['defaultKeyStatistics', 'summaryDetail']);
+  assert.strictEqual(r.summaryDetail.trailingPE, 32.4);
+});
+
+test('createYahooClient.getEarningsHistory returns earnings array from quoteSummary', async () => {
+  const fakeYahoo = {
+    quoteSummary: async (ticker, opts) => ({
+      earningsHistory: {
+        history: [
+          { quarter: { fmt: '2026-04-30' }, epsActual: { raw: 1.53 }, epsEstimate: { raw: 1.50 } },
+        ],
+      },
+    }),
+  };
+  const yc = createYahooClient({ yahoo: fakeYahoo });
+  const r = await yc.getEarningsHistory('AAPL');
+  assert.ok(Array.isArray(r));
+  assert.strictEqual(r.length, 1);
+});
+
+test('createYahooClient.getInsiderTransactions returns insider transactions array', async () => {
+  const fakeYahoo = {
+    quoteSummary: async (ticker, opts) => ({
+      insiderTransactions: {
+        transactions: [
+          { filerName: 'COOK TIMOTHY', transactionText: 'Sale', shares: { raw: 10000 }, value: { raw: 1980000 } },
+        ],
+      },
+    }),
+  };
+  const yc = createYahooClient({ yahoo: fakeYahoo });
+  const r = await yc.getInsiderTransactions('AAPL');
+  assert.ok(Array.isArray(r));
+  assert.strictEqual(r[0].filerName, 'COOK TIMOTHY');
+});
+
+test('createYahooClient.getFinancialData returns financial data object with analyst targets', async () => {
+  const fakeYahoo = {
+    quoteSummary: async (ticker, opts) => ({
+      financialData: {
+        targetMeanPrice: { raw: 215.00 },
+        targetHighPrice: { raw: 250.00 },
+        targetLowPrice:  { raw: 180.00 },
+        numberOfAnalystOpinions: { raw: 12 },
+      },
+    }),
+  };
+  const yc = createYahooClient({ yahoo: fakeYahoo });
+  const r = await yc.getFinancialData('AAPL');
+  assert.strictEqual(r.targetMeanPrice.raw, 215.00);
+  assert.strictEqual(r.numberOfAnalystOpinions.raw, 12);
+});

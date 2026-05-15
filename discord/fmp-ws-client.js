@@ -1,32 +1,33 @@
 // ─────────────────────────────────────────────────────────────────────
 // discord/fmp-ws-client.js — Client WebSocket FMP (raw protocol)
 // ─────────────────────────────────────────────────────────────────────
-// Long-lived WebSocket connection to Financial Modeling Prep streaming
-// API for real-time stock trades. Emits a typed 'trade' event for each
-// last-trade message; ignores quote-update (Q) and trade-break (B)
-// messages. Reconnect with exponential backoff handled in Task 3.
+// Long-lived WebSocket connection to FMP's Standard WebSocket API for
+// real-time market data. Emits a typed 'quote' event for each full-quote
+// message; emits 'heartbeat' for keepalive events; emits 'connected'
+// once the login response confirms (status 200).
 //
-// Protocol (verified from FMP docs):
-//   wss://websockets.financialmodelingprep.com (stocks)
-//   Login:       { event: 'login',     data: { apiKey } }
-//   Subscribe:   { event: 'subscribe', data: { ticker: ['aapl', ...] } }   (lowercase)
-//   Unsubscribe: { event: 'unsubscribe', data: { ticker: [...] } }
-//   Trade msg:   { s: '<ticker>', t: <ms>, type: 'T', lp: <price>, ls: <size> }
+// Protocol (verified from FMP dashboard 2026-05-15) :
+//   wss://socket.financialmodelingprep.com
+//   Login:       { event: 'login',       data: { apiKey } }
+//   Subscribe:   { event: 'subscribe',   data: { stream: '<stream-name>' } }
+//   Unsubscribe: { event: 'unsubscribe', data: { stream: '<stream-name>' } }
+//   Heartbeat:   { event: 'heartbeat', timestamp: <ms> }   (server-push)
+//   Quote msg:   { symbol, name, price, dayHigh, dayLow, volume, ..., updatedAt }
+//                (no `event` field — distinguishes from control messages)
 //
-// Spec : docs/superpowers/specs/2026-05-14-fmp-websocket-stocks-design.md
+// Spec : docs/superpowers/specs/2026-05-15-fmp-websocket-fix-design.md
 // ─────────────────────────────────────────────────────────────────────
 
 const { EventEmitter } = require('node:events');
 
-const DEFAULT_ENDPOINT = 'wss://websockets.financialmodelingprep.com';
+const DEFAULT_ENDPOINT = 'wss://socket.financialmodelingprep.com';
 
 function createFmpWsClient({
   apiKey,
-  tickers = [],
+  streams = [],
   endpoint = DEFAULT_ENDPOINT,
   WebSocketImpl,
   logger = console,
-  // Reconnect fields are read in Task 3:
   reconnectMinMs = 1_000,
   reconnectMaxMs = 30_000,
   reconnectMaxAttempts = 0,
@@ -35,7 +36,6 @@ function createFmpWsClient({
 } = {}) {
   if (!apiKey) throw new Error('FMP apiKey required');
   if (!WebSocketImpl) {
-    // Lazy-resolve the real `ws` package so tests can run without it.
     try {
       WebSocketImpl = require('ws').WebSocket;
     } catch (e) {
@@ -44,13 +44,14 @@ function createFmpWsClient({
   }
 
   const events = new EventEmitter();
-  const subscribed = new Set(tickers.map(t => String(t).toUpperCase()));
+  const subscribedStreams = new Set(streams.map(s => String(s)));
   let sock = null;
   let loggedIn = false;
   let stopped = false;
   let connecting = false;
   let attemptCount = 0;
   let reconnectHandle = null;
+  let lastHeartbeatAt = null;
 
   function send(obj) {
     if (!sock || sock.readyState !== 1) return false;
@@ -67,14 +68,16 @@ function createFmpWsClient({
     send({ event: 'login', data: { apiKey } });
   }
 
-  function sendSubscribe(list) {
-    if (!list.length) return;
-    send({ event: 'subscribe', data: { ticker: list.map(t => t.toLowerCase()) } });
+  function sendSubscribeAll() {
+    for (const stream of subscribedStreams) {
+      send({ event: 'subscribe', data: { stream } });
+    }
   }
 
-  function sendUnsubscribe(list) {
-    if (!list.length) return;
-    send({ event: 'unsubscribe', data: { ticker: list.map(t => t.toLowerCase()) } });
+  function sendUnsubscribeAll() {
+    for (const stream of subscribedStreams) {
+      send({ event: 'unsubscribe', data: { stream } });
+    }
   }
 
   function handleMessage(raw) {
@@ -85,30 +88,51 @@ function createFmpWsClient({
       logger.warn('[fmp-ws] malformed message dropped:', String(raw).slice(0, 100));
       return;
     }
+    if (!msg || typeof msg !== 'object') return;
+
     // Login response → flush queued subscriptions.
-    if (msg && msg.event === 'login') {
-      if (msg.status && msg.status >= 400) {
-        logger.error('[fmp-ws] login rejected:', msg.message || msg.status);
-        events.emit('error', new Error('login rejected: ' + (msg.message || msg.status)));
+    if (msg.event === 'login') {
+      const status = msg.data && Number.isFinite(msg.data.status) ? msg.data.status : 200;
+      if (status >= 400) {
+        const reason = (msg.data && msg.data.message) || ('status ' + status);
+        logger.error('[fmp-ws] login rejected:', reason);
+        events.emit('error', new Error('login rejected: ' + reason));
         return;
       }
       loggedIn = true;
-      attemptCount = 0;  // reset backoff on successful login
+      attemptCount = 0;
       events.emit('connected');
-      if (subscribed.size > 0) sendSubscribe(Array.from(subscribed));
+      sendSubscribeAll();
       return;
     }
-    // Trade tick.
-    if (msg && msg.type === 'T' && typeof msg.s === 'string') {
-      events.emit('trade', {
-        ticker: msg.s.toUpperCase(),
-        price: Number(msg.lp),
-        tradeSize: Number(msg.ls),
-        ts: Number(msg.t),
-      });
+
+    // Subscribe / unsubscribe responses.
+    if (msg.event === 'subscribe' || msg.event === 'unsubscribe') {
+      const status = Number.isFinite(msg.status) ? msg.status : 200;
+      if (status >= 400) {
+        const reason = msg.message || ('status ' + status);
+        logger.error('[fmp-ws] ' + msg.event + ' rejected:', reason);
+        events.emit('error', new Error(msg.event + ' rejected: ' + reason));
+      }
       return;
     }
-    // Q, B, or unknown → ignore.
+
+    // Heartbeat.
+    if (msg.event === 'heartbeat') {
+      lastHeartbeatAt = Number(msg.timestamp) || Date.now();
+      events.emit('heartbeat', { timestamp: lastHeartbeatAt });
+      return;
+    }
+
+    // Any other message without a recognized `event` field is treated
+    // as a quote payload (full FMP quote object). FMP quotes have no
+    // `event` key — they are identified by the absence of one.
+    if (!msg.event) {
+      events.emit('quote', msg);
+      return;
+    }
+
+    // Unknown event → ignore silently.
   }
 
   function handleClose(code, reason) {
@@ -130,7 +154,6 @@ function createFmpWsClient({
       return;
     }
     attemptCount++;
-    // Exponential backoff: min × 2^(attemptCount-1), capped at max.
     const delay = Math.min(reconnectMaxMs, reconnectMinMs * Math.pow(2, attemptCount - 1));
     reconnectHandle = setTimeoutImpl(() => {
       reconnectHandle = null;
@@ -172,28 +195,20 @@ function createFmpWsClient({
         clearTimeoutImpl(reconnectHandle);
         reconnectHandle = null;
       }
+      if (sock && sock.readyState === 1) {
+        sendUnsubscribeAll();
+      }
       if (sock && sock.readyState !== 3) {
         try { sock.close(); } catch (_) { /* ignore */ }
       }
     },
 
-    subscribe(list) {
-      const norm = list.map(t => String(t).toUpperCase());
-      for (const t of norm) subscribed.add(t);
-      if (loggedIn) sendSubscribe(norm);
-    },
-
-    unsubscribe(list) {
-      const norm = list.map(t => String(t).toUpperCase());
-      for (const t of norm) subscribed.delete(t);
-      if (loggedIn) sendUnsubscribe(norm);
-    },
-
     getStatus() {
       return {
         connected: loggedIn,
-        subscribedTickers: Array.from(subscribed),
+        subscribedStreams: Array.from(subscribedStreams),
         attemptCount,
+        lastHeartbeatAt,
       };
     },
   };

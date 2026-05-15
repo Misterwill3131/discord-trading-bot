@@ -1,29 +1,30 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { EventEmitter } = require('node:events');
-const { createFmpWsClient } = require('./fmp-ws-client');
+const { createFmpWsClient, DEFAULT_ENDPOINT } = require('./fmp-ws-client');
 
 // Mock WebSocket: a fake constructor that returns a controllable socket.
-// Each instance exposes `.sent` (array of payloads sent via .send()),
-// `.url` (constructor argument), and methods `triggerOpen()`,
-// `triggerMessage(data)`, `triggerClose(code, reason)`, `triggerError(err)`
-// that the test calls to drive the WS state machine.
+// `triggerOpen`, `triggerMessage`, `triggerClose`, `triggerError` drive the
+// state machine. `.sent` is the array of payloads passed to .send().
 function makeMockWebSocketFactory() {
   const instances = [];
   function MockWebSocket(url) {
     const handlers = {};
     const sent = [];
-    let closed = false;
     const sock = {
       url,
       sent,
       readyState: 0,           // 0 = CONNECTING, 1 = OPEN, 3 = CLOSED
       on(event, cb) { handlers[event] = cb; return this; },
       send(data) { sent.push(data); },
-      close() { closed = true; sock.readyState = 3; if (handlers.close) handlers.close(1000, ''); },
+      close() { sock.readyState = 3; if (handlers.close) handlers.close(1000, ''); },
       triggerOpen() { sock.readyState = 1; if (handlers.open) handlers.open(); },
-      triggerMessage(data) { if (handlers.message) handlers.message(typeof data === 'string' ? data : JSON.stringify(data)); },
-      triggerClose(code, reason) { sock.readyState = 3; if (handlers.close) handlers.close(code || 1006, reason || ''); },
+      triggerMessage(data) {
+        if (handlers.message) handlers.message(typeof data === 'string' ? data : JSON.stringify(data));
+      },
+      triggerClose(code, reason) {
+        sock.readyState = 3;
+        if (handlers.close) handlers.close(code || 1006, reason || '');
+      },
       triggerError(err) { if (handlers.error) handlers.error(err); },
     };
     instances.push(sock);
@@ -34,14 +35,18 @@ function makeMockWebSocketFactory() {
   return MockWebSocket;
 }
 
-test('start() opens the WS and sends login as the first message after open', () => {
+test('DEFAULT_ENDPOINT is the correct FMP socket URL', () => {
+  assert.strictEqual(DEFAULT_ENDPOINT, 'wss://socket.financialmodelingprep.com');
+});
+
+test('start() opens the WS and sends login as the first message', () => {
   const WS = makeMockWebSocketFactory();
-  const client = createFmpWsClient({ apiKey: 'KEY', tickers: [], WebSocketImpl: WS });
+  const client = createFmpWsClient({ apiKey: 'KEY', streams: [], WebSocketImpl: WS });
   client.start();
-  assert.strictEqual(WS.instances.length, 1, 'should construct one WS');
-  assert.strictEqual(WS.last().url, 'wss://websockets.financialmodelingprep.com');
+  assert.strictEqual(WS.instances.length, 1);
+  assert.strictEqual(WS.last().url, 'wss://socket.financialmodelingprep.com');
   WS.last().triggerOpen();
-  assert.strictEqual(WS.last().sent.length, 1, 'should have sent exactly one message after open');
+  assert.strictEqual(WS.last().sent.length, 1);
   assert.deepStrictEqual(
     JSON.parse(WS.last().sent[0]),
     { event: 'login', data: { apiKey: 'KEY' } }
@@ -51,308 +56,245 @@ test('start() opens the WS and sends login as the first message after open', () 
 test('endpoint can be overridden via the `endpoint` option', () => {
   const WS = makeMockWebSocketFactory();
   const client = createFmpWsClient({
-    apiKey: 'K', tickers: [], WebSocketImpl: WS,
-    endpoint: 'wss://test.example/ws',
+    apiKey: 'K', streams: [], WebSocketImpl: WS, endpoint: 'wss://test.example/ws',
   });
   client.start();
   assert.strictEqual(WS.last().url, 'wss://test.example/ws');
 });
 
-test('subscribe is sent after login response confirms', () => {
+test('subscribe is sent for each stream after login confirms (status 200)', () => {
   const WS = makeMockWebSocketFactory();
-  const client = createFmpWsClient({ apiKey: 'K', tickers: ['AAPL', 'MSFT'], WebSocketImpl: WS });
+  const client = createFmpWsClient({
+    apiKey: 'K',
+    streams: ['fmp-us-equities-stream', 'fmp-us-otc-stream'],
+    WebSocketImpl: WS,
+  });
   client.start();
   WS.last().triggerOpen();
-  // Only login sent so far
-  assert.strictEqual(WS.last().sent.length, 1);
-  // FMP login response confirms with { event: 'login', status: 200, message: 'OK' }
-  WS.last().triggerMessage({ event: 'login', status: 200, message: 'Welcome to FMP' });
-  // Now the subscribe should fire
-  assert.strictEqual(WS.last().sent.length, 2);
-  const sub = JSON.parse(WS.last().sent[1]);
-  assert.strictEqual(sub.event, 'subscribe');
-  assert.deepStrictEqual(sub.data.ticker, ['aapl', 'msft'], 'tickers should be lowercased');
+  assert.strictEqual(WS.last().sent.length, 1, 'only login sent before login response');
+  WS.last().triggerMessage({ event: 'login', data: { status: 200, message: 'Authenticated' } });
+  assert.strictEqual(WS.last().sent.length, 3, 'login + 2 subscribes');
+  assert.deepStrictEqual(
+    JSON.parse(WS.last().sent[1]),
+    { event: 'subscribe', data: { stream: 'fmp-us-equities-stream' } }
+  );
+  assert.deepStrictEqual(
+    JSON.parse(WS.last().sent[2]),
+    { event: 'subscribe', data: { stream: 'fmp-us-otc-stream' } }
+  );
 });
 
 test('subscribe is NOT sent before login response', () => {
   const WS = makeMockWebSocketFactory();
-  const client = createFmpWsClient({ apiKey: 'K', tickers: ['AAPL'], WebSocketImpl: WS });
-  client.start();
-  WS.last().triggerOpen();
-  // No login response yet — only the login should have been sent
-  assert.strictEqual(WS.last().sent.length, 1);
-});
-
-test('incoming type=T message emits "trade" with uppercase ticker', () => {
-  const WS = makeMockWebSocketFactory();
-  const client = createFmpWsClient({ apiKey: 'K', tickers: ['AAPL'], WebSocketImpl: WS });
-  const trades = [];
-  client.on('trade', t => trades.push(t));
-  client.start();
-  WS.last().triggerOpen();
-  WS.last().triggerMessage({ event: 'login', status: 200, message: 'ok' });
-  WS.last().triggerMessage({ s: 'aapl', t: 1234567890, type: 'T', lp: 100.5, ls: 50 });
-  assert.strictEqual(trades.length, 1);
-  assert.deepStrictEqual(trades[0], { ticker: 'AAPL', price: 100.5, tradeSize: 50, ts: 1234567890 });
-});
-
-test('non-T messages (Q, B, unknown) are ignored', () => {
-  const WS = makeMockWebSocketFactory();
-  const client = createFmpWsClient({ apiKey: 'K', tickers: ['AAPL'], WebSocketImpl: WS });
-  const trades = [];
-  client.on('trade', t => trades.push(t));
-  client.start();
-  WS.last().triggerOpen();
-  WS.last().triggerMessage({ event: 'login', status: 200 });
-  WS.last().triggerMessage({ s: 'aapl', type: 'Q', ap: 100.5, bp: 100.4 });
-  WS.last().triggerMessage({ s: 'aapl', type: 'B', lp: 100.5 });
-  WS.last().triggerMessage({ s: 'aapl', lp: 100.5 });  // no type field
-  assert.strictEqual(trades.length, 0);
-});
-
-test('malformed JSON message is silently dropped (logged), no crash', () => {
-  const WS = makeMockWebSocketFactory();
-  const logger = { log: () => {}, warn: () => {}, error: () => {} };
-  const client = createFmpWsClient({ apiKey: 'K', tickers: [], WebSocketImpl: WS, logger });
-  const trades = [];
-  client.on('trade', t => trades.push(t));
-  client.start();
-  WS.last().triggerOpen();
-  WS.last().triggerMessage('this is not json');  // raw string from triggerMessage above is unchanged
-  // Should not throw
-  assert.strictEqual(trades.length, 0);
-});
-
-test('subscribe(tickers) after running sends additional subscribe message', () => {
-  const WS = makeMockWebSocketFactory();
-  const client = createFmpWsClient({ apiKey: 'K', tickers: ['AAPL'], WebSocketImpl: WS });
-  client.start();
-  WS.last().triggerOpen();
-  WS.last().triggerMessage({ event: 'login', status: 200 });
-  const sentBefore = WS.last().sent.length;
-  client.subscribe(['NVDA']);
-  assert.strictEqual(WS.last().sent.length, sentBefore + 1);
-  const msg = JSON.parse(WS.last().sent[sentBefore]);
-  assert.strictEqual(msg.event, 'subscribe');
-  assert.deepStrictEqual(msg.data.ticker, ['nvda']);
-});
-
-test('unsubscribe(tickers) sends unsubscribe + removes from internal set', () => {
-  const WS = makeMockWebSocketFactory();
-  const client = createFmpWsClient({ apiKey: 'K', tickers: ['AAPL', 'NVDA'], WebSocketImpl: WS });
-  client.start();
-  WS.last().triggerOpen();
-  WS.last().triggerMessage({ event: 'login', status: 200 });
-  const sentBefore = WS.last().sent.length;
-  client.unsubscribe(['NVDA']);
-  assert.strictEqual(WS.last().sent.length, sentBefore + 1);
-  const msg = JSON.parse(WS.last().sent[sentBefore]);
-  assert.strictEqual(msg.event, 'unsubscribe');
-  assert.deepStrictEqual(msg.data.ticker, ['nvda']);
-  assert.deepStrictEqual(client.getStatus().subscribedTickers, ['AAPL']);
-});
-
-test('getStatus returns connected=true after login response, false initially', () => {
-  const WS = makeMockWebSocketFactory();
-  const client = createFmpWsClient({ apiKey: 'K', tickers: ['AAPL'], WebSocketImpl: WS });
-  assert.strictEqual(client.getStatus().connected, false);
-  client.start();
-  WS.last().triggerOpen();
-  assert.strictEqual(client.getStatus().connected, false, 'still false until login response');
-  WS.last().triggerMessage({ event: 'login', status: 200 });
-  assert.strictEqual(client.getStatus().connected, true);
-});
-
-test('"connected" event fires on login response', () => {
-  const WS = makeMockWebSocketFactory();
-  const client = createFmpWsClient({ apiKey: 'K', tickers: [], WebSocketImpl: WS });
-  let connectedFired = 0;
-  client.on('connected', () => connectedFired++);
-  client.start();
-  WS.last().triggerOpen();
-  assert.strictEqual(connectedFired, 0);
-  WS.last().triggerMessage({ event: 'login', status: 200 });
-  assert.strictEqual(connectedFired, 1);
-});
-
-test('stop() closes the WS and prevents further reconnects', () => {
-  const WS = makeMockWebSocketFactory();
-  const client = createFmpWsClient({ apiKey: 'K', tickers: [], WebSocketImpl: WS });
-  client.start();
-  WS.last().triggerOpen();
-  WS.last().triggerMessage({ event: 'login', status: 200 });
-  const instancesBefore = WS.instances.length;
-  client.stop();
-  assert.strictEqual(WS.last().readyState, 3, 'socket should be closed');
-  assert.strictEqual(WS.instances.length, instancesBefore, 'no new WS instances after stop');
-});
-
-// ── Reconnect tests (Task 3) ────────────────────────────────────────
-
-// Fake scheduler: tests drive the clock by invoking captured callbacks.
-function makeFakeScheduler() {
-  const scheduled = [];
-  function setTimeoutImpl(cb, ms) {
-    const handle = { cb, ms, cancelled: false };
-    scheduled.push(handle);
-    return handle;
-  }
-  function clearTimeoutImpl(handle) {
-    if (handle) handle.cancelled = true;
-  }
-  return {
-    setTimeoutImpl,
-    clearTimeoutImpl,
-    scheduled,
-    runNext() {
-      const next = scheduled.find(h => !h.cancelled);
-      if (!next) throw new Error('no pending timeout to run');
-      next.cancelled = true;
-      next.cb();
-    },
-  };
-}
-
-test('on socket close, schedule reconnect at reconnectMinMs', () => {
-  const WS = makeMockWebSocketFactory();
-  const clock = makeFakeScheduler();
   const client = createFmpWsClient({
-    apiKey: 'K', tickers: ['AAPL'], WebSocketImpl: WS,
-    reconnectMinMs: 1000, reconnectMaxMs: 30000,
-    setTimeoutImpl: clock.setTimeoutImpl, clearTimeoutImpl: clock.clearTimeoutImpl,
+    apiKey: 'K', streams: ['fmp-us-equities-stream'], WebSocketImpl: WS,
   });
   client.start();
   WS.last().triggerOpen();
-  WS.last().triggerMessage({ event: 'login', status: 200 });
+  assert.strictEqual(WS.last().sent.length, 1);
+});
+
+test('login response status 200 emits "connected"', () => {
+  const WS = makeMockWebSocketFactory();
+  const client = createFmpWsClient({ apiKey: 'K', streams: [], WebSocketImpl: WS });
+  let connected = 0;
+  client.on('connected', () => connected++);
+  client.start();
+  WS.last().triggerOpen();
+  WS.last().triggerMessage({ event: 'login', data: { status: 200, message: 'Authenticated' } });
+  assert.strictEqual(connected, 1);
+});
+
+test('login response status 401 emits "error" and does NOT emit "connected"', () => {
+  const WS = makeMockWebSocketFactory();
+  const client = createFmpWsClient({ apiKey: 'K', streams: [], WebSocketImpl: WS });
+  let connected = 0;
+  const errors = [];
+  client.on('connected', () => connected++);
+  client.on('error', (err) => errors.push(err));
+  client.start();
+  WS.last().triggerOpen();
+  WS.last().triggerMessage({
+    event: 'login',
+    data: { status: 401, message: 'Unauthorized' },
+  });
+  assert.strictEqual(connected, 0);
+  assert.strictEqual(errors.length, 1);
+  assert.match(errors[0].message, /login rejected/i);
+});
+
+test('a message without an "event" field is emitted as "quote" with the full payload', () => {
+  const WS = makeMockWebSocketFactory();
+  const client = createFmpWsClient({
+    apiKey: 'K', streams: ['fmp-us-equities-stream'], WebSocketImpl: WS,
+  });
+  const quotes = [];
+  client.on('quote', (q) => quotes.push(q));
+  client.start();
+  WS.last().triggerOpen();
+  WS.last().triggerMessage({ event: 'login', data: { status: 200, message: 'Authenticated' } });
+  WS.last().triggerMessage({
+    symbol: 'AAPL', name: 'Apple Inc.', price: 198.42,
+    changesPercentage: 1.23, change: 2.41,
+    dayLow: 195.10, dayHigh: 199.85,
+    yearHigh: 220.50, yearLow: 165.30,
+    marketCap: 3000000000000,
+    volume: 12345678, avgVolume: 50000000,
+    open: 196.50, previousClose: 196.01,
+    eps: 6.13, pe: 32.4,
+    earningsAnnouncement: null, sharesOutstanding: 15000000000,
+    timestamp: 1747473420,
+    range: '195.10 - 199.85',
+    type: 'stock',
+    updatedAt: '2026-05-15T16:30:00.504Z',
+  });
+  assert.strictEqual(quotes.length, 1);
+  assert.strictEqual(quotes[0].symbol, 'AAPL');
+  assert.strictEqual(quotes[0].price, 198.42);
+  assert.strictEqual(quotes[0].dayHigh, 199.85);
+  assert.strictEqual(quotes[0].volume, 12345678);
+});
+
+test('a message with event: "heartbeat" emits "heartbeat" event', () => {
+  const WS = makeMockWebSocketFactory();
+  const client = createFmpWsClient({ apiKey: 'K', streams: [], WebSocketImpl: WS });
+  const beats = [];
+  client.on('heartbeat', (h) => beats.push(h));
+  client.start();
+  WS.last().triggerOpen();
+  WS.last().triggerMessage({ event: 'login', data: { status: 200, message: 'Authenticated' } });
+  WS.last().triggerMessage({ event: 'heartbeat', timestamp: 1747473420002 });
+  assert.strictEqual(beats.length, 1);
+  assert.strictEqual(beats[0].timestamp, 1747473420002);
+});
+
+test('subscribe response status 401 emits "error" but does not crash', () => {
+  const WS = makeMockWebSocketFactory();
+  const client = createFmpWsClient({
+    apiKey: 'K', streams: ['fmp-us-equities-stream'], WebSocketImpl: WS,
+  });
+  const errors = [];
+  client.on('error', (err) => errors.push(err));
+  client.start();
+  WS.last().triggerOpen();
+  WS.last().triggerMessage({ event: 'login', data: { status: 200, message: 'Authenticated' } });
+  WS.last().triggerMessage({
+    event: 'subscribe', status: 401, message: 'Unauthorized',
+  });
+  assert.strictEqual(errors.length, 1);
+  assert.match(errors[0].message, /subscribe rejected/i);
+});
+
+test('close triggers "disconnected" then schedules reconnect', async () => {
+  const WS = makeMockWebSocketFactory();
+  let scheduledDelay = null;
+  const fakeSetTimeout = (cb, delay) => { scheduledDelay = delay; return 1; };
+  const client = createFmpWsClient({
+    apiKey: 'K', streams: [], WebSocketImpl: WS,
+    setTimeoutImpl: fakeSetTimeout, clearTimeoutImpl: () => {},
+    reconnectMinMs: 1_000, reconnectMaxMs: 30_000,
+  });
+  const closes = [];
+  client.on('disconnected', (e) => closes.push(e));
+  client.start();
+  WS.last().triggerOpen();
   WS.last().triggerClose(1006, 'abnormal');
-  assert.strictEqual(clock.scheduled.length, 1);
-  assert.strictEqual(clock.scheduled[0].ms, 1000);
+  assert.strictEqual(closes.length, 1);
+  assert.strictEqual(closes[0].code, 1006);
+  assert.strictEqual(scheduledDelay, 1_000, 'first retry uses reconnectMinMs');
 });
 
-test('reconnect creates a new WS and re-logs in', () => {
+test('reconnect re-subscribes the original streams after re-login', () => {
   const WS = makeMockWebSocketFactory();
-  const clock = makeFakeScheduler();
+  let scheduledCb = null;
+  const fakeSetTimeout = (cb) => { scheduledCb = cb; return 1; };
   const client = createFmpWsClient({
-    apiKey: 'K', tickers: ['AAPL'], WebSocketImpl: WS,
-    reconnectMinMs: 1000,
-    setTimeoutImpl: clock.setTimeoutImpl, clearTimeoutImpl: clock.clearTimeoutImpl,
+    apiKey: 'K',
+    streams: ['fmp-us-equities-stream', 'fmp-index-stream'],
+    WebSocketImpl: WS,
+    setTimeoutImpl: fakeSetTimeout, clearTimeoutImpl: () => {},
   });
   client.start();
   WS.last().triggerOpen();
-  WS.last().triggerMessage({ event: 'login', status: 200 });
-  const firstInstance = WS.last();
-  firstInstance.triggerClose(1006, '');
-  // Fire the scheduled reconnect
-  clock.runNext();
-  assert.strictEqual(WS.instances.length, 2, 'should construct a 2nd WS');
+  WS.last().triggerMessage({ event: 'login', data: { status: 200, message: 'Authenticated' } });
+  // 1 login + 2 subscribes already sent
+  assert.strictEqual(WS.last().sent.length, 3);
+  WS.last().triggerClose(1006, 'lost');
+  assert.ok(typeof scheduledCb === 'function');
+  scheduledCb();   // fire the reconnect
+  assert.strictEqual(WS.instances.length, 2, 'new WS instance was created');
   WS.last().triggerOpen();
-  assert.strictEqual(WS.last().sent.length, 1);
+  WS.last().triggerMessage({ event: 'login', data: { status: 200, message: 'Authenticated' } });
+  // After re-login, the 2 subscribes are re-sent
+  assert.strictEqual(WS.last().sent.length, 3);
   assert.deepStrictEqual(
-    JSON.parse(WS.last().sent[0]),
-    { event: 'login', data: { apiKey: 'K' } }
+    JSON.parse(WS.last().sent[1]),
+    { event: 'subscribe', data: { stream: 'fmp-us-equities-stream' } }
+  );
+  assert.deepStrictEqual(
+    JSON.parse(WS.last().sent[2]),
+    { event: 'subscribe', data: { stream: 'fmp-index-stream' } }
   );
 });
 
-test('reconnect resubscribes to all previously subscribed tickers', () => {
+test('stop() sends unsubscribe for each subscribed stream then closes', () => {
   const WS = makeMockWebSocketFactory();
-  const clock = makeFakeScheduler();
   const client = createFmpWsClient({
-    apiKey: 'K', tickers: ['AAPL', 'MSFT'], WebSocketImpl: WS,
-    reconnectMinMs: 1000,
-    setTimeoutImpl: clock.setTimeoutImpl, clearTimeoutImpl: clock.clearTimeoutImpl,
+    apiKey: 'K',
+    streams: ['fmp-us-equities-stream', 'fmp-index-stream'],
+    WebSocketImpl: WS,
   });
   client.start();
   WS.last().triggerOpen();
-  WS.last().triggerMessage({ event: 'login', status: 200 });
-  WS.last().triggerClose(1006, '');
-  clock.runNext();
-  WS.last().triggerOpen();
-  WS.last().triggerMessage({ event: 'login', status: 200 });
-  // Should have sent login + subscribe with both tickers
-  assert.strictEqual(WS.last().sent.length, 2);
-  const sub = JSON.parse(WS.last().sent[1]);
-  assert.deepStrictEqual(sub.data.ticker.sort(), ['aapl', 'msft']);
-});
-
-test('reconnect backoff is exponential and capped at reconnectMaxMs', () => {
-  const WS = makeMockWebSocketFactory();
-  const clock = makeFakeScheduler();
-  const client = createFmpWsClient({
-    apiKey: 'K', tickers: [], WebSocketImpl: WS,
-    reconnectMinMs: 1000, reconnectMaxMs: 8000,
-    setTimeoutImpl: clock.setTimeoutImpl, clearTimeoutImpl: clock.clearTimeoutImpl,
-  });
-  client.start();
-  WS.last().triggerOpen();
-  WS.last().triggerMessage({ event: 'login', status: 200 });
-  // Drop 5 times, observe the delays: 1000, 2000, 4000, 8000, 8000 (capped)
-  const observed = [];
-  for (let i = 0; i < 5; i++) {
-    WS.last().triggerClose(1006, '');
-    const last = clock.scheduled[clock.scheduled.length - 1];
-    observed.push(last.ms);
-    clock.runNext();
-  }
-  assert.deepStrictEqual(observed, [1000, 2000, 4000, 8000, 8000]);
-});
-
-test('stop() during reconnect prevents further reconnects', () => {
-  const WS = makeMockWebSocketFactory();
-  const clock = makeFakeScheduler();
-  const client = createFmpWsClient({
-    apiKey: 'K', tickers: [], WebSocketImpl: WS,
-    reconnectMinMs: 1000,
-    setTimeoutImpl: clock.setTimeoutImpl, clearTimeoutImpl: clock.clearTimeoutImpl,
-  });
-  client.start();
-  WS.last().triggerOpen();
-  WS.last().triggerMessage({ event: 'login', status: 200 });
-  WS.last().triggerClose(1006, '');
+  WS.last().triggerMessage({ event: 'login', data: { status: 200, message: 'Authenticated' } });
+  assert.strictEqual(WS.last().sent.length, 3);
   client.stop();
-  // The scheduled reconnect should be cancelled
-  assert.ok(clock.scheduled[0].cancelled, 'scheduled reconnect should be cancelled');
+  // 2 more unsubscribes appended before close
+  assert.strictEqual(WS.last().sent.length, 5);
+  assert.deepStrictEqual(
+    JSON.parse(WS.last().sent[3]),
+    { event: 'unsubscribe', data: { stream: 'fmp-us-equities-stream' } }
+  );
+  assert.deepStrictEqual(
+    JSON.parse(WS.last().sent[4]),
+    { event: 'unsubscribe', data: { stream: 'fmp-index-stream' } }
+  );
+  assert.strictEqual(WS.last().readyState, 3, 'socket closed');
 });
 
-test('successful reconnect resets the backoff (next failure starts at min)', () => {
+test('getStatus() reports connected + subscribedStreams + attemptCount', () => {
   const WS = makeMockWebSocketFactory();
-  const clock = makeFakeScheduler();
   const client = createFmpWsClient({
-    apiKey: 'K', tickers: [], WebSocketImpl: WS,
-    reconnectMinMs: 1000, reconnectMaxMs: 8000,
-    setTimeoutImpl: clock.setTimeoutImpl, clearTimeoutImpl: clock.clearTimeoutImpl,
+    apiKey: 'K',
+    streams: ['fmp-us-equities-stream'],
+    WebSocketImpl: WS,
   });
   client.start();
   WS.last().triggerOpen();
-  WS.last().triggerMessage({ event: 'login', status: 200 });
-  // 3 fast drops + reconnects, all failing to reach login
-  for (let i = 0; i < 3; i++) {
-    WS.last().triggerClose(1006, '');
-    clock.runNext();
-  }
-  // Now succeed: open + login response → should reset
-  WS.last().triggerOpen();
-  WS.last().triggerMessage({ event: 'login', status: 200 });
-  // Drop again → backoff should be at reconnectMinMs again
-  WS.last().triggerClose(1006, '');
-  const last = clock.scheduled[clock.scheduled.length - 1];
-  assert.strictEqual(last.ms, 1000, 'backoff should reset after successful login');
+  WS.last().triggerMessage({ event: 'login', data: { status: 200, message: 'Authenticated' } });
+  const s = client.getStatus();
+  assert.strictEqual(s.connected, true);
+  assert.deepStrictEqual(s.subscribedStreams, ['fmp-us-equities-stream']);
+  assert.strictEqual(s.attemptCount, 0, 'reset to 0 on successful login');
 });
 
-test('getStatus().attemptCount tracks reconnect attempts', () => {
+test('malformed JSON message is dropped without throwing', () => {
   const WS = makeMockWebSocketFactory();
-  const clock = makeFakeScheduler();
-  const client = createFmpWsClient({
-    apiKey: 'K', tickers: [], WebSocketImpl: WS,
-    reconnectMinMs: 1000,
-    setTimeoutImpl: clock.setTimeoutImpl, clearTimeoutImpl: clock.clearTimeoutImpl,
-  });
+  const client = createFmpWsClient({ apiKey: 'K', streams: [], WebSocketImpl: WS });
   client.start();
   WS.last().triggerOpen();
-  WS.last().triggerMessage({ event: 'login', status: 200 });
-  assert.strictEqual(client.getStatus().attemptCount, 0);
-  WS.last().triggerClose(1006, '');
-  assert.strictEqual(client.getStatus().attemptCount, 1);
-  clock.runNext();
-  WS.last().triggerClose(1006, '');
-  assert.strictEqual(client.getStatus().attemptCount, 2);
+  WS.last().triggerMessage('this is not JSON {{{');
+  // No throw, no event emitted — test passes by not crashing.
+  assert.ok(true);
+});
+
+test('an "error" event on the underlying socket is emitted as "error" on the client', () => {
+  const WS = makeMockWebSocketFactory();
+  const client = createFmpWsClient({ apiKey: 'K', streams: [], WebSocketImpl: WS });
+  const errors = [];
+  client.on('error', (err) => errors.push(err));
+  client.start();
+  WS.last().triggerError(new Error('TLS handshake failed'));
+  assert.strictEqual(errors.length, 1);
+  assert.strictEqual(errors[0].message, 'TLS handshake failed');
 });

@@ -247,6 +247,14 @@ ${sidebarHTML('/video-studio')}
       </div>
     </div>
 
+    <div class="field" id="modal-autopost-wrap">
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+        <input type="checkbox" id="modal-autopost" style="width:auto; cursor:pointer;">
+        <span>📢 Auto-post sur les réseaux (Buffer)</span>
+      </label>
+      <div class="field-helper" id="modal-autopost-helper">Loading…</div>
+    </div>
+
     <div id="status-msg"></div>
 
     <div class="modal-actions">
@@ -304,10 +312,11 @@ const TEMPLATES_BY_COMPOSITION = {
 };
 
 async function load() {
-  // Charge gallery + templates en parallèle
-  const [g, t] = await Promise.all([
+  // Charge gallery + templates + buffer status en parallèle.
+  const [g, t, buf] = await Promise.all([
     fetch('/api/gallery').then(r => r.json()),
     fetch('/api/video-studio/templates').then(r => r.json()),
+    fetch('/api/video-studio/buffer-status').then(r => r.json()).catch(() => ({ configured: false })),
   ]);
   allItems = g;
   templates = t.templates || [];
@@ -316,6 +325,19 @@ async function load() {
       TEMPLATES_BY_COMPOSITION[tpl.composition].push(tpl);
     }
   });
+  // Reflect Buffer config dans le helper text + grise la checkbox si non configuré.
+  const autoCheckbox = document.getElementById('modal-autopost');
+  const autoHelper = document.getElementById('modal-autopost-helper');
+  if (buf && buf.configured) {
+    autoCheckbox.disabled = false;
+    autoHelper.textContent = `Cross-poste sur ${buf.profileCount} profile(s) Buffer (Twitter/TikTok/IG selon config).`;
+    autoHelper.style.color = '#10b981';
+  } else {
+    autoCheckbox.disabled = true;
+    autoCheckbox.checked = false;
+    autoHelper.textContent = '⚠ Non configuré. Set BUFFER_ACCESS_TOKEN + BUFFER_PROFILE_IDS env pour activer.';
+    autoHelper.style.color = '#6b7280';
+  }
   render();
 }
 
@@ -471,6 +493,7 @@ function openModal(id) {
   document.getElementById('modal-cta-url').value = '';
   document.getElementById('modal-ticker-override').value = '';
   document.getElementById('modal-narration').checked = false;
+  document.getElementById('modal-autopost').checked = false;
   document.getElementById('modal-aspect').value = '9x16';
   const colorPicker = document.getElementById('modal-accent-override');
   delete colorPicker.dataset.userOverride; // reset le flag pour que updateTplDesc resync
@@ -540,6 +563,7 @@ async function doRender() {
         accentColor: accentOverride || undefined,
         enableNarration: document.getElementById('modal-narration').checked || undefined,
         aspectRatio: document.getElementById('modal-aspect').value,
+        autoPostSocial: document.getElementById('modal-autopost').checked || undefined,
       }),
     });
     const data = await res.json();

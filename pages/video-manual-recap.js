@@ -85,6 +85,10 @@ ${sidebarHTML('/video-studio')}
         <input type="checkbox" id="cfg-narration" style="width:auto; cursor:pointer;">
         <span>🎙 Voice-over (TTS)</span>
       </label>
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+        <input type="checkbox" id="cfg-autopost" style="width:auto; cursor:pointer;" disabled>
+        <span id="cfg-autopost-label">📢 Auto-post Buffer</span>
+      </label>
       <div style="display: flex; align-items: center; gap: 8px;">
         <label for="cfg-aspect" style="font-size: 11px; color: #a0a0b0; margin: 0;">Aspect:</label>
         <select id="cfg-aspect" style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:6px; padding:6px 10px; color:#fafafa; font-size:12px; font-family:inherit;">
@@ -94,7 +98,7 @@ ${sidebarHTML('/video-studio')}
         </select>
       </div>
     </div>
-    <div class="helper" style="margin-top: 6px;">Narration AI ElevenLabs ~$0.02/render. Aspect 1:1/16:9 sont best-effort (layout 9:16 par défaut).</div>
+    <div class="helper" style="margin-top: 6px;">Narration AI ~$0.02/render. Auto-post nécessite BUFFER_ACCESS_TOKEN env. Aspect 1:1/16:9 best-effort.</div>
   </div>
 
   <!-- Trades table -->
@@ -261,6 +265,7 @@ async function submitRecap() {
       longTermInvestments: cleanLts,
       enableNarration: document.getElementById('cfg-narration').checked,
       aspectRatio: document.getElementById('cfg-aspect').value,
+      autoPostSocial: document.getElementById('cfg-autopost').checked,
     };
     const r = await fetch('/api/video-studio/manual-recap', {
       method: 'POST',
@@ -284,6 +289,20 @@ async function submitRecap() {
 // Initial : 1 trade row vide pour démarrer
 addTrade();
 renderLts();
+
+// Fetch Buffer config pour activer/griser la checkbox autopost.
+fetch('/api/video-studio/buffer-status').then(r => r.json()).then(buf => {
+  const cb = document.getElementById('cfg-autopost');
+  const lbl = document.getElementById('cfg-autopost-label');
+  if (buf && buf.configured) {
+    cb.disabled = false;
+    lbl.textContent = '📢 Auto-post Buffer (' + buf.profileCount + ' profile' + (buf.profileCount > 1 ? 's' : '') + ')';
+  } else {
+    cb.disabled = true;
+    lbl.textContent = '📢 Auto-post Buffer (non configuré)';
+    lbl.style.color = '#6b7280';
+  }
+}).catch(() => {});
 </script>
 </body></html>`;
 

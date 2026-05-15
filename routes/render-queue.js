@@ -197,10 +197,12 @@ function registerRenderQueueRoutes(app, discordClient) {
     // (tob-trade-recap.mp4 vs chart-template.mp4 vs boom-recap.mp4).
     let overrideChannelId = null;
     let jobComposition = null;
+    let jobPropsOverride = null;
     try {
       const job = getRenderJobById(jobId);
       if (job && job.output_channel_id) overrideChannelId = job.output_channel_id;
       if (job && job.composition) jobComposition = job.composition;
+      if (job && job.props_override) jobPropsOverride = job.props_override;
     } catch (err) {
       console.warn('[render-queue] getRenderJobById failed:', err.message);
     }
@@ -212,14 +214,83 @@ function registerRenderQueueRoutes(app, discordClient) {
     );
 
     try {
-      const msgId = await postVideoToChannel(discordClient, req.file.buffer, caption, filename, overrideChannelId);
-      markRenderJobDone(jobId, msgId);
-      res.json({ status: 'done', discord_msg_id: msgId });
+      const sent = await postVideoToChannelWithMsg(discordClient, req.file.buffer, caption, filename, overrideChannelId);
+      markRenderJobDone(jobId, sent.id);
+
+      // Auto-post Buffer (cross-poster Twitter/X, TikTok, IG, etc.) si
+      // (1) BUFFER_ACCESS_TOKEN configuré ET
+      // (2) le job a opt-in via props_override.autoPostSocial=true.
+      // Best-effort — un échec Buffer ne fail PAS le job (la vidéo est
+      // déjà postée sur Discord, ce qui est le critère de succès principal).
+      let bufferResult = null;
+      try {
+        let optedIn = false;
+        if (jobPropsOverride) {
+          try {
+            const o = JSON.parse(jobPropsOverride);
+            if (o && o.autoPostSocial === true) optedIn = true;
+          } catch { /* swallow */ }
+        }
+        if (optedIn) {
+          const { isConfigured, postToBuffer } = require('../services/buffer');
+          if (isConfigured()) {
+            // L'URL CDN de l'attachment Discord est publique et stable.
+            const attachment = sent.attachments && sent.attachments.first
+              ? sent.attachments.first()
+              : (Array.isArray(sent.attachments) ? sent.attachments[0] : null);
+            const videoUrl = attachment ? (attachment.url || attachment.proxyURL) : null;
+            if (videoUrl) {
+              bufferResult = await postToBuffer({ text: caption.slice(0, 270), videoUrl });
+              console.log(`[render-queue] Buffer auto-post OK for job #${jobId}: ${bufferResult.bufferUpdateIds.length} updates created on ${bufferResult.profileIdsPosted.length} profiles`);
+            } else {
+              console.warn(`[render-queue] job #${jobId} opted in to autoPostSocial but no Discord attachment URL found — skipped Buffer`);
+            }
+          } else {
+            console.warn(`[render-queue] job #${jobId} opted in to autoPostSocial but Buffer is not configured (BUFFER_ACCESS_TOKEN / BUFFER_PROFILE_IDS env vars)`);
+          }
+        }
+      } catch (err) {
+        console.error(`[render-queue] Buffer auto-post failed for job #${jobId} (non-fatal):`, err.message);
+      }
+
+      res.json({
+        status: 'done',
+        discord_msg_id: sent.id,
+        bufferPosted: bufferResult ? bufferResult.bufferUpdateIds.length : 0,
+      });
     } catch (err) {
       console.error('[render-queue] Discord upload failed:', err);
       markRenderJobFailed(jobId, 'Discord upload: ' + err.message);
       res.status(500).json({ status: 'failed', error: err.message });
     }
+  });
+}
+
+// Variant de postVideoToChannel qui retourne le message Discord complet
+// (pas juste l'ID) — on a besoin de l'attachment URL pour Buffer.
+async function postVideoToChannelWithMsg(client, mp4Buffer, caption, filename, overrideChannelId) {
+  const channelId = overrideChannelId || process.env.RENDER_OUTPUT_CHANNEL_ID;
+  if (!channelId) {
+    throw new Error('No output channel: ni job.output_channel_id ni RENDER_OUTPUT_CHANNEL_ID');
+  }
+  if (!client || !client.channels) {
+    throw new Error('Discord client not ready (channels manager unavailable)');
+  }
+  let channel = client.channels.cache.get(channelId);
+  if (!channel) {
+    try {
+      channel = await client.channels.fetch(channelId);
+    } catch (err) {
+      throw new Error(`Cannot fetch channel ${channelId}: ${err.message}.`);
+    }
+  }
+  if (!channel) throw new Error(`Channel ${channelId} introuvable.`);
+  if (typeof channel.send !== 'function') {
+    throw new Error(`Channel ${channelId} (type=${channel.type}) ne supporte pas .send()`);
+  }
+  return channel.send({
+    content: caption,
+    files: [{ attachment: mp4Buffer, name: filename }],
   });
 }
 

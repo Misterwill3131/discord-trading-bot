@@ -146,7 +146,7 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
 
   // ── POST /api/video-studio/render ─────────────────────────────────
   app.post('/api/video-studio/render', requireAuth, (req, res) => {
-    const { galleryId, templateId, ctaUrl, tickerOverride, accentColor, enableNarration, aspectRatio } = req.body || {};
+    const { galleryId, templateId, ctaUrl, tickerOverride, accentColor, enableNarration, aspectRatio, autoPostSocial } = req.body || {};
     if (!galleryId) return res.status(400).json({ error: 'Missing galleryId' });
     if (!templateId) return res.status(400).json({ error: 'Missing templateId' });
 
@@ -284,6 +284,11 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
     if (aspectRatio === '1x1' || aspectRatio === '16x9' || aspectRatio === '9x16') {
       propsOverride.aspectRatio = aspectRatio;
     }
+    // Auto-post Buffer (Twitter/X, TikTok, IG via Buffer). routes/render-queue.js
+    // check ce field après l'upload Discord et appelle postToBuffer si configuré.
+    if (autoPostSocial === true || autoPostSocial === 'true') {
+      propsOverride.autoPostSocial = true;
+    }
     const propsOverrideJson = Object.keys(propsOverride).length > 0
       ? JSON.stringify(propsOverride)
       : null;
@@ -405,9 +410,11 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
     const enableNarrationManual = body.enableNarration === true || body.enableNarration === 'true';
     const aspectRatioManual = (body.aspectRatio === '1x1' || body.aspectRatio === '16x9' || body.aspectRatio === '9x16')
       ? body.aspectRatio : null;
+    const autoPostManual = body.autoPostSocial === true || body.autoPostSocial === 'true';
     const overrideObj = {};
     if (enableNarrationManual) overrideObj.enableNarration = true;
     if (aspectRatioManual && aspectRatioManual !== '9x16') overrideObj.aspectRatio = aspectRatioManual;
+    if (autoPostManual) overrideObj.autoPostSocial = true;
     const propsOverrideManual = Object.keys(overrideObj).length > 0
       ? JSON.stringify(overrideObj)
       : null;
@@ -558,6 +565,22 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
     } catch (err) {
       console.error('[video-studio] GET /ab-groups failed:', err);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── GET /api/video-studio/buffer-status ──────────────────────────
+  // Renseigne l'UI si l'option "Auto-post Buffer" est utilisable (env
+  // vars set ?). Sans Buffer, on grise la checkbox dans les modals.
+  app.get('/api/video-studio/buffer-status', requireAuth, (_req, res) => {
+    try {
+      const { isConfigured, getConfig } = require('../services/buffer');
+      const cfg = getConfig();
+      res.json({
+        configured: isConfigured(),
+        profileCount: cfg.profileIds.length,
+      });
+    } catch (err) {
+      res.json({ configured: false, profileCount: 0, error: err.message });
     }
   });
 }

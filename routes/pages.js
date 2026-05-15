@@ -26,6 +26,7 @@ const { RAW_MESSAGES_HTML }  = require('../pages/raw-messages');
 const { GALLERY_HTML }       = require('../pages/gallery');
 const { VIDEO_STUDIO_HTML }  = require('../pages/video-studio');
 const { VIDEO_TEMPLATES_EDITOR_HTML } = require('../pages/video-templates-editor');
+const { VIDEO_MANUAL_RECAP_HTML } = require('../pages/video-manual-recap');
 
 // Factory : retourne un handler Express qui sert un HTML statique.
 // Centralise le Content-Type pour éviter de l'oublier sur une route.
@@ -51,6 +52,7 @@ const PAGES = [
   { path: '/gallery',         html: GALLERY_HTML },
   { path: '/video-studio',    html: VIDEO_STUDIO_HTML },
   { path: '/video-studio/templates', html: VIDEO_TEMPLATES_EDITOR_HTML },
+  { path: '/video-studio/manual-recap', html: VIDEO_MANUAL_RECAP_HTML },
 ];
 
 function registerPageRoutes(app, requireAuth) {

@@ -317,6 +317,105 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
       res.status(500).json({ error: err.message });
     }
   });
+
+  // ── POST /api/video-studio/manual-recap ───────────────────────────
+  // Enqueue un TobTradeRecap depuis un payload manuel (trades + long-term
+  // saisis dans le formulaire UI). Pas d'OCR, pas d'image — l'utilisateur
+  // fournit le tableau directement. Re-utilise le même render_jobs flow
+  // que l'auto-trigger sur image dans discord/recap-image-handler.js.
+  //
+  // Body : {
+  //   dateLabel: string,
+  //   trades: [{ ticker, entryPrice, hodPrice }, ...],
+  //   longTermInvestments: [{ ticker, entryPrice, currentPrice }, ...] (optionnel),
+  //   outputChannelId: string (optionnel — défaut env),
+  // }
+  app.post('/api/video-studio/manual-recap', requireAuth, async (req, res) => {
+    const body = req.body || {};
+    const trades = Array.isArray(body.trades) ? body.trades : [];
+    if (trades.length === 0) {
+      return res.status(400).json({ error: 'trades is required and must be non-empty' });
+    }
+    // Validation minimale par trade.
+    for (const t of trades) {
+      if (!t || typeof t.ticker !== 'string' || !t.ticker.trim()) {
+        return res.status(400).json({ error: 'Each trade needs a ticker' });
+      }
+      if (!Number.isFinite(Number(t.entryPrice)) || !Number.isFinite(Number(t.hodPrice))) {
+        return res.status(400).json({ error: `${t.ticker}: entryPrice and hodPrice must be numbers` });
+      }
+    }
+    const lts = Array.isArray(body.longTermInvestments) ? body.longTermInvestments : [];
+    for (const lt of lts) {
+      if (!lt || typeof lt.ticker !== 'string' || !lt.ticker.trim()) {
+        return res.status(400).json({ error: 'Each long-term entry needs a ticker' });
+      }
+      if (!Number.isFinite(Number(lt.entryPrice)) || !Number.isFinite(Number(lt.currentPrice))) {
+        return res.status(400).json({ error: `${lt.ticker}: entryPrice and currentPrice must be numbers` });
+      }
+    }
+
+    // Normalise les prix en Number (le front les envoie souvent en string).
+    const normalizedTrades = trades.map(t => ({
+      ticker: String(t.ticker).trim().toUpperCase().replace(/^\$+/, ''),
+      entryPrice: Number(t.entryPrice),
+      hodPrice: Number(t.hodPrice),
+    }));
+    const normalizedLts = lts.map(lt => ({
+      ticker: String(lt.ticker).trim().toUpperCase().replace(/^\$+/, ''),
+      entryPrice: Number(lt.entryPrice),
+      currentPrice: Number(lt.currentPrice),
+    }));
+
+    // Pour les alert images de la parade, on essaie de générer comme le
+    // flow image — mais best-effort (DB peut être vide pour ces tickers).
+    // Lazy require pour éviter circular deps.
+    const { buildAlertImagesBase64 } = require('../discord/recap-image-handler');
+    let alertImagesBase64 = [];
+    try {
+      alertImagesBase64 = await buildAlertImagesBase64({ trades: normalizedTrades });
+    } catch (err) {
+      console.warn('[video-studio/manual-recap] alert images failed:', err.message);
+    }
+
+    const dateLabel = (typeof body.dateLabel === 'string' && body.dateLabel.trim()) ? body.dateLabel.trim() : 'TODAY';
+    const tsIso = new Date().toISOString();
+    const outputChannelId = (typeof body.outputChannelId === 'string' && body.outputChannelId.trim()) ? body.outputChannelId.trim() : null;
+
+    const recapData = {
+      dateLabel,
+      trades: normalizedTrades,
+      longTermInvestments: normalizedLts,
+      alertImagesBase64,
+    };
+
+    try {
+      const jobId = enqueueRenderJob({
+        ticker: 'TOB-RECAP',
+        entry_author: 'manual',
+        entry_message: `Manual recap (${normalizedTrades.length} trades, ${dateLabel})`,
+        entry_ts: tsIso,
+        exit_author: 'manual',
+        exit_message: 'Manual recap from video studio',
+        exit_ts: tsIso,
+        pnl: dateLabel,
+        composition: 'TobTradeRecap',
+        template_name: 'trade-recap-default',
+        recap_data: JSON.stringify(recapData),
+        output_channel_id: outputChannelId,
+      });
+      console.log(`[video-studio/manual-recap] enqueue render_job #${jobId} (${normalizedTrades.length} trades + ${normalizedLts.length} long-term, ${alertImagesBase64.length} alerts)`);
+      res.json({
+        jobId,
+        tradesCount: normalizedTrades.length,
+        longTermCount: normalizedLts.length,
+        alertImagesCount: alertImagesBase64.length,
+      });
+    } catch (err) {
+      console.error('[video-studio/manual-recap] enqueue failed:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
 }
 
 module.exports = { registerVideoStudioRoutes };

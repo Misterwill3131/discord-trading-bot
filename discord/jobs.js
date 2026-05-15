@@ -35,6 +35,8 @@ const { createFmpClient } = require('./fmp-client');
 const { createFmpWsClient } = require('./fmp-ws-client');
 const { createFmpWsMarketClient } = require('./fmp-ws-marketclient');
 const milestoneChecker = require('./milestone-checker');
+const { createAnalystGradesPoller } = require('./analyst-grades-feed');
+const dbForAnalyst = require('../db/sqlite');
 
 // Dernière exécution de chaque job — évite les doublons si
 // l'intervalle de 60s tombe deux fois dans la même minute cible.
@@ -43,6 +45,10 @@ let lastBackupDate = null;
 let lastRecapReminderDate = null;
 // Used to throttle milestone-checker ticks to the configured cadence.
 let lastMilestoneTickMin = null;
+// Analyst-grades scheduling state. RTH ticks throttled by minute,
+// pre-market 06:00 ET tick throttled by ET-date (one per day).
+let lastAnalystTickMin = -1;
+let lastAnalystPreMarketDay = null;
 
 // Historique du backup (utile si on veut un jour exposer un endpoint
 // de supervision). Gardé en module scope car non-critique et pas exposé.
@@ -386,6 +392,82 @@ function startScheduler({ client, tradingChannel, sendAlert } = {}) {
               marketClient: milestoneMarketClient,
             }).catch(err =>
               console.error('[milestone-checker] tick failed:', err.message));
+          }
+        }
+      }
+
+      // Analyst-grades alerts — cadence configurable (default 15 min).
+      // Gated by ANALYST_ALERTS_ENABLED env var. Fires both during RTH
+      // (every analystIntervalMin) AND once at 06:00 ET pre-market to
+      // catch overnight downgrades. RTH gate lives in the tick() itself.
+      const analystEnabled = process.env.ANALYST_ALERTS_ENABLED === 'true';
+      if (analystEnabled) {
+        const analystIntervalMin = Math.max(1, parseInt(
+          process.env.ANALYST_ALERTS_INTERVAL_MIN || '15', 10) || 15);
+        const analystMinuteKey = now.getHours() * 60 + now.getMinutes();
+        const fmpKeyForAnalyst = process.env.FMP_API_KEY || '';
+
+        // Compute ET date+time parts for the 06:00 ET pre-market check.
+        const etParts = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'America/New_York',
+          year: 'numeric', month: '2-digit', day: '2-digit',
+          weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+        }).formatToParts(now).reduce((acc, p) => {
+          if (p.type !== 'literal') acc[p.type] = p.value;
+          return acc;
+        }, {});
+        const etDate = etParts.year + '-' + etParts.month + '-' + etParts.day;
+        const etHour = parseInt(etParts.hour, 10);
+        const etMinute = parseInt(etParts.minute, 10);
+        const etIsWeekday = etParts.weekday !== 'Sat' && etParts.weekday !== 'Sun';
+
+        // Regular RTH cadence: every analystIntervalMin.
+        const isRegularTick = (
+          now.getMinutes() % analystIntervalMin === 0
+          && lastAnalystTickMin !== analystMinuteKey
+        );
+
+        // Pre-market 06:00 ET (Mon-Fri): fire once per ET-date.
+        const isPreMarketTick = (
+          etIsWeekday
+          && etHour === 6
+          && etMinute === 0
+          && lastAnalystPreMarketDay !== etDate
+        );
+
+        if ((isRegularTick || isPreMarketTick) && fmpKeyForAnalyst) {
+          if (isRegularTick)    lastAnalystTickMin = analystMinuteKey;
+          if (isPreMarketTick)  lastAnalystPreMarketDay = etDate;
+
+          let analystFmp = null;
+          try {
+            analystFmp = createFmpClient({ apiKey: fmpKeyForAnalyst });
+          } catch (err) {
+            console.error('[analyst-grades] FMP init failed:', err.message);
+          }
+          if (analystFmp) {
+            const tier1Csv = process.env.TIER_1_FIRMS
+              || 'Goldman Sachs,JPMorgan,JP Morgan,Morgan Stanley,'
+                 + 'BofA Securities,Bank of America,Wells Fargo,Citigroup,Citi,'
+                 + 'Barclays,Deutsche Bank,UBS,Jefferies,Credit Suisse,'
+                 + 'Evercore ISI,Cowen,Wedbush,Piper Sandler,RBC Capital,'
+                 + 'Truist,Stifel,Raymond James,Oppenheimer';
+            const tier1Firms = new Set(tier1Csv.split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
+            const watchedTickers = new Set((process.env.WATCHED_TICKERS || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean));
+            const { isRTH: isRTHFn } = require('./market-alerts');
+
+            const analystPoller = createAnalystGradesPoller({
+              fmpClient:  analystFmp,
+              sendAlert,
+              db:         dbForAnalyst,
+              watchedTickers,
+              tier1Firms,
+              isRTH:      isRTHFn,
+              now:        () => now,
+              logger:     console,
+            });
+            analystPoller.tick({ ignoreRTH: isPreMarketTick }).catch(err =>
+              console.error('[analyst-grades] tick failed:', err.message));
           }
         }
       }

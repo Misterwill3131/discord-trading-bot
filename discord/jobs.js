@@ -32,6 +32,8 @@ const profitCounter = require('../profit/counter');
 const { backupDb, purgeFilteredMessagesWithoutData } = require('../db/sqlite');
 const { createMarketAlertsScheduler, registerMarketAlertCommands } = require('./market-alerts');
 const { createFmpClient } = require('./fmp-client');
+const { createFmpWsClient } = require('./fmp-ws-client');
+const { createFmpWsMarketClient } = require('./fmp-ws-marketclient');
 const milestoneChecker = require('./milestone-checker');
 
 // Dernière exécution de chaque job — évite les doublons si
@@ -204,26 +206,43 @@ function startScheduler({ client, tradingChannel, sendAlert } = {}) {
     const tickers = (process.env.WATCHED_TICKERS || '')
       .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
     const fmpKey = process.env.FMP_API_KEY || '';
+    const useWs = process.env.FMP_WS_ENABLED === 'true';
     const intervalMin = Math.max(1, parseInt(
       process.env.MARKET_ALERTS_INTERVAL_MIN || '5', 10) || 5);
+    const evalIntervalSec = Math.max(1, parseInt(
+      process.env.MARKET_ALERTS_EVAL_INTERVAL_SEC || (useWs ? '5' : String(intervalMin * 60)), 10) || 5);
     let marketAlerts = null;
+    let marketClientRef = null;
     if (tickers.length > 0 && fmpKey && typeof sendAlert === 'function') {
       try {
-        const marketClient = createFmpClient({ apiKey: fmpKey });
+        const restClient = createFmpClient({ apiKey: fmpKey });
+        let marketClient;
+        if (useWs) {
+          const wsClient = createFmpWsClient({ apiKey: fmpKey, tickers });
+          marketClient = createFmpWsMarketClient({
+            apiKey: fmpKey, tickers, wsClient, restClient,
+          });
+          marketClient.start();
+          console.log('[market-alerts] watching ' + tickers.length + ' tickers via WS (eval every '
+            + evalIntervalSec + 's): ' + tickers.join(', '));
+        } else {
+          marketClient = restClient;
+          console.log('[market-alerts] watching ' + tickers.length + ' tickers via REST (every '
+            + intervalMin + ' min): ' + tickers.join(', '));
+          // Free-tier guard : >3 tickers à cadence 5min sature les 250 req/jour.
+          const dailyBudget = (390 / intervalMin) * tickers.length + tickers.length;
+          if (dailyBudget > 250) {
+            console.warn('[market-alerts] estimated ' + Math.round(dailyBudget)
+              + ' FMP calls/day exceeds free-tier 250/day budget — consider raising '
+              + 'MARKET_ALERTS_INTERVAL_MIN or upgrading FMP plan');
+          }
+        }
+        marketClientRef = marketClient;
         marketAlerts = createMarketAlertsScheduler({
           marketClient,
           sendAlert,
           tickers,
         });
-        console.log('[market-alerts] watching ' + tickers.length + ' tickers (every '
-          + intervalMin + ' min): ' + tickers.join(', '));
-        // Free-tier guard : >3 tickers à cadence 5min sature les 250 req/jour.
-        const dailyBudget = (390 / intervalMin) * tickers.length + tickers.length;
-        if (dailyBudget > 250) {
-          console.warn('[market-alerts] estimated ' + Math.round(dailyBudget)
-            + ' FMP calls/day exceeds free-tier 250/day budget — consider raising '
-            + 'MARKET_ALERTS_INTERVAL_MIN or upgrading FMP plan');
-        }
       } catch (err) {
         console.error('[market-alerts] init failed:', err.message);
       }
@@ -286,10 +305,10 @@ function startScheduler({ client, tradingChannel, sendAlert } = {}) {
 
       // Market alerts — cadence configurable. Le tick lui-même filtre
       // sur RTH (no-op hors marché), donc fire-and-forget chaque
-      // intervalle suffit. now.getMinutes() utilise local time, pas ET ;
-      // pour notre besoin (cadence régulière) c'est équivalent — un
-      // multiple de 5 minutes locale = un multiple en ET.
-      if (marketAlerts && now.getMinutes() % intervalMin === 0) {
+      // intervalle suffit. WS mode: tick driven by a separate fast
+      // setInterval below (every evalIntervalSec seconds). REST mode:
+      // continues at the original minute-aligned cadence.
+      if (!useWs && marketAlerts && now.getMinutes() % intervalMin === 0) {
         marketAlerts.tick(now).catch(err =>
           console.error('[market-alerts] tick failed:', err.message));
       }
@@ -320,6 +339,18 @@ function startScheduler({ client, tradingChannel, sendAlert } = {}) {
         }
       }
     }, 60000);
+
+    // WS mode: drive market-alerts.tick at the configured sub-minute
+    // cadence. Independent of the master 60s scheduler so we get
+    // sub-minute reactivity without polluting the other jobs.
+    if (useWs && marketAlerts) {
+      setInterval(() => {
+        marketAlerts.tick(new Date()).catch(err =>
+          console.error('[market-alerts] tick failed:', err.message));
+      }, evalIntervalSec * 1000);
+      console.log('[market-alerts] fast-tick interval ' + evalIntervalSec + 's armed (WS mode)');
+    }
+
   });
 }
 

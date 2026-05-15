@@ -66,6 +66,36 @@ h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
 #status-msg { margin-top:14px; padding:12px; border-radius:6px; font-size:13px; display:none; }
 #status-msg.success { display:block; background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); color:#10b981; }
 #status-msg.error { display:block; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#ef4444; }
+
+/* Render history */
+#render-history { margin-bottom: 28px; }
+.section-head { display:flex; align-items:center; justify-content:space-between; margin-bottom: 12px; }
+.section-head h2 { font-size:16px; font-weight:700; margin:0; }
+.section-head .sub-info { font-size:12px; color:#80848e; }
+.jobs-list { display:flex; gap:10px; overflow-x:auto; padding-bottom: 8px; scroll-snap-type: x proximity; }
+.jobs-list::-webkit-scrollbar { height: 8px; }
+.jobs-list::-webkit-scrollbar-track { background: rgba(255,255,255,0.03); border-radius: 4px; }
+.jobs-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
+.job-card { flex: 0 0 240px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:12px; scroll-snap-align: start; transition: border-color .2s; }
+.job-card:hover { border-color: rgba(139,92,246,0.4); }
+.job-row { display:flex; align-items:center; justify-content:space-between; margin-bottom: 6px; }
+.job-row:last-child { margin-bottom: 0; }
+.job-ticker { font-size:14px; font-weight:800; color:#fafafa; }
+.job-pnl { font-size:12px; font-weight:700; color:#10b981; }
+.job-pnl.neg { color:#ef4444; }
+.job-meta { font-size:11px; color:#80848e; }
+.job-status { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; }
+.job-status.pending  { background:rgba(245,158,11,0.18); color:#f59e0b; }
+.job-status.done     { background:rgba(16,185,129,0.18); color:#10b981; }
+.job-status.failed   { background:rgba(239,68,68,0.18); color:#ef4444; }
+.job-status .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.job-status.pending .dot { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+.job-tpl { font-size:11px; color:#a0a0b0; margin-top: 4px; font-style: italic; }
+.job-err { font-size:11px; color:#ef4444; margin-top: 4px; word-break: break-word; max-height: 36px; overflow: hidden; }
+.jobs-empty { color:#6b7280; font-size:13px; padding: 18px 0; text-align:center; width: 100%; }
+.live-indicator { display:inline-flex; align-items:center; gap:4px; font-size:11px; color:#10b981; font-weight:600; }
+.live-indicator .dot { width:6px; height:6px; border-radius:50%; background:#10b981; animation: pulse 1.2s ease-in-out infinite; }
 </style></head>
 <body>
 ${sidebarHTML('/video-studio')}
@@ -74,6 +104,19 @@ ${sidebarHTML('/video-studio')}
 <div id="wrap">
   <h1>Génère une vidéo depuis une alerte<span id="count"></span></h1>
   <p class="sub">Pick une image canvas générée par le bot (gallery) et transforme-la en vidéo Remotion auto-postée sur Discord.</p>
+
+  <!-- Render history + live status (auto-refresh 5s) -->
+  <section id="render-history">
+    <div class="section-head">
+      <h2>🎬 Renders récents</h2>
+      <span class="sub-info"><span class="live-indicator"><span class="dot"></span>Live</span> &nbsp;·&nbsp; <span id="jobs-count">0</span> jobs</span>
+    </div>
+    <div class="jobs-list" id="jobs-list"><div class="jobs-empty">Chargement…</div></div>
+  </section>
+
+  <div class="section-head" style="margin-top: 8px;">
+    <h2>🖼 Gallery</h2>
+  </div>
   <div class="filters">
     <button class="filter-btn active" data-filter="all">Toutes</button>
     <button class="filter-btn" data-filter="proof">Proof (entry+exit)</button>
@@ -237,6 +280,9 @@ async function doRender() {
     if (!res.ok) throw new Error(data.error || res.statusText);
     status.className = 'success';
     status.textContent = '✅ Job #' + data.jobId + ' enqueued. Le worker local va render dans les 30s puis poster sur Discord.';
+    // Force-refresh la liste tout de suite pour voir le job apparaître
+    // sans attendre le prochain tick du polling 5s.
+    refreshJobs();
   } catch (e) {
     status.className = 'error';
     status.textContent = '❌ ' + e.message;
@@ -245,6 +291,78 @@ async function doRender() {
     btn.textContent = '🎬 Render';
   }
 }
+
+// ── Render history (auto-refresh) ──────────────────────────────────
+let jobsCache = [];
+
+function fmtRelativeTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso).getTime();
+  const now = Date.now();
+  const sec = Math.round((now - d) / 1000);
+  if (sec < 60) return sec + 's ago';
+  if (sec < 3600) return Math.round(sec / 60) + 'm ago';
+  if (sec < 86400) return Math.round(sec / 3600) + 'h ago';
+  return Math.round(sec / 86400) + 'd ago';
+}
+
+function renderJobs() {
+  const list = document.getElementById('jobs-list');
+  const counter = document.getElementById('jobs-count');
+  counter.textContent = jobsCache.length;
+  if (jobsCache.length === 0) {
+    list.innerHTML = '<div class="jobs-empty">Aucun render. Lance ton premier ci-dessous.</div>';
+    return;
+  }
+  list.innerHTML = jobsCache.map(j => {
+    const pnlNeg = /^-/.test(j.pnl || '');
+    const ticker = j.ticker ? '$' + String(j.ticker).toUpperCase() : '—';
+    const tplLabel = j.templateName || j.composition || '';
+    const safePnl = (j.pnl || '').replace(/</g, '&lt;');
+    const safeErr = (j.error || '').replace(/</g, '&lt;');
+    return '<div class="job-card" data-id="' + j.id + '">' +
+      '<div class="job-row">' +
+        '<span class="job-ticker">' + ticker + '</span>' +
+        '<span class="job-pnl' + (pnlNeg ? ' neg' : '') + '">' + safePnl + '</span>' +
+      '</div>' +
+      '<div class="job-row">' +
+        '<span class="job-status ' + j.status + '"><span class="dot"></span>' + j.status + '</span>' +
+        '<span class="job-meta">#' + j.id + ' · ' + fmtRelativeTime(j.createdAt) + '</span>' +
+      '</div>' +
+      (tplLabel ? '<div class="job-tpl">' + tplLabel + '</div>' : '') +
+      (j.status === 'failed' && j.error ? '<div class="job-err">⚠ ' + safeErr + '</div>' : '') +
+    '</div>';
+  }).join('');
+}
+
+async function refreshJobs() {
+  try {
+    const res = await fetch('/api/video-studio/jobs?limit=30');
+    const data = await res.json();
+    if (Array.isArray(data.jobs)) {
+      jobsCache = data.jobs;
+      renderJobs();
+    }
+  } catch (e) {
+    console.warn('[video-studio] refreshJobs failed:', e.message);
+  }
+}
+
+// Polling toutes les 5s pour le statut live. Pause quand l'onglet est
+// caché (économise CPU + requests si le user a la page ouverte 8h).
+let jobsTimer = null;
+function startJobsPolling() {
+  if (jobsTimer) return;
+  refreshJobs();
+  jobsTimer = setInterval(refreshJobs, 5000);
+}
+function stopJobsPolling() {
+  if (jobsTimer) { clearInterval(jobsTimer); jobsTimer = null; }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) stopJobsPolling();
+  else startJobsPolling();
+});
 
 // Wire up filter buttons + modal close
 document.querySelectorAll('.filter-btn').forEach(b => b.addEventListener('click', () => {
@@ -258,6 +376,7 @@ document.getElementById('btn-render').addEventListener('click', doRender);
 document.getElementById('modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 
 load();
+startJobsPolling();
 </script>
 </body></html>`;
 

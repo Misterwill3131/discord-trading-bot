@@ -1891,6 +1891,42 @@ function getRenderJobById(id) {
   return stmtGetRenderJobById.get(id);
 }
 
+// Liste des N derniers render jobs, tous statuts confondus (ordre récent
+// en premier). Utilisé par /video-studio pour afficher l'historique des
+// vidéos générées + leur état actuel.
+//
+// `statusFilter` (optionnel) = 'pending' | 'done' | 'failed' pour filtrer
+// sur un seul état. Si absent → tout.
+const stmtGetAllRenderJobs = db.prepare(`
+  SELECT id, ticker, entry_author, entry_message, entry_ts,
+         exit_author, exit_message, exit_ts, pnl, status, created_at,
+         done_at, error, discord_msg_id,
+         template_name, composition,
+         entry_price, exit_price, output_channel_id
+  FROM render_jobs
+  ORDER BY created_at DESC
+  LIMIT ?
+`);
+const stmtGetRenderJobsByStatus = db.prepare(`
+  SELECT id, ticker, entry_author, entry_message, entry_ts,
+         exit_author, exit_message, exit_ts, pnl, status, created_at,
+         done_at, error, discord_msg_id,
+         template_name, composition,
+         entry_price, exit_price, output_channel_id
+  FROM render_jobs
+  WHERE status = ?
+  ORDER BY created_at DESC
+  LIMIT ?
+`);
+
+function getAllRenderJobs(limit = 50, statusFilter = null) {
+  const cap = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 500);
+  if (statusFilter) {
+    return stmtGetRenderJobsByStatus.all(statusFilter, cap);
+  }
+  return stmtGetAllRenderJobs.all(cap);
+}
+
 function markRenderJobDone(id, discordMsgId) {
   stmtMarkRenderJobDone.run(discordMsgId || null, id);
 }
@@ -2221,6 +2257,7 @@ module.exports = {
   enqueueRenderJob,
   getPendingRenderJobs,
   getRenderJobById,
+  getAllRenderJobs,
   markRenderJobDone,
   markRenderJobFailed,
 

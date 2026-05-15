@@ -16,7 +16,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { enqueueRenderJob, getMessagesByTicker } = require('../db/sqlite');
+const { enqueueRenderJob, getMessagesByTicker, getAllRenderJobs } = require('../db/sqlite');
 const { computePnlString, extractPrices } = require('../utils/prices');
 const { pickTease, parsePnlNumeric } = require('../utils/pick-tease');
 const { getDisplayName } = require('../utils/authors');
@@ -50,6 +50,39 @@ function loadTemplates() {
 }
 
 function registerVideoStudioRoutes(app, requireAuth, imageState) {
+  // ── GET /api/video-studio/jobs ────────────────────────────────────
+  // Liste des derniers render jobs (tous statuts) pour l'historique +
+  // suivi live. Filtres optionnels : ?status=pending|done|failed, ?limit=N.
+  app.get('/api/video-studio/jobs', requireAuth, (req, res) => {
+    const status = req.query.status || null;
+    const limit = req.query.limit || 50;
+    try {
+      const jobs = getAllRenderJobs(limit, status);
+      // Shape minimaliste pour le front : pas besoin du content complet,
+      // juste ce qui sert à afficher la ligne + status badge.
+      res.json({
+        jobs: jobs.map(j => ({
+          id: j.id,
+          ticker: j.ticker,
+          composition: j.composition,
+          templateName: j.template_name,
+          status: j.status,
+          pnl: j.pnl,
+          entryAuthor: j.entry_author,
+          exitAuthor: j.exit_author,
+          createdAt: j.created_at,
+          doneAt: j.done_at,
+          error: j.error,
+          discordMsgId: j.discord_msg_id,
+          outputChannelId: j.output_channel_id,
+        })),
+      });
+    } catch (err) {
+      console.error('[video-studio] GET /jobs failed:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── GET /api/video-studio/templates ───────────────────────────────
   app.get('/api/video-studio/templates', requireAuth, (_req, res) => {
     const templates = loadTemplates();

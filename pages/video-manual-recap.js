@@ -89,6 +89,10 @@ ${sidebarHTML('/video-studio')}
         <input type="checkbox" id="cfg-autopost" style="width:auto; cursor:pointer;" disabled>
         <span id="cfg-autopost-label">📢 Auto-post Buffer</span>
       </label>
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+        <input type="checkbox" id="cfg-llm-caption" style="width:auto; cursor:pointer;">
+        <span>🤖 Caption AI</span>
+      </label>
       <div style="display: flex; align-items: center; gap: 8px;">
         <label for="cfg-aspect" style="font-size: 11px; color: #a0a0b0; margin: 0;">Aspect:</label>
         <select id="cfg-aspect" style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:6px; padding:6px 10px; color:#fafafa; font-size:12px; font-family:inherit;">
@@ -266,6 +270,7 @@ async function submitRecap() {
       enableNarration: document.getElementById('cfg-narration').checked,
       aspectRatio: document.getElementById('cfg-aspect').value,
       autoPostSocial: document.getElementById('cfg-autopost').checked,
+      useLlmCaption: document.getElementById('cfg-llm-caption').checked,
     };
     const r = await fetch('/api/video-studio/manual-recap', {
       method: 'POST',

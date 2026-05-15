@@ -658,10 +658,40 @@ async function processJob(
   const fileSizeMb = (fs.statSync(outPath).size / 1024 / 1024).toFixed(2);
   console.log(`[worker] rendered ${outPath} (${fileSizeMb} MB)`);
 
+  // Caption Discord : si CAPTION_LLM_ENABLED=1 OU props_override.useLlmCaption,
+  // demande à Claude (utils/caption-llm.js) de générer la caption à la place
+  // de la formule template. Fallback safe à buildCaption si Anthropic KO.
+  let captionText = buildCaption(job);
+  const captionLlmEnvEnabled = process.env.CAPTION_LLM_ENABLED === '1';
+  let perJobLlmEnabled = false;
+  if (job.props_override) {
+    try {
+      const o = JSON.parse(job.props_override);
+      if (o && o.useLlmCaption === true) perJobLlmEnabled = true;
+    } catch { /* swallow */ }
+  }
+  if (captionLlmEnvEnabled || perJobLlmEnabled) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { generateCaption } = require('../../utils/caption-llm');
+      let payload: any = job;
+      if ((job.composition === 'TobTradeRecap' || job.composition === 'BoomRecap') && job.recap_data) {
+        try { payload = JSON.parse(job.recap_data); } catch { /* fallback */ }
+      }
+      const llmCaption = await generateCaption(job.composition || 'ChartTemplate', payload, 'discord');
+      if (llmCaption && llmCaption.length > 10) {
+        captionText = llmCaption;
+        console.log(`[worker] job #${job.id}: caption LLM-generated (${llmCaption.length} chars)`);
+      }
+    } catch (err) {
+      console.warn(`[worker] job #${job.id}: LLM caption failed (${(err as Error).message}) — falling back to template`);
+    }
+  }
+
   try {
     await ackJobSuccess(
       botUrl, token, job.id, outPath,
-      buildCaption(job), job.ticker, job.exitTimestamp,
+      captionText, job.ticker, job.exitTimestamp,
     );
     console.log(`[worker] job ${job.id} ACKed (Discord uploaded)`);
   } catch (err) {

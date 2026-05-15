@@ -256,6 +256,14 @@ ${sidebarHTML('/video-studio')}
       <div class="field-helper" id="modal-autopost-helper">Loading…</div>
     </div>
 
+    <div class="field">
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+        <input type="checkbox" id="modal-llm-caption" style="width:auto; cursor:pointer;">
+        <span>🤖 Caption AI-générée (Claude)</span>
+      </label>
+      <div class="field-helper">Au lieu de la caption template, Claude écrit une caption Discord adaptée au contenu. ~$0.001/render.</div>
+    </div>
+
     <div id="status-msg"></div>
 
     <div class="modal-actions">
@@ -495,6 +503,7 @@ function openModal(id) {
   document.getElementById('modal-ticker-override').value = '';
   document.getElementById('modal-narration').checked = false;
   document.getElementById('modal-autopost').checked = false;
+  document.getElementById('modal-llm-caption').checked = false;
   document.getElementById('modal-aspect').value = '9x16';
   const colorPicker = document.getElementById('modal-accent-override');
   delete colorPicker.dataset.userOverride; // reset le flag pour que updateTplDesc resync
@@ -565,6 +574,7 @@ async function doRender() {
         enableNarration: document.getElementById('modal-narration').checked || undefined,
         aspectRatio: document.getElementById('modal-aspect').value,
         autoPostSocial: document.getElementById('modal-autopost').checked || undefined,
+        useLlmCaption: document.getElementById('modal-llm-caption').checked || undefined,
       }),
     });
     const data = await res.json();

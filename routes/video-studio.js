@@ -153,7 +153,7 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
 
   // ── POST /api/video-studio/render ─────────────────────────────────
   app.post('/api/video-studio/render', requireAuth, (req, res) => {
-    const { galleryId, templateId, ctaUrl, tickerOverride, accentColor, enableNarration, aspectRatio, autoPostSocial } = req.body || {};
+    const { galleryId, templateId, ctaUrl, tickerOverride, accentColor, enableNarration, aspectRatio, autoPostSocial, useLlmCaption } = req.body || {};
     if (!galleryId) return res.status(400).json({ error: 'Missing galleryId' });
     if (!templateId) return res.status(400).json({ error: 'Missing templateId' });
 
@@ -296,6 +296,11 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
     if (autoPostSocial === true || autoPostSocial === 'true') {
       propsOverride.autoPostSocial = true;
     }
+    // Caption LLM-generated (Claude) au lieu du template — le worker
+    // (render-worker.ts) check ce field avant d'envoyer la caption.
+    if (useLlmCaption === true || useLlmCaption === 'true') {
+      propsOverride.useLlmCaption = true;
+    }
     const propsOverrideJson = Object.keys(propsOverride).length > 0
       ? JSON.stringify(propsOverride)
       : null;
@@ -418,10 +423,12 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
     const aspectRatioManual = (body.aspectRatio === '1x1' || body.aspectRatio === '16x9' || body.aspectRatio === '9x16')
       ? body.aspectRatio : null;
     const autoPostManual = body.autoPostSocial === true || body.autoPostSocial === 'true';
+    const useLlmCaptionManual = body.useLlmCaption === true || body.useLlmCaption === 'true';
     const overrideObj = {};
     if (enableNarrationManual) overrideObj.enableNarration = true;
     if (aspectRatioManual && aspectRatioManual !== '9x16') overrideObj.aspectRatio = aspectRatioManual;
     if (autoPostManual) overrideObj.autoPostSocial = true;
+    if (useLlmCaptionManual) overrideObj.useLlmCaption = true;
     const propsOverrideManual = Object.keys(overrideObj).length > 0
       ? JSON.stringify(overrideObj)
       : null;

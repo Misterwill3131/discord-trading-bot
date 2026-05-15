@@ -99,6 +99,8 @@ const COMMON_CSS = `
   .nav-sidebar a:hover { background: var(--bg-elev-2); color: var(--fg-strong); }
   .nav-sidebar a.active { background: rgba(139,92,246,0.1); color: var(--fg-strong); border-left: 3px solid transparent; border-image: linear-gradient(180deg, var(--accent-blue), var(--accent-purple)) 1; font-weight: 600; }
   .nav-sidebar-icon { font-size: 15px; min-width: 20px; text-align: center; }
+  .nav-sidebar-section { padding: var(--space-5) var(--space-4) var(--space-2); font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-subtle); }
+  .nav-sidebar-section:first-of-type { padding-top: var(--space-3); }
 
   /* Page layout */
   .page-content { flex: 1; min-width: 0; overflow-y: auto; }
@@ -150,29 +152,62 @@ const COMMON_CSS = `
   .chip-neutral { background: rgba(128,132,142,0.15); color: #a1a1aa; }
 `;
 
-// Liens de la sidebar. Ajouter une page ? Ajouter une entrée ici et
-// créer la route Express correspondante.
+// Liens de la sidebar — groupés en 4 sections (Overview / Content / Logs /
+// Settings). Ajouter une page = ajouter une entrée dans le bon groupe puis
+// créer la route Express. Pour les consumers qui ont besoin de l'ancien
+// shape plat, voir SIDEBAR_LINKS_FLAT plus bas.
 const SIDEBAR_LINKS = [
-  { href: '/dashboard',       icon: '📡', label: 'Dashboard' },
-  { href: '/stats',           icon: '📊', label: 'Stats' },
-  { href: '/profits',         icon: '💰', label: 'Profits' },
-  { href: '/news',            icon: '📰', label: 'News' },
-  { href: '/leaderboard',     icon: '🏆', label: 'Leaderboard' },
-  { href: '/image-generator', icon: '🖼️', label: 'Image Generator' },
-  { href: '/proof-generator', icon: '🔍', label: 'Proof Generator' },
-  { href: '/gallery',         icon: '🖼', label: 'Galerie' },
-  { href: '/video-studio',    icon: '🎬', label: 'Video Studio' },
-  { href: '/raw-messages',    icon: '📋', label: 'Raw Messages' },
-  { href: '/db-viewer',       icon: '🗄️', label: 'DB Viewer' },
-  { href: '/backup-log',      icon: '💾', label: 'Backup Log' },
-  { href: '/welcome-log',     icon: '👋', label: 'Welcome Log' },
-  { href: '/config',          icon: '⚙️', label: 'Config' },
+  {
+    section: 'Overview',
+    items: [
+      { href: '/dashboard',   icon: '📡',  label: 'Dashboard' },
+      { href: '/stats',       icon: '📊',  label: 'Stats' },
+      { href: '/profits',     icon: '💰',  label: 'Profits' },
+      { href: '/leaderboard', icon: '🏆',  label: 'Leaderboard' },
+    ],
+  },
+  {
+    section: 'Content',
+    items: [
+      { href: '/news',            icon: '📰', label: 'News' },
+      { href: '/image-generator', icon: '🖼️', label: 'Image Generator' },
+      { href: '/proof-generator', icon: '🔍', label: 'Proof Generator' },
+      { href: '/gallery',         icon: '🖼', label: 'Galerie' },
+      { href: '/video-studio',    icon: '🎬', label: 'Video Studio' },
+    ],
+  },
+  {
+    section: 'Logs',
+    items: [
+      { href: '/raw-messages', icon: '📋', label: 'Raw Messages' },
+      { href: '/db-viewer',    icon: '🗄️', label: 'DB Viewer' },
+      { href: '/backup-log',   icon: '💾', label: 'Backup Log' },
+      { href: '/welcome-log',  icon: '👋', label: 'Welcome Log' },
+    ],
+  },
+  {
+    section: 'Settings',
+    items: [
+      { href: '/config', icon: '⚙️', label: 'Config' },
+    ],
+  },
 ];
 
+// Backward-compat: any consumer that previously iterated SIDEBAR_LINKS as
+// a flat array can use this derivative.
+const SIDEBAR_LINKS_FLAT = SIDEBAR_LINKS.flatMap(g => g.items);
+
 function sidebarHTML(active) {
+  const groupsHtml = SIDEBAR_LINKS.map(group => {
+    const header = `<div class="nav-sidebar-section">${group.section}</div>`;
+    const items = group.items.map(l =>
+      `<a href="${l.href}"${active === l.href ? ' class="active"' : ''}><span class="nav-sidebar-icon">${l.icon}</span>${l.label}</a>`
+    ).join('\n  ');
+    return header + '\n  ' + items;
+  }).join('\n  ');
   return `<nav class="nav-sidebar">
   <div class="nav-sidebar-logo">🔥 BOOM</div>
-  ${SIDEBAR_LINKS.map(l => `<a href="${l.href}"${active === l.href ? ' class="active"' : ''}><span class="nav-sidebar-icon">${l.icon}</span>${l.label}</a>`).join('\n  ')}
+  ${groupsHtml}
 </nav>`;
 }
 
@@ -321,6 +356,7 @@ module.exports = {
   COMMON_CSS,
   PUBLIC_CSS,
   SIDEBAR_LINKS,
+  SIDEBAR_LINKS_FLAT,
   sidebarHTML,
   publicLayoutHTML,
   escapeHtml,

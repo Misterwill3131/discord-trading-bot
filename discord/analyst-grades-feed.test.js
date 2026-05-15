@@ -224,3 +224,172 @@ test('buildMessage omits URL when newsURL is missing', () => {
   const msg = buildMessage(e, { action: 'upgrade' });
   assert.doesNotMatch(msg, /https/);
 });
+
+// ── createAnalystGradesPoller (integration) ─────────────────────────
+
+const { createAnalystGradesPoller } = require('./analyst-grades-feed');
+
+function makeMocks() {
+  const sent = [];
+  const fired = [];
+  let nextMarkResult = true;
+  return {
+    fmpClient: {
+      getAnalystGradesFeed: async () => [],
+    },
+    sendAlert: async (msg) => { sent.push(msg); },
+    db: {
+      markAnalystGradeFired: (payload) => { fired.push(payload); return nextMarkResult; },
+      getAnalystWatchlistTickers: () => new Set(),
+    },
+    setFeedRows: function (rows) {
+      this.fmpClient.getAnalystGradesFeed = async () => rows;
+    },
+    setNextMarkResult: function (b) { nextMarkResult = b; },
+    sent,
+    fired,
+  };
+}
+
+test('tick: fires an alert on a watchlist event (single iteration)', async () => {
+  const m = makeMocks();
+  m.db.getAnalystWatchlistTickers = () => new Set(['AAPL']);
+  m.setFeedRows([{
+    symbol: 'AAPL', gradingCompany: 'Tiny Firm',
+    previousGrade: 'Hold', newGrade: 'Buy',
+    priceTarget: 200, priceWhenPosted: 180,
+    newsURL: 'https://example.com/x', publishedDate: '2026-05-15T12:00:00Z',
+  }]);
+  const poller = createAnalystGradesPoller({
+    fmpClient: m.fmpClient, sendAlert: m.sendAlert, db: m.db,
+    watchedTickers: new Set(),
+    tier1Firms: new Set(['goldman sachs']),
+    now: () => new Date('2026-05-15T14:00:00Z'),
+    isRTH: () => true,
+    logger: { log: () => {}, warn: () => {}, error: () => {} },
+  });
+  await poller.tick();
+  assert.strictEqual(m.sent.length, 1);
+  assert.match(m.sent[0], /\*\*\$AAPL\*\*/);
+  assert.strictEqual(m.fired.length, 1);
+  assert.strictEqual(m.fired[0].event_id, 'https://example.com/x');
+  assert.strictEqual(m.fired[0].source, 'watchlist');
+});
+
+test('tick: skips events that don\'t match the filter', async () => {
+  const m = makeMocks();
+  m.setFeedRows([{
+    symbol: 'XYZ', gradingCompany: 'Tiny Firm',
+    previousGrade: 'Buy', newGrade: 'Strong Buy',
+    publishedDate: '2026-05-15T12:00:00Z',
+    newsURL: 'https://example.com/y',
+  }]);
+  const poller = createAnalystGradesPoller({
+    fmpClient: m.fmpClient, sendAlert: m.sendAlert, db: m.db,
+    watchedTickers: new Set(),
+    tier1Firms: new Set(['goldman sachs']),
+    now: () => new Date('2026-05-15T14:00:00Z'),
+    isRTH: () => true,
+    logger: { log: () => {}, warn: () => {}, error: () => {} },
+  });
+  await poller.tick();
+  assert.strictEqual(m.sent.length, 0);
+  assert.strictEqual(m.fired.length, 0);
+});
+
+test('tick: dedup — same event in feed twice fires only once', async () => {
+  const m = makeMocks();
+  m.db.getAnalystWatchlistTickers = () => new Set(['AAPL']);
+  m.setFeedRows([{
+    symbol: 'AAPL', gradingCompany: 'Tiny Firm',
+    previousGrade: 'Hold', newGrade: 'Buy',
+    newsURL: 'https://example.com/dup', publishedDate: '2026-05-15T12:00:00Z',
+  }]);
+  let firstResult = true;
+  m.db.markAnalystGradeFired = () => {
+    const r = firstResult;
+    firstResult = false;
+    return r;
+  };
+  const poller = createAnalystGradesPoller({
+    fmpClient: m.fmpClient, sendAlert: m.sendAlert, db: m.db,
+    watchedTickers: new Set(),
+    tier1Firms: new Set(),
+    now: () => new Date('2026-05-15T14:00:00Z'),
+    isRTH: () => true,
+    logger: { log: () => {}, warn: () => {}, error: () => {} },
+  });
+  await poller.tick();
+  await poller.tick();
+  assert.strictEqual(m.sent.length, 1, 'second tick should be deduped');
+});
+
+test('tick: hors RTH → early return, no FMP call', async () => {
+  const m = makeMocks();
+  let fetchCount = 0;
+  m.fmpClient.getAnalystGradesFeed = async () => { fetchCount++; return []; };
+  const poller = createAnalystGradesPoller({
+    fmpClient: m.fmpClient, sendAlert: m.sendAlert, db: m.db,
+    watchedTickers: new Set(), tier1Firms: new Set(),
+    now: () => new Date('2026-05-15T03:00:00Z'),
+    isRTH: () => false,
+    logger: { log: () => {}, warn: () => {}, error: () => {} },
+  });
+  await poller.tick();
+  assert.strictEqual(fetchCount, 0);
+});
+
+test('tick: FMP error is caught, no crash, no alerts', async () => {
+  const m = makeMocks();
+  m.fmpClient.getAnalystGradesFeed = async () => { throw new Error('FMP boom'); };
+  const poller = createAnalystGradesPoller({
+    fmpClient: m.fmpClient, sendAlert: m.sendAlert, db: m.db,
+    watchedTickers: new Set(), tier1Firms: new Set(),
+    now: () => new Date('2026-05-15T14:00:00Z'),
+    isRTH: () => true,
+    logger: { log: () => {}, warn: () => {}, error: () => {} },
+  });
+  await poller.tick();
+  assert.strictEqual(m.sent.length, 0);
+});
+
+test('tick: respects forced ignoreRTH option (for pre-market 06:00 ET tick)', async () => {
+  const m = makeMocks();
+  m.db.getAnalystWatchlistTickers = () => new Set(['AAPL']);
+  m.setFeedRows([{
+    symbol: 'AAPL', gradingCompany: 'Tiny Firm',
+    previousGrade: 'Hold', newGrade: 'Buy',
+    newsURL: 'https://example.com/x', publishedDate: '2026-05-15T12:00:00Z',
+  }]);
+  const poller = createAnalystGradesPoller({
+    fmpClient: m.fmpClient, sendAlert: m.sendAlert, db: m.db,
+    watchedTickers: new Set(), tier1Firms: new Set(),
+    now: () => new Date('2026-05-15T10:00:00Z'),
+    isRTH: () => false,
+    logger: { log: () => {}, warn: () => {}, error: () => {} },
+  });
+  await poller.tick({ ignoreRTH: true });
+  assert.strictEqual(m.sent.length, 1, 'pre-market tick should still fire');
+});
+
+test('getStats returns counters', async () => {
+  const m = makeMocks();
+  m.db.getAnalystWatchlistTickers = () => new Set(['AAPL']);
+  m.setFeedRows([
+    { symbol: 'AAPL', gradingCompany: 'X', previousGrade: 'Hold', newGrade: 'Buy', newsURL: 'a', publishedDate: 't' },
+    { symbol: 'AAPL', gradingCompany: 'Y', previousGrade: 'Hold', newGrade: 'Buy', newsURL: 'b', publishedDate: 't' },
+    { symbol: 'XYZ',  gradingCompany: 'Z', previousGrade: 'Buy',  newGrade: 'Buy', newsURL: 'c', publishedDate: 't' },
+  ]);
+  const poller = createAnalystGradesPoller({
+    fmpClient: m.fmpClient, sendAlert: m.sendAlert, db: m.db,
+    watchedTickers: new Set(), tier1Firms: new Set(),
+    now: () => new Date('2026-05-15T14:00:00Z'),
+    isRTH: () => true,
+    logger: { log: () => {}, warn: () => {}, error: () => {} },
+  });
+  await poller.tick();
+  const stats = poller.getStats();
+  assert.strictEqual(stats.eventsSeen, 3);
+  assert.strictEqual(stats.alertsFired, 2);
+  assert.strictEqual(typeof stats.lastPollTs, 'string');
+});

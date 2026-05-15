@@ -186,6 +186,103 @@ function buildMessage(event, { action } = {}) {
   return msg;
 }
 
+
+// Creates a poller that, on each tick:
+//   1. RTH-guards (unless overridden by `tick({ ignoreRTH: true })`)
+//   2. Fetches the latest grades feed
+//   3. For each event: evaluates, dedups, marks, sends Discord alert
+//
+// External deps are all injected so this is fully testable without
+// touching real FMP / real DB / real Discord.
+function createAnalystGradesPoller({
+  fmpClient,
+  sendAlert,
+  db,
+  watchedTickers = new Set(),
+  tier1Firms = new Set(),
+  now = () => new Date(),
+  isRTH,
+  logger = console,
+} = {}) {
+  if (!fmpClient || typeof fmpClient.getAnalystGradesFeed !== 'function') {
+    throw new Error('fmpClient.getAnalystGradesFeed required');
+  }
+  if (typeof sendAlert !== 'function') throw new Error('sendAlert (function) required');
+  if (!db || typeof db.markAnalystGradeFired !== 'function'
+         || typeof db.getAnalystWatchlistTickers !== 'function') {
+    throw new Error('db.{markAnalystGradeFired,getAnalystWatchlistTickers} required');
+  }
+  if (typeof isRTH !== 'function') throw new Error('isRTH (function) required');
+
+  const stats = { eventsSeen: 0, alertsFired: 0, errors: 0, lastPollTs: null };
+
+  async function tick({ ignoreRTH = false } = {}) {
+    const nowDate = now();
+    if (!ignoreRTH && !isRTH(nowDate)) return;
+
+    let rows;
+    try {
+      rows = await fmpClient.getAnalystGradesFeed({ page: 0 });
+    } catch (err) {
+      logger.error('[analyst-grades] feed fetch failed:', err.message);
+      stats.errors++;
+      return;
+    }
+    if (!Array.isArray(rows)) return;
+
+    stats.lastPollTs = nowDate.toISOString();
+    stats.eventsSeen += rows.length;
+
+    let watchlistFromDb;
+    try {
+      watchlistFromDb = db.getAnalystWatchlistTickers();
+    } catch (err) {
+      logger.error('[analyst-grades] getAnalystWatchlistTickers failed:', err.message);
+      watchlistFromDb = new Set();
+    }
+    const watchlist = new Set([...watchedTickers, ...watchlistFromDb]);
+
+    for (const event of rows) {
+      if (!event || (!event.symbol && !event.ticker)) continue;
+      const r = evaluate(event, { watchlist, tier1Firms });
+      if (!r.shouldAlert) continue;
+
+      const eid = eventId(event);
+      const ticker = String(event.symbol || event.ticker || '').toUpperCase();
+      const ts = String(event.publishedDate || event.ts || nowDate.toISOString());
+      const firm = String(event.gradingCompany || event.firm || '');
+
+      const claimed = db.markAnalystGradeFired({
+        event_id:   eid,
+        ticker,
+        ts,
+        firm,
+        action:     r.action,
+        new_grade:  event.newGrade || null,
+        prev_grade: event.previousGrade || null,
+        source:     r.source,
+        fired_at:   nowDate.toISOString(),
+      });
+      if (!claimed) continue;
+
+      const message = buildMessage(event, { action: r.action });
+      try {
+        await sendAlert(message);
+        stats.alertsFired++;
+        logger.log('[analyst-grades] FIRED ' + r.action + ' ' + ticker + ' by ' + firm);
+      } catch (err) {
+        logger.error('[analyst-grades] sendAlert failed for ' + ticker + ': ' + err.message);
+      }
+    }
+  }
+
+  function getStats() {
+    return { ...stats };
+  }
+
+  return { tick, getStats };
+}
+
 module.exports = {
   GRADE_RANK,
   gradeRank,
@@ -194,4 +291,5 @@ module.exports = {
   evaluate,
   buildMessage,
   isTier1Firm,
+  createAnalystGradesPoller,
 };

@@ -1,44 +1,18 @@
 // ─────────────────────────────────────────────────────────────────────
 // discord/fmp-ws-marketclient.js — Adapter marketClient via WS FMP
 // ─────────────────────────────────────────────────────────────────────
-// Implémente le contrat marketClient (getQuote, getDailyBars) attendu
-// par discord/market-alerts.js, en utilisant :
-//   - un wsClient FMP qui stream les trades en temps réel
-//   - un restClient FMP REST pour les daily bars (historique)
+// Implements the marketClient contract (getQuote, getDailyBars) expected
+// by discord/market-alerts.js, sourcing live prices from a wsClient that
+// streams full FMP quote objects, with automatic REST fallback when the
+// WebSocket is unstable.
 //
-// État interne : Map<TICKER, { lastPrice, lastTs, cumulativeVolumeToday,
-// etDateOfCumulative }>. Reset cumulé au changement d'ET-date et
-// skip pre-market (avant 09:30 ET).
+// FMP streams are subscribed at the EXCHANGE / SYNTHETIC level (e.g.
+// fmp-us-equities-stream). Every quote for every symbol in that stream
+// is delivered — we filter client-side against the configured tickers
+// of interest and cache only the latest per-symbol.
 //
-// Spec : docs/superpowers/specs/2026-05-14-fmp-websocket-stocks-design.md
+// Spec : docs/superpowers/specs/2026-05-15-fmp-websocket-fix-design.md
 // ─────────────────────────────────────────────────────────────────────
-
-// Compute "YYYY-MM-DD" in America/New_York timezone.
-function getETDateKey(date) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    year: 'numeric', month: '2-digit', day: '2-digit',
-  }).formatToParts(date).reduce((acc, p) => {
-    if (p.type !== 'literal') acc[p.type] = p.value;
-    return acc;
-  }, {});
-  return parts.year + '-' + parts.month + '-' + parts.day;
-}
-
-// True if `date` falls within US regular trading hours (Mon-Fri 09:30-16:00 ET).
-// Mirrors discord/market-alerts.js:isRTH for consistency.
-function isRTH(date) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
-    weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
-  }).formatToParts(date).reduce((acc, p) => {
-    if (p.type !== 'literal') acc[p.type] = p.value;
-    return acc;
-  }, {});
-  if (parts.weekday === 'Sat' || parts.weekday === 'Sun') return false;
-  const mins = parseInt(parts.hour, 10) * 60 + parseInt(parts.minute, 10);
-  return mins >= 9 * 60 + 30 && mins < 16 * 60;
-}
 
 function createFmpWsMarketClient({
   apiKey,
@@ -47,25 +21,28 @@ function createFmpWsMarketClient({
   restClient,
   now = () => new Date(),
   logger = console,
-  fallbackFailureThreshold = 10,   // disconnects within window before flipping to REST
+  fallbackFailureThreshold = 10,
   fallbackFailureWindowMs = 5 * 60_000,
-  maxStalenessMs = 15 * 60_000,    // cached quote is null if older than this
+  maxStalenessMs = 15 * 60_000,
 } = {}) {
   if (!wsClient)   throw new Error('wsClient required');
   if (!restClient) throw new Error('restClient required');
 
-  // ticker (UPPERCASE) → { lastPrice, lastTs, cumulativeVolumeToday, etDateOfCumulative }
+  // Cache: keyed by UPPERCASE symbol.
   const cache = new Map();
 
-  // Track recent disconnect timestamps. When length within the rolling
-  // window exceeds the threshold, flip `inFallback` true. The 'connected'
-  // event resets fallback to false.
+  // Tickers of interest — UPPERCASE for case-insensitive matching.
+  const watchedTickers = new Set(
+    tickers.map(t => String(t).toUpperCase()).filter(Boolean),
+  );
+
+  // Sliding window of disconnect timestamps; flip inFallback when count
+  // within the window exceeds threshold.
   let disconnectTimes = [];
   let inFallback = false;
 
   function recordDisconnect() {
     const t = now().getTime();
-    // Drop events older than the window
     disconnectTimes = disconnectTimes.filter(x => (t - x) <= fallbackFailureWindowMs);
     disconnectTimes.push(t);
     if (!inFallback && disconnectTimes.length >= fallbackFailureThreshold) {
@@ -84,40 +61,30 @@ function createFmpWsMarketClient({
     disconnectTimes = [];
   }
 
-  function onTrade({ ticker, price, tradeSize, ts }) {
-    const key = String(ticker).toUpperCase();
-    const nowDate = now();
-    const todayKey = getETDateKey(nowDate);
-    const inRTH = isRTH(nowDate);
+  function onQuote(q) {
+    if (!q || typeof q !== 'object') return;
+    const symbol = String(q.symbol || '').toUpperCase();
+    if (!symbol || !watchedTickers.has(symbol)) return;
 
-    let entry = cache.get(key);
-    if (!entry) {
-      entry = {
-        lastPrice: null,
-        lastTs: null,
-        cumulativeVolumeToday: 0,
-        etDateOfCumulative: todayKey,
-      };
-      cache.set(key, entry);
-    }
-    // Always update price (pre-market quotes are still useful context).
-    entry.lastPrice = Number(price);
-    entry.lastTs = Number(ts);
-    // Volume: reset if ET-date changed, then only accumulate during RTH.
-    if (entry.etDateOfCumulative !== todayKey) {
-      entry.cumulativeVolumeToday = 0;
-      entry.etDateOfCumulative = todayKey;
-    }
-    if (inRTH && Number.isFinite(tradeSize)) {
-      entry.cumulativeVolumeToday += Number(tradeSize);
-    }
+    const price = Number.isFinite(q.price) ? q.price : null;
+    if (price == null) return;   // do not cache garbage
+
+    cache.set(symbol, {
+      price,
+      volume:    Number.isFinite(q.volume) ? q.volume : 0,
+      dayHigh:   Number.isFinite(q.dayHigh) ? q.dayHigh : null,
+      dayLow:    Number.isFinite(q.dayLow)  ? q.dayLow  : null,
+      timestamp: Number(q.timestamp) || 0,
+      receivedAt: now().getTime(),
+    });
   }
 
-  wsClient.on('trade', onTrade);
+  wsClient.on('quote', onQuote);
   wsClient.on('disconnected', recordDisconnect);
   wsClient.on('connected', clearFallback);
   wsClient.on('error', (err) => {
-    logger.error('[fmp-ws-marketclient] WS error: ' + (err && err.message ? err.message : String(err)));
+    logger.error('[fmp-ws-marketclient] WS error: '
+      + (err && err.message ? err.message : String(err)));
     recordDisconnect();
   });
 
@@ -128,17 +95,11 @@ function createFmpWsMarketClient({
       }
       const key = String(ticker).toUpperCase();
       const entry = cache.get(key);
-      if (!entry || entry.lastPrice == null) return null;
-      // Staleness: if the last trade is older than maxStalenessMs, treat
-      // the cache as no-data. Protects illiquid tickers from firing
-      // spurious alerts against fresh daily bars.
-      if (entry.lastTs != null && (now().getTime() - entry.lastTs) > maxStalenessMs) {
+      if (!entry || entry.price == null) return null;
+      if ((now().getTime() - entry.receivedAt) > maxStalenessMs) {
         return null;
       }
-      return {
-        price: entry.lastPrice,
-        volume: entry.cumulativeVolumeToday,
-      };
+      return { price: entry.price, volume: entry.volume };
     },
 
     async getDailyBars(ticker) {
@@ -159,11 +120,11 @@ function createFmpWsMarketClient({
         source: inFallback ? 'rest-fallback' : 'ws',
         wsConnected: !!ws.connected,
         wsAttemptCount: ws.attemptCount || 0,
-        subscribedTickers: Array.isArray(ws.subscribedTickers) ? ws.subscribedTickers : [],
+        subscribedStreams: Array.isArray(ws.subscribedStreams) ? ws.subscribedStreams : [],
         recentDisconnects: disconnectTimes.length,
       };
     },
   };
 }
 
-module.exports = { createFmpWsMarketClient, getETDateKey, isRTH };
+module.exports = { createFmpWsMarketClient };

@@ -2,7 +2,7 @@ import { Composition } from 'remotion';
 import { BrandPromo } from './compositions/BrandPromo';
 import { SignalAlert, SignalAlertProps } from './compositions/SignalAlert';
 import { ChartTemplate, chartTemplateSchema, computeChartTemplateTotalFrames } from './compositions/ChartTemplate';
-import { BoomEntry, boomEntrySchema } from './compositions/BoomEntry';
+import { BoomEntry, boomEntrySchema, computeBoomEntryTotalFrames } from './compositions/BoomEntry';
 import { BoomRecap, boomRecapSchema, computeTotalFrames } from './compositions/BoomRecap';
 import { TobBrandStory, tobBrandStorySchema, computeBrandStoryTotalFrames } from './compositions/TobBrandStory';
 import { TobTradeRecap, tobTradeRecapSchema, computeTradeRecapTotalFrames } from './compositions/TobTradeRecap';
@@ -69,6 +69,13 @@ const boomRecapDefaults = {
   showTop3Phase: true,
   lifestyleSeed: 0,
   narrationDataUrl: null,
+  narrationText: null,
+  logoUrl: null,
+  logoCorner: 'top-right' as const,
+  introStingUrl: null,
+  introStingFrames: 45,
+  outroStingUrl: null,
+  outroStingFrames: 45,
 };
 
 export const Root = () => {
@@ -106,7 +113,6 @@ export const Root = () => {
       <Composition
         id="BoomEntry"
         component={BoomEntry}
-        durationInFrames={466}
         fps={30}
         width={1080}
         height={1920}
@@ -133,7 +139,17 @@ export const Root = () => {
           ctaTitleFontSize: 200,
           transitionType: 'fade' as const,
           narrationDataUrl: null,
+          narrationText: null,
+          logoUrl: null,
+          logoCorner: 'top-right' as const,
+          introStingUrl: null,
+          introStingFrames: 45,
+          outroStingUrl: null,
+          outroStingFrames: 45,
         }}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: computeBoomEntryTotalFrames(props as any),
+        })}
       />
       <Composition
         id="BoomRecap"

@@ -126,13 +126,22 @@ function makeFakeDb({ active = [], archiveReturns = 0 } = {}) {
 }
 
 // Minimal fake Discord client + channel + message that returns the reply.
-function makeFakeDiscord({ replyId = 'reply-1', failFetch = false } = {}) {
+function makeFakeDiscord({
+  replyId = 'reply-1',
+  failFetch = false,
+  dedicatedChannelId = null,
+  sourceGuildId = 'guild-1',
+  dedicatedSendFails = false,
+} = {}) {
   const replies = [];
-  const channel = {
+  const sends   = [];
+
+  const sourceChannel = {
     messages: {
       fetch: async (id) => {
         if (failFetch) throw new Error('source message gone');
         return {
+          guildId: sourceGuildId,
           reply: async ({ content }) => {
             replies.push({ messageId: id, content });
             return { id: replyId };
@@ -141,9 +150,26 @@ function makeFakeDiscord({ replyId = 'reply-1', failFetch = false } = {}) {
       },
     },
   };
+
+  const dedicatedChannel = {
+    send: async ({ content }) => {
+      if (dedicatedSendFails) throw new Error('dedicated send failed');
+      sends.push({ content });
+      return { id: 'sent-' + replyId };
+    },
+  };
+
   return {
-    channels: { fetch: async () => channel },
+    channels: {
+      fetch: async (id) => {
+        if (dedicatedChannelId && String(id) === String(dedicatedChannelId)) {
+          return dedicatedChannel;
+        }
+        return sourceChannel;
+      },
+    },
     _replies: replies,
+    _sends:   sends,
   };
 }
 
@@ -371,4 +397,86 @@ test('tick does not backfill discord_message_id when reply fails', async () => {
   // Insert happened, but reply failed → no backfill call
   assert.strictEqual(fakeDb._calls.insertMilestoneAlert.length, 1);
   assert.strictEqual(fakeDb._calls.setMilestoneAlertDiscordId.length, 0);
+});
+
+test('tick mode reply : env var empty → behaviour inchangé (sourceMsg.reply)', async () => {
+  delete process.env.MILESTONE_ALERTS_CHANNEL_ID;
+  const fakeDb = makeFakeDb({ active: [SAMPLE_ENTRY] });
+  const fakeMarket = { getQuotesBulk: async () => ({ AAPL: { price: 250, volume: 1 } }) };
+  const fakeClient = makeFakeDiscord({ replyId: 'rep-reply-mode' });
+  await tick(fakeClient, 1700001000000, {
+    db: fakeDb,
+    marketClient: fakeMarket,
+    isRTH: () => true,
+    milestones: [20, 50],
+    cooldownMs: 3600_000,
+    ttlMs: 30 * 86400_000,
+  });
+  assert.strictEqual(fakeClient._replies.length, 1);
+  assert.strictEqual(fakeClient._sends.length, 0);
+  assert.ok(fakeClient._replies[0].content.includes('+20%'));
+  assert.ok(!fakeClient._replies[0].content.includes('📎'));
+  assert.strictEqual(fakeDb._calls.updateWatchlistAfterAlert.length, 1);
+});
+
+test('tick mode canal dédié : env var set → channel.send + lien source', async () => {
+  process.env.MILESTONE_ALERTS_CHANNEL_ID = 'dedicated-chan-id';
+  try {
+    const fakeDb = makeFakeDb({ active: [SAMPLE_ENTRY] });
+    const fakeMarket = { getQuotesBulk: async () => ({ AAPL: { price: 250, volume: 1 } }) };
+    const fakeClient = makeFakeDiscord({
+      replyId: 'rep-dedicated',
+      dedicatedChannelId: 'dedicated-chan-id',
+      sourceGuildId: 'guild-xyz',
+    });
+    await tick(fakeClient, 1700001000000, {
+      db: fakeDb,
+      marketClient: fakeMarket,
+      isRTH: () => true,
+      milestones: [20, 50],
+      cooldownMs: 3600_000,
+      ttlMs: 30 * 86400_000,
+    });
+    assert.strictEqual(fakeClient._replies.length, 0);
+    assert.strictEqual(fakeClient._sends.length, 1);
+    assert.ok(fakeClient._sends[0].content.includes('+20%'));
+    assert.ok(fakeClient._sends[0].content.includes(
+      '📎 https://discord.com/channels/guild-xyz/chan-1/src-1'
+    ));
+    assert.strictEqual(fakeDb._calls.setMilestoneAlertDiscordId.length, 1);
+    assert.strictEqual(
+      fakeDb._calls.setMilestoneAlertDiscordId[0].discordMessageId,
+      'sent-rep-dedicated'
+    );
+    assert.strictEqual(fakeDb._calls.updateWatchlistAfterAlert.length, 1);
+  } finally {
+    delete process.env.MILESTONE_ALERTS_CHANNEL_ID;
+  }
+});
+
+test('tick mode canal dédié : source message gone → post sans lien (graceful)', async () => {
+  process.env.MILESTONE_ALERTS_CHANNEL_ID = 'dedicated-chan-id';
+  try {
+    const fakeDb = makeFakeDb({ active: [SAMPLE_ENTRY] });
+    const fakeMarket = { getQuotesBulk: async () => ({ AAPL: { price: 250, volume: 1 } }) };
+    const fakeClient = makeFakeDiscord({
+      replyId: 'rep-no-link',
+      dedicatedChannelId: 'dedicated-chan-id',
+      failFetch: true,
+    });
+    await tick(fakeClient, 1700001000000, {
+      db: fakeDb,
+      marketClient: fakeMarket,
+      isRTH: () => true,
+      milestones: [20, 50],
+      cooldownMs: 3600_000,
+      ttlMs: 30 * 86400_000,
+    });
+    assert.strictEqual(fakeClient._sends.length, 1);
+    assert.ok(!fakeClient._sends[0].content.includes('📎'));
+    assert.ok(fakeClient._sends[0].content.includes('+20%'));
+    assert.strictEqual(fakeDb._calls.updateWatchlistAfterAlert.length, 1);
+  } finally {
+    delete process.env.MILESTONE_ALERTS_CHANNEL_ID;
+  }
 });

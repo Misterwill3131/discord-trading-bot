@@ -247,11 +247,14 @@ const TablePhase: React.FC<{
   bgColor: string;
 }> = ({ trades, accentColor, successColor, errorColor, bgColor }) => {
   const frame = useCurrentFrame();
-  const { durationInFrames } = useVideoConfig();
+  const { durationInFrames, height: canvasHeight } = useVideoConfig();
 
+  // Layout responsive : VISIBLE_TABLE_HEIGHT = ~75% du canvas height pour
+  // laisser room au titre + padding. Marche pour 9:16 (1920→1440), 1:1
+  // (1080→810), 16:9 (1080→810).
   const ROW_HEIGHT_BASE = 52;
   const HEADER_HEIGHT = 60;
-  const VISIBLE_TABLE_HEIGHT = 1450;  // 9:16 1920px tall, leave room for title + padding
+  const VISIBLE_TABLE_HEIGHT = Math.round(canvasHeight * 0.75);
   const naturalContentH = Math.max(1, trades.length * ROW_HEIGHT_BASE);
   const SCALE = Math.max(1, Math.min(2.5, VISIBLE_TABLE_HEIGHT / naturalContentH));
 
@@ -438,7 +441,7 @@ const AlertsParadePhase: React.FC<{
   secondsPerAlert: number;
 }> = ({ alertImages, accentColor, bgColor, secondsPerAlert }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const { fps, height: canvasHeight } = useVideoConfig();
 
   if (alertImages.length === 0) {
     return (
@@ -450,16 +453,17 @@ const AlertsParadePhase: React.FC<{
     );
   }
 
-  // ── Layout constants ──
-  // L'aire utile va de y=HEADER_BOTTOM jusqu'à y=SCREEN_HEIGHT - BOTTOM_MARGIN.
-  const SCREEN_HEIGHT = 1920;
+  // ── Layout constants (responsive au canvas) ──
+  // L'aire utile va de y=HEADER_BOTTOM jusqu'à y=canvasHeight - BOTTOM_MARGIN.
+  // Marche en 9:16 (1920), 1:1 (1080), 16:9 (1080).
+  const SCREEN_HEIGHT = canvasHeight;
   const HEADER_BOTTOM = 180;          // sous le titre "TODAY'S ALERTS"
   const BOTTOM_MARGIN = 80;
-  const USABLE_HEIGHT = SCREEN_HEIGHT - HEADER_BOTTOM - BOTTOM_MARGIN;  // ~1660px
+  const USABLE_HEIGHT = Math.max(200, SCREEN_HEIGHT - HEADER_BOTTOM - BOTTOM_MARGIN);
   const ALERT_MAX_HEIGHT = 180;       // height max d'une carte d'alerte
   const ALERT_SPACING = 16;
   const STEP_Y = ALERT_MAX_HEIGHT + ALERT_SPACING;  // 196px
-  const MAX_VISIBLE = Math.floor(USABLE_HEIGHT / STEP_Y);  // ~8 alertes
+  const MAX_VISIBLE = Math.max(1, Math.floor(USABLE_HEIGHT / STEP_Y));
 
   const framesPerAlert = Math.max(1, Math.round(secondsPerAlert * fps));
   const APPEAR = 12;  // fade-in 0.4s

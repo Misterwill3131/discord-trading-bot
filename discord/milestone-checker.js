@@ -145,8 +145,6 @@ async function tick(client, nowMs, deps = {}) {
     // Reply Discord. Si fail (msg supprimé, perms), on garde l'insert :
     // perdre 1 alerte vaut mieux qu'en spammer au tick suivant.
     try {
-      const channel = await client.channels.fetch(entry.source_channel_id);
-      const sourceMsg = await channel.messages.fetch(entry.source_message_id);
       const text = buildAlertMessage({
         ticker: entry.ticker,
         milestonePct: target,
@@ -155,10 +153,46 @@ async function tick(client, nowMs, deps = {}) {
         gainPct,
         mentionedByUsername: entry.mentioned_by_username,
       });
-      const reply = await sourceMsg.reply({
-        content: text,
-        allowedMentions: { parse: [] },
-      });
+
+      const dedicatedChannelId = process.env.MILESTONE_ALERTS_CHANNEL_ID || '';
+
+      let reply;
+      if (dedicatedChannelId) {
+        // Mode canal dédié : post normal + lien vers le message d'origine
+        // si on arrive à récupérer le guildId. Si la source est inaccessible
+        // (msg supprimé, perms perdues), on poste sans le lien plutôt que
+        // de skip l'alerte entièrement.
+        let sourceLink = '';
+        try {
+          const sourceChannel = await client.channels.fetch(entry.source_channel_id);
+          const sourceMsg     = await sourceChannel.messages.fetch(entry.source_message_id);
+          const guildId       = sourceMsg.guildId
+            || (sourceMsg.guild && sourceMsg.guild.id)
+            || '';
+          if (guildId) {
+            sourceLink = '\n📎 https://discord.com/channels/'
+              + guildId + '/' + entry.source_channel_id + '/' + entry.source_message_id;
+          }
+        } catch (err) {
+          console.warn('[milestone-checker] source link unavailable for '
+            + entry.ticker + ': ' + err.message);
+        }
+
+        const ch = await client.channels.fetch(dedicatedChannelId);
+        reply = await ch.send({
+          content: text + sourceLink,
+          allowedMentions: { parse: [] },
+        });
+      } else {
+        // Mode reply : comportement actuel.
+        const channel   = await client.channels.fetch(entry.source_channel_id);
+        const sourceMsg = await channel.messages.fetch(entry.source_message_id);
+        reply = await sourceMsg.reply({
+          content: text,
+          allowedMentions: { parse: [] },
+        });
+      }
+
       // Backfill the discord_message_id on the milestone_alerts row we
       // just inserted. Non-blocking : if this update fails, the alert
       // was still posted — we just lose the audit link.

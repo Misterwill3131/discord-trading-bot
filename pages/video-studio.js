@@ -134,6 +134,7 @@ ${sidebarHTML('/video-studio')}
 <div class="page-header">
   <div class="page-title">🎬 Video Studio</div>
   <div style="margin-left:auto; padding-right:24px; display:flex; gap:14px;">
+    <a href="/video-studio/ab-results" style="font-size:13px; color:#8b5cf6; text-decoration:none;">⚖ A/B results →</a>
     <a href="/video-studio/manual-recap" style="font-size:13px; color:#8b5cf6; text-decoration:none;">📝 Manual recap →</a>
     <a href="/video-studio/templates" style="font-size:13px; color:#8b5cf6; text-decoration:none;">⚙ Edit templates →</a>
   </div>

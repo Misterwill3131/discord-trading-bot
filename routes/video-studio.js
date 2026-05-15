@@ -50,6 +50,13 @@ function loadTemplates() {
     .filter(Boolean);
 }
 
+// Discord client injecté via setVideoStudioDiscordClient(client) APRÈS
+// la création du client dans index.js. Sert au /ab-leaderboard pour
+// fetch les reactions sur les messages Discord rendus. Null = endpoint
+// renvoie groups sans engagement count.
+let _discordClient = null;
+function setVideoStudioDiscordClient(client) { _discordClient = client; }
+
 function registerVideoStudioRoutes(app, requireAuth, imageState) {
   // ── GET /api/video-studio/jobs ────────────────────────────────────
   // Liste des derniers render jobs (tous statuts) pour l'historique +
@@ -568,6 +575,97 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
     }
   });
 
+  // ── GET /api/video-studio/ab-leaderboard ─────────────────────────
+  // Pour chaque ab_group avec les 2 variants A et B en status='done',
+  // fetch les reactions du message Discord posté et compute :
+  //   - reactionsA, reactionsB : total réactions (toutes émotes confondues)
+  //   - winner : 'A' | 'B' | 'tie' selon le compte
+  //   - delta : différence absolue (pour le tri)
+  // Renvoie le top 50 par delta DESC.
+  //
+  // Discord API quirk : il faut le Discord client injecté pour fetch
+  // les channels + messages. Sans client (booting), renvoie groups
+  // brut sans engagement.
+  app.get('/api/video-studio/ab-leaderboard', requireAuth, async (req, res) => {
+    try {
+      const groups = getAbGroupedJobs(100);
+      const completed = groups.filter(g => g.jobs.A && g.jobs.B
+        && g.jobs.A.status === 'done' && g.jobs.B.status === 'done'
+        && g.jobs.A.discord_msg_id && g.jobs.B.discord_msg_id);
+
+      if (!_discordClient || !_discordClient.channels) {
+        // Sans Discord client (test/boot), renvoie sans engagement
+        return res.json({
+          leaderboard: completed.map(g => ({
+            abGroup: g.ab_group,
+            jobA: { id: g.jobs.A.id, template: g.jobs.A.template_name },
+            jobB: { id: g.jobs.B.id, template: g.jobs.B.template_name },
+            reactionsA: null,
+            reactionsB: null,
+            winner: 'unknown',
+            delta: 0,
+          })),
+        });
+      }
+
+      // Fetch reactions count pour chaque message Discord. Best-effort —
+      // un message supprimé ou bot kické skip l'entry sans crasher tout.
+      const results = [];
+      for (const g of completed) {
+        const a = g.jobs.A;
+        const b = g.jobs.B;
+        let rA = 0, rB = 0;
+        let fetchedA = false, fetchedB = false;
+        try {
+          const ch = a.output_channel_id
+            ? (_discordClient.channels.cache.get(a.output_channel_id)
+                || await _discordClient.channels.fetch(a.output_channel_id))
+            : null;
+          if (ch && ch.messages) {
+            const msg = await ch.messages.fetch(a.discord_msg_id);
+            rA = msg.reactions.cache.reduce((sum, r) => sum + (r.count || 0), 0);
+            fetchedA = true;
+          }
+        } catch { /* skip A */ }
+        try {
+          const ch = b.output_channel_id
+            ? (_discordClient.channels.cache.get(b.output_channel_id)
+                || await _discordClient.channels.fetch(b.output_channel_id))
+            : null;
+          if (ch && ch.messages) {
+            const msg = await ch.messages.fetch(b.discord_msg_id);
+            rB = msg.reactions.cache.reduce((sum, r) => sum + (r.count || 0), 0);
+            fetchedB = true;
+          }
+        } catch { /* skip B */ }
+
+        const winner = (!fetchedA || !fetchedB) ? 'unknown'
+          : (rA > rB ? 'A' : rB > rA ? 'B' : 'tie');
+        results.push({
+          abGroup: g.ab_group,
+          jobA: { id: a.id, template: a.template_name, discordMsgId: a.discord_msg_id },
+          jobB: { id: b.id, template: b.template_name, discordMsgId: b.discord_msg_id },
+          reactionsA: fetchedA ? rA : null,
+          reactionsB: fetchedB ? rB : null,
+          winner,
+          delta: Math.abs(rA - rB),
+          createdAt: a.created_at,
+        });
+      }
+      // Tri : winners en haut par delta DESC, "unknown"/"tie" en bas.
+      results.sort((a, b) => {
+        const aDone = a.winner === 'A' || a.winner === 'B' ? 0 : 1;
+        const bDone = b.winner === 'A' || b.winner === 'B' ? 0 : 1;
+        if (aDone !== bDone) return aDone - bDone;
+        return b.delta - a.delta;
+      });
+      res.json({ leaderboard: results.slice(0, 50) });
+    } catch (err) {
+      console.error('[video-studio] GET /ab-leaderboard failed:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── GET /api/video-studio/buffer-status ──────────────────────────
   // Renseigne l'UI si l'option "Auto-post Buffer" est utilisable (env
   // vars set ?). Sans Buffer, on grise la checkbox dans les modals.
@@ -585,4 +683,4 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
   });
 }
 
-module.exports = { registerVideoStudioRoutes };
+module.exports = { registerVideoStudioRoutes, setVideoStudioDiscordClient };

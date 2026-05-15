@@ -41,7 +41,7 @@ const newsPoller = require('./news/poller');
 const profitCounter = require('./profit/counter');
 const { registerPageRoutes } = require('./routes/pages');
 const { registerImageRoutes } = require('./routes/images');
-const { registerVideoStudioRoutes } = require('./routes/video-studio');
+const { registerVideoStudioRoutes, setVideoStudioDiscordClient } = require('./routes/video-studio');
 const { registerNewsRoutes } = require('./routes/news');
 const { registerAnalyticsRoutes } = require('./routes/analytics');
 const { registerFilterRoutes } = require('./routes/filters');
@@ -337,6 +337,10 @@ discordClientRef = client;  // active sendTradingAlert()
 // Doit être enregistré APRÈS la création de `client` car le helper d'upload
 // Discord a besoin du client pour poster dans RENDER_OUTPUT_CHANNEL_ID.
 registerRenderQueueRoutes(app, client);
+
+// Inject le client Discord dans video-studio (utilisé par /ab-leaderboard
+// pour fetch les reactions sur les messages render postés).
+setVideoStudioDiscordClient(client);
 
 // Listeners + scheduler. Les helpers internes font eux-mêmes leur
 // `client.once('ready')` si nécessaire — pas de ordre requis ici.

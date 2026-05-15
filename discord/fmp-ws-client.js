@@ -49,6 +49,8 @@ function createFmpWsClient({
   let loggedIn = false;
   let stopped = false;
   let connecting = false;
+  let attemptCount = 0;
+  let reconnectHandle = null;
 
   function send(obj) {
     if (!sock || sock.readyState !== 1) return false;
@@ -91,6 +93,7 @@ function createFmpWsClient({
         return;
       }
       loggedIn = true;
+      attemptCount = 0;  // reset backoff on successful login
       events.emit('connected');
       if (subscribed.size > 0) sendSubscribe(Array.from(subscribed));
       return;
@@ -112,11 +115,27 @@ function createFmpWsClient({
     loggedIn = false;
     events.emit('disconnected', { code, reason: String(reason || '') });
     if (stopped) return;
-    // Reconnect logic added in Task 3.
+    scheduleReconnect();
   }
 
   function handleError(err) {
     events.emit('error', err);
+  }
+
+  function scheduleReconnect() {
+    if (stopped) return;
+    if (reconnectMaxAttempts > 0 && attemptCount >= reconnectMaxAttempts) {
+      logger.error('[fmp-ws] giving up — max reconnect attempts reached');
+      events.emit('error', new Error('max reconnect attempts reached'));
+      return;
+    }
+    attemptCount++;
+    // Exponential backoff: min × 2^(attemptCount-1), capped at max.
+    const delay = Math.min(reconnectMaxMs, reconnectMinMs * Math.pow(2, attemptCount - 1));
+    reconnectHandle = setTimeoutImpl(() => {
+      reconnectHandle = null;
+      connect();
+    }, delay);
   }
 
   function connect() {
@@ -149,6 +168,10 @@ function createFmpWsClient({
 
     stop() {
       stopped = true;
+      if (reconnectHandle) {
+        clearTimeoutImpl(reconnectHandle);
+        reconnectHandle = null;
+      }
       if (sock && sock.readyState !== 3) {
         try { sock.close(); } catch (_) { /* ignore */ }
       }
@@ -170,7 +193,7 @@ function createFmpWsClient({
       return {
         connected: loggedIn,
         subscribedTickers: Array.from(subscribed),
-        attemptCount: 0,  // wired in Task 3
+        attemptCount,
       };
     },
   };

@@ -186,3 +186,173 @@ test('stop() closes the WS and prevents further reconnects', () => {
   assert.strictEqual(WS.last().readyState, 3, 'socket should be closed');
   assert.strictEqual(WS.instances.length, instancesBefore, 'no new WS instances after stop');
 });
+
+// ── Reconnect tests (Task 3) ────────────────────────────────────────
+
+// Fake scheduler: tests drive the clock by invoking captured callbacks.
+function makeFakeScheduler() {
+  const scheduled = [];
+  function setTimeoutImpl(cb, ms) {
+    const handle = { cb, ms, cancelled: false };
+    scheduled.push(handle);
+    return handle;
+  }
+  function clearTimeoutImpl(handle) {
+    if (handle) handle.cancelled = true;
+  }
+  return {
+    setTimeoutImpl,
+    clearTimeoutImpl,
+    scheduled,
+    runNext() {
+      const next = scheduled.find(h => !h.cancelled);
+      if (!next) throw new Error('no pending timeout to run');
+      next.cancelled = true;
+      next.cb();
+    },
+  };
+}
+
+test('on socket close, schedule reconnect at reconnectMinMs', () => {
+  const WS = makeMockWebSocketFactory();
+  const clock = makeFakeScheduler();
+  const client = createFmpWsClient({
+    apiKey: 'K', tickers: ['AAPL'], WebSocketImpl: WS,
+    reconnectMinMs: 1000, reconnectMaxMs: 30000,
+    setTimeoutImpl: clock.setTimeoutImpl, clearTimeoutImpl: clock.clearTimeoutImpl,
+  });
+  client.start();
+  WS.last().triggerOpen();
+  WS.last().triggerMessage({ event: 'login', status: 200 });
+  WS.last().triggerClose(1006, 'abnormal');
+  assert.strictEqual(clock.scheduled.length, 1);
+  assert.strictEqual(clock.scheduled[0].ms, 1000);
+});
+
+test('reconnect creates a new WS and re-logs in', () => {
+  const WS = makeMockWebSocketFactory();
+  const clock = makeFakeScheduler();
+  const client = createFmpWsClient({
+    apiKey: 'K', tickers: ['AAPL'], WebSocketImpl: WS,
+    reconnectMinMs: 1000,
+    setTimeoutImpl: clock.setTimeoutImpl, clearTimeoutImpl: clock.clearTimeoutImpl,
+  });
+  client.start();
+  WS.last().triggerOpen();
+  WS.last().triggerMessage({ event: 'login', status: 200 });
+  const firstInstance = WS.last();
+  firstInstance.triggerClose(1006, '');
+  // Fire the scheduled reconnect
+  clock.runNext();
+  assert.strictEqual(WS.instances.length, 2, 'should construct a 2nd WS');
+  WS.last().triggerOpen();
+  assert.strictEqual(WS.last().sent.length, 1);
+  assert.deepStrictEqual(
+    JSON.parse(WS.last().sent[0]),
+    { event: 'login', data: { apiKey: 'K' } }
+  );
+});
+
+test('reconnect resubscribes to all previously subscribed tickers', () => {
+  const WS = makeMockWebSocketFactory();
+  const clock = makeFakeScheduler();
+  const client = createFmpWsClient({
+    apiKey: 'K', tickers: ['AAPL', 'MSFT'], WebSocketImpl: WS,
+    reconnectMinMs: 1000,
+    setTimeoutImpl: clock.setTimeoutImpl, clearTimeoutImpl: clock.clearTimeoutImpl,
+  });
+  client.start();
+  WS.last().triggerOpen();
+  WS.last().triggerMessage({ event: 'login', status: 200 });
+  WS.last().triggerClose(1006, '');
+  clock.runNext();
+  WS.last().triggerOpen();
+  WS.last().triggerMessage({ event: 'login', status: 200 });
+  // Should have sent login + subscribe with both tickers
+  assert.strictEqual(WS.last().sent.length, 2);
+  const sub = JSON.parse(WS.last().sent[1]);
+  assert.deepStrictEqual(sub.data.ticker.sort(), ['aapl', 'msft']);
+});
+
+test('reconnect backoff is exponential and capped at reconnectMaxMs', () => {
+  const WS = makeMockWebSocketFactory();
+  const clock = makeFakeScheduler();
+  const client = createFmpWsClient({
+    apiKey: 'K', tickers: [], WebSocketImpl: WS,
+    reconnectMinMs: 1000, reconnectMaxMs: 8000,
+    setTimeoutImpl: clock.setTimeoutImpl, clearTimeoutImpl: clock.clearTimeoutImpl,
+  });
+  client.start();
+  WS.last().triggerOpen();
+  WS.last().triggerMessage({ event: 'login', status: 200 });
+  // Drop 5 times, observe the delays: 1000, 2000, 4000, 8000, 8000 (capped)
+  const observed = [];
+  for (let i = 0; i < 5; i++) {
+    WS.last().triggerClose(1006, '');
+    const last = clock.scheduled[clock.scheduled.length - 1];
+    observed.push(last.ms);
+    clock.runNext();
+  }
+  assert.deepStrictEqual(observed, [1000, 2000, 4000, 8000, 8000]);
+});
+
+test('stop() during reconnect prevents further reconnects', () => {
+  const WS = makeMockWebSocketFactory();
+  const clock = makeFakeScheduler();
+  const client = createFmpWsClient({
+    apiKey: 'K', tickers: [], WebSocketImpl: WS,
+    reconnectMinMs: 1000,
+    setTimeoutImpl: clock.setTimeoutImpl, clearTimeoutImpl: clock.clearTimeoutImpl,
+  });
+  client.start();
+  WS.last().triggerOpen();
+  WS.last().triggerMessage({ event: 'login', status: 200 });
+  WS.last().triggerClose(1006, '');
+  client.stop();
+  // The scheduled reconnect should be cancelled
+  assert.ok(clock.scheduled[0].cancelled, 'scheduled reconnect should be cancelled');
+});
+
+test('successful reconnect resets the backoff (next failure starts at min)', () => {
+  const WS = makeMockWebSocketFactory();
+  const clock = makeFakeScheduler();
+  const client = createFmpWsClient({
+    apiKey: 'K', tickers: [], WebSocketImpl: WS,
+    reconnectMinMs: 1000, reconnectMaxMs: 8000,
+    setTimeoutImpl: clock.setTimeoutImpl, clearTimeoutImpl: clock.clearTimeoutImpl,
+  });
+  client.start();
+  WS.last().triggerOpen();
+  WS.last().triggerMessage({ event: 'login', status: 200 });
+  // 3 fast drops + reconnects, all failing to reach login
+  for (let i = 0; i < 3; i++) {
+    WS.last().triggerClose(1006, '');
+    clock.runNext();
+  }
+  // Now succeed: open + login response → should reset
+  WS.last().triggerOpen();
+  WS.last().triggerMessage({ event: 'login', status: 200 });
+  // Drop again → backoff should be at reconnectMinMs again
+  WS.last().triggerClose(1006, '');
+  const last = clock.scheduled[clock.scheduled.length - 1];
+  assert.strictEqual(last.ms, 1000, 'backoff should reset after successful login');
+});
+
+test('getStatus().attemptCount tracks reconnect attempts', () => {
+  const WS = makeMockWebSocketFactory();
+  const clock = makeFakeScheduler();
+  const client = createFmpWsClient({
+    apiKey: 'K', tickers: [], WebSocketImpl: WS,
+    reconnectMinMs: 1000,
+    setTimeoutImpl: clock.setTimeoutImpl, clearTimeoutImpl: clock.clearTimeoutImpl,
+  });
+  client.start();
+  WS.last().triggerOpen();
+  WS.last().triggerMessage({ event: 'login', status: 200 });
+  assert.strictEqual(client.getStatus().attemptCount, 0);
+  WS.last().triggerClose(1006, '');
+  assert.strictEqual(client.getStatus().attemptCount, 1);
+  clock.runNext();
+  WS.last().triggerClose(1006, '');
+  assert.strictEqual(client.getStatus().attemptCount, 2);
+});

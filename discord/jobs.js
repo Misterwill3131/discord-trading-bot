@@ -40,6 +40,7 @@ const milestoneChecker = require('./milestone-checker');
 // l'intervalle de 60s tombe deux fois dans la même minute cible.
 let lastSummaryDate = null;
 let lastBackupDate = null;
+let lastRecapReminderDate = null;
 // Used to throttle milestone-checker ticks to the configured cadence.
 let lastMilestoneTickMin = null;
 
@@ -193,6 +194,36 @@ async function runGitBackup() {
   }
 }
 
+// ── Recap reminder ──────────────────────────────────────────────────
+// Poste un message dans le canal de recap quotidien pour rappeler au
+// user de déposer son TOB Trade Recap image. Best-effort : un échec
+// (channel introuvable, perms manquantes) ne crash pas le scheduler.
+async function sendRecapReminder(client, channelId) {
+  if (!client || !client.channels) return;
+  let channel = client.channels.cache.get(channelId);
+  if (!channel) {
+    try { channel = await client.channels.fetch(channelId); }
+    catch (err) {
+      console.warn('[recap-reminder] fetch channel ' + channelId + ' failed: ' + err.message);
+      return;
+    }
+  }
+  if (!channel || typeof channel.send !== 'function') {
+    console.warn('[recap-reminder] channel ' + channelId + ' unusable');
+    return;
+  }
+  // Date NY pour le label "today's"
+  const today = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'long', month: 'short', day: 'numeric',
+  }).format(new Date());
+  await channel.send({
+    content: '🕒 **Reminder:** time to post today\'s TOB Trade Recap image (' + today + ').\n' +
+             'Drop the recap table and I\'ll OCR it + render the video automatically.',
+  });
+  console.log('[recap-reminder] posted to channel ' + channelId);
+}
+
 // ── Scheduler ───────────────────────────────────────────────────────
 // Attend le ready, puis arme un setInterval(60_000) qui vérifie l'heure
 // et déclenche les jobs quand ça tombe. Chaque job a son propre flag de
@@ -303,6 +334,24 @@ function startScheduler({ client, tradingChannel, sendAlert } = {}) {
       if (nyHour === 0 && nyMin === 0 && lastBackupDate !== todayStr) {
         lastBackupDate = todayStr;
         runGitBackup();
+      }
+
+      // Recap reminder ET → rappel dans le canal recap pour que le user
+      // poste l'image du TOB Trade Recap quotidien. Activé si
+      // TOB_AUTO_RECAP_REMINDER_ENABLED=1. Heure default 18:30 ET (après
+      // close marché, avant que ZZ poste son recap). Weekdays only.
+      const recapReminderEnabled = process.env.TOB_AUTO_RECAP_REMINDER_ENABLED === '1';
+      const recapReminderHour = parseInt(process.env.TOB_AUTO_RECAP_REMINDER_HOUR_ET || '18', 10);
+      const recapReminderMin = parseInt(process.env.TOB_AUTO_RECAP_REMINDER_MIN_ET || '30', 10);
+      const recapReminderChannelId = process.env.TOB_AUTO_RECAP_REMINDER_CHANNEL_ID
+        || process.env.TOB_RECAP_IMAGE_CHANNEL_ID;
+      if (recapReminderEnabled && isWeekday
+          && nyHour === recapReminderHour && nyMin === recapReminderMin
+          && lastRecapReminderDate !== todayStr
+          && recapReminderChannelId) {
+        lastRecapReminderDate = todayStr;
+        sendRecapReminder(client, recapReminderChannelId).catch(err =>
+          console.error('[recap-reminder] failed:', err.message));
       }
 
       // Market alerts — cadence configurable. Le tick lui-même filtre

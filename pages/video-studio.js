@@ -26,9 +26,16 @@ ${COMMON_CSS}
 h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
 .sub { color: #a0a0b0; font-size: 13px; margin-bottom: 20px; }
 #count { color: #80848e; font-size: 13px; margin-left: 10px; font-weight: 400; }
-.filters { display:flex; gap:10px; margin-bottom:20px; flex-wrap:wrap; }
+.filters { display:flex; gap:10px; margin-bottom:20px; flex-wrap:wrap; align-items:center; }
 .filter-btn { padding:6px 14px; border-radius:6px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.04); color:#a0a0b0; cursor:pointer; font-size:13px; font-weight:500; }
 .filter-btn.active { background:linear-gradient(135deg,#3b82f6 0%, #8b5cf6 100%); border-color:transparent; color:#fff; }
+.filter-divider { width:1px; height:24px; background:rgba(255,255,255,0.1); margin: 0 4px; }
+.filter-input { padding:6px 10px; border-radius:6px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.04); color:#fafafa; font-size:12px; font-family:inherit; min-width: 120px; }
+.filter-input:focus { outline:none; border-color:#8b5cf6; }
+.filter-input::placeholder { color: #6b7280; }
+.filter-clear { background:transparent; border:none; color:#80848e; cursor:pointer; font-size:12px; padding: 4px 8px; }
+.filter-clear:hover { color:#fafafa; }
+.filter-clear:disabled { opacity:0.3; cursor: default; }
 .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:16px; }
 .card-img { background:rgba(255,255,255,0.03); border-radius:10px; overflow:hidden; border:1px solid rgba(255,255,255,0.08); cursor:pointer; transition:all .2s; position:relative; }
 .card-img:hover { transform:translateY(-2px); border-color:#8b5cf6; box-shadow: 0 8px 24px rgba(139,92,246,0.2); }
@@ -121,6 +128,17 @@ ${sidebarHTML('/video-studio')}
     <button class="filter-btn active" data-filter="all">Toutes</button>
     <button class="filter-btn" data-filter="proof">Proof (entry+exit)</button>
     <button class="filter-btn" data-filter="signal">Signal (entry seul)</button>
+    <span class="filter-divider"></span>
+    <input type="text"   id="f-ticker" class="filter-input" placeholder="Ticker (ex: TSLA)" maxlength="10" />
+    <input type="text"   id="f-author" class="filter-input" placeholder="Auteur" maxlength="32" />
+    <input type="date"   id="f-from"   class="filter-input" title="Date min" />
+    <input type="date"   id="f-to"     class="filter-input" title="Date max" />
+    <select id="f-sort" class="filter-input">
+      <option value="recent">Plus récent ↓</option>
+      <option value="oldest">Plus ancien ↑</option>
+      <option value="ticker">Ticker A→Z</option>
+    </select>
+    <button class="filter-clear" id="f-clear" disabled>✕ reset</button>
   </div>
   <div class="grid" id="grid"><div class="empty">Aucune image. Le bot doit avoir traité au moins une alerte/exit pour qu'elle apparaisse ici.</div></div>
 </div>
@@ -163,6 +181,11 @@ let allItems = [];
 let templates = [];
 let selectedItem = null;
 let activeFilter = 'all';
+let filterTicker = '';
+let filterAuthor = '';
+let filterFrom = '';   // YYYY-MM-DD or ''
+let filterTo = '';     // YYYY-MM-DD or ''
+let filterSort = 'recent';
 
 const TEMPLATES_BY_COMPOSITION = {
   ChartTemplate: [],
@@ -185,12 +208,48 @@ async function load() {
   render();
 }
 
+function isFilterActive() {
+  return activeFilter !== 'all' || filterTicker || filterAuthor || filterFrom || filterTo || filterSort !== 'recent';
+}
+
+function applyFilters(items) {
+  const tickerNeedle = filterTicker.trim().toUpperCase().replace(/^\$+/, '');
+  const authorNeedle = filterAuthor.trim().toLowerCase();
+  const fromMs = filterFrom ? new Date(filterFrom + 'T00:00:00').getTime() : null;
+  // Date "to" est inclusive : on prend jusqu'à 23:59:59 du jour sélectionné.
+  const toMs = filterTo ? new Date(filterTo + 'T23:59:59.999').getTime() : null;
+
+  let filtered = items.filter(i => {
+    if (activeFilter !== 'all' && i.type !== activeFilter) return false;
+    if (tickerNeedle && !(i.ticker || '').toUpperCase().includes(tickerNeedle)) return false;
+    if (authorNeedle && !(i.author || '').toLowerCase().includes(authorNeedle)) return false;
+    if (fromMs || toMs) {
+      const t = new Date(i.ts).getTime();
+      if (fromMs && t < fromMs) return false;
+      if (toMs && t > toMs) return false;
+    }
+    return true;
+  });
+
+  if (filterSort === 'oldest') {
+    filtered.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+  } else if (filterSort === 'ticker') {
+    filtered.sort((a, b) => (a.ticker || '').localeCompare(b.ticker || ''));
+  } else {
+    // recent (default)
+    filtered.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+  }
+  return filtered;
+}
+
 function render() {
   const grid = document.getElementById('grid');
-  const filtered = allItems.filter(i => activeFilter === 'all' || i.type === activeFilter);
+  const filtered = applyFilters(allItems);
   document.getElementById('count').textContent = ' ' + filtered.length;
+  document.getElementById('f-clear').disabled = !isFilterActive();
   if (filtered.length === 0) {
-    grid.innerHTML = '<div class="empty">Aucune image (filtre: ' + activeFilter + ').</div>';
+    const desc = isFilterActive() ? 'Aucune image ne matche tes filtres.' : 'Aucune image.';
+    grid.innerHTML = '<div class="empty">' + desc + '</div>';
     return;
   }
   grid.innerHTML = filtered.map(i => {
@@ -364,13 +423,42 @@ document.addEventListener('visibilitychange', () => {
   else startJobsPolling();
 });
 
-// Wire up filter buttons + modal close
+// Wire up filter buttons + inputs + modal close
 document.querySelectorAll('.filter-btn').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('.filter-btn').forEach(x => x.classList.remove('active'));
   b.classList.add('active');
   activeFilter = b.dataset.filter;
   render();
 }));
+
+// Filter inputs (text/date/sort). Debounce light pour les inputs texte
+// (sinon ça re-render à chaque keypress sur 100+ images).
+let filterDebounce = null;
+function onFilterChange() {
+  if (filterDebounce) clearTimeout(filterDebounce);
+  filterDebounce = setTimeout(() => {
+    filterTicker = document.getElementById('f-ticker').value;
+    filterAuthor = document.getElementById('f-author').value;
+    filterFrom = document.getElementById('f-from').value;
+    filterTo = document.getElementById('f-to').value;
+    filterSort = document.getElementById('f-sort').value;
+    render();
+  }, 120);
+}
+['f-ticker','f-author','f-from','f-to','f-sort'].forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', onFilterChange);
+  if (el) el.addEventListener('change', onFilterChange);
+});
+
+document.getElementById('f-clear').addEventListener('click', () => {
+  activeFilter = 'all';
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.toggle('active', b.dataset.filter === 'all'));
+  ['f-ticker','f-author','f-from','f-to'].forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('f-sort').value = 'recent';
+  filterTicker = ''; filterAuthor = ''; filterFrom = ''; filterTo = ''; filterSort = 'recent';
+  render();
+});
 document.getElementById('btn-cancel').addEventListener('click', closeModal);
 document.getElementById('btn-render').addEventListener('click', doRender);
 document.getElementById('modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });

@@ -80,13 +80,21 @@ ${sidebarHTML('/video-studio')}
         <div class="helper">Le MP4 sera posté dans ce canal (Discord ID). Vide → utilise RENDER_OUTPUT_CHANNEL_ID env.</div>
       </div>
     </div>
-    <div style="margin-top: 10px;">
+    <div style="margin-top: 10px; display: flex; align-items: center; gap: 20px; flex-wrap: wrap;">
       <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
         <input type="checkbox" id="cfg-narration" style="width:auto; cursor:pointer;">
-        <span>🎙 Activer la voix off (TTS)</span>
+        <span>🎙 Voice-over (TTS)</span>
       </label>
-      <div class="helper">Narration AI (ElevenLabs) lue par-dessus la BG music. ~$0.02/render.</div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <label for="cfg-aspect" style="font-size: 11px; color: #a0a0b0; margin: 0;">Aspect:</label>
+        <select id="cfg-aspect" style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:6px; padding:6px 10px; color:#fafafa; font-size:12px; font-family:inherit;">
+          <option value="9x16">9:16 (TikTok/Reels)</option>
+          <option value="1x1">1:1 (IG/Discord)</option>
+          <option value="16x9">16:9 (YT/Twitter)</option>
+        </select>
+      </div>
     </div>
+    <div class="helper" style="margin-top: 6px;">Narration AI ElevenLabs ~$0.02/render. Aspect 1:1/16:9 sont best-effort (layout 9:16 par défaut).</div>
   </div>
 
   <!-- Trades table -->
@@ -252,6 +260,7 @@ async function submitRecap() {
       trades: cleanTrades,
       longTermInvestments: cleanLts,
       enableNarration: document.getElementById('cfg-narration').checked,
+      aspectRatio: document.getElementById('cfg-aspect').value,
     };
     const r = await fetch('/api/video-studio/manual-recap', {
       method: 'POST',

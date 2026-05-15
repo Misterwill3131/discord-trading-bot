@@ -227,12 +227,23 @@ ${sidebarHTML('/video-studio')}
       <input type="text" id="modal-cta-url" placeholder="discord.gg/templeofboom">
     </div>
 
-    <div class="field">
-      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-        <input type="checkbox" id="modal-narration" style="width:auto; cursor:pointer;">
-        <span>🎙 Activer la voix off (TTS)</span>
-      </label>
-      <div class="field-helper">Génère une narration AI (ElevenLabs) qui lit le récap par-dessus la BG music. ~$0.02/render.</div>
+    <div class="fields-row">
+      <div class="field">
+        <label for="modal-aspect">Aspect ratio</label>
+        <select id="modal-aspect">
+          <option value="9x16">9:16 — TikTok / Reels / Shorts (vertical)</option>
+          <option value="1x1">1:1 — Instagram feed / Discord (carré)</option>
+          <option value="16x9">16:9 — YouTube / Twitter (landscape)</option>
+        </select>
+        <div class="field-helper">Default 9:16. Variants 1:1 et 16:9 sont en best-effort (layout peut être tassé).</div>
+      </div>
+      <div class="field">
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-top: 28px;">
+          <input type="checkbox" id="modal-narration" style="width:auto; cursor:pointer;">
+          <span>🎙 Voice-over (TTS)</span>
+        </label>
+        <div class="field-helper">Narration AI ElevenLabs. ~$0.02/render.</div>
+      </div>
     </div>
 
     <div id="status-msg"></div>
@@ -432,6 +443,7 @@ function openModal(id) {
   document.getElementById('modal-cta-url').value = '';
   document.getElementById('modal-ticker-override').value = '';
   document.getElementById('modal-narration').checked = false;
+  document.getElementById('modal-aspect').value = '9x16';
   const colorPicker = document.getElementById('modal-accent-override');
   delete colorPicker.dataset.userOverride; // reset le flag pour que updateTplDesc resync
   document.getElementById('status-msg').className = '';
@@ -499,6 +511,7 @@ async function doRender() {
         tickerOverride: tickerOverride || undefined,
         accentColor: accentOverride || undefined,
         enableNarration: document.getElementById('modal-narration').checked || undefined,
+        aspectRatio: document.getElementById('modal-aspect').value,
       }),
     });
     const data = await res.json();

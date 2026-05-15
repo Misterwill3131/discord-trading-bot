@@ -192,6 +192,85 @@ export const Root = () => {
           durationInFrames: computeTradeRecapTotalFrames(props as any),
         })}
       />
+      {/* ─── Multi-aspect-ratio variants ───────────────────────────
+          Mêmes composants, dimensions différentes pour TikTok/Reels
+          (9:16, default), Instagram feed (1:1), YouTube/Twitter (16:9).
+          NOTE : les composants ont actuellement des layouts optimisés
+          pour 9:16. Les variants 1:1 et 16:9 sont rendus en "best
+          effort" — certains éléments peuvent déborder ou paraître
+          tassés. Refactor responsive par composition TBD. */}
+      <Composition
+        id="TobTradeRecap_1x1"
+        component={TobTradeRecap}
+        fps={30}
+        width={1080}
+        height={1080}
+        schema={tobTradeRecapSchema}
+        defaultProps={{
+          dateLabel: 'TODAY',
+          trades: [{ ticker: '$XOS', entryPrice: 2.49, hodPrice: 2.90 }],
+          longTermInvestments: [],
+          alertImages: [],
+          secondsPerAlert: 1.0,
+          alertsHoldEndSeconds: 3,
+          alertsFallbackSeconds: 4,
+          accentColor: '#fbbf24' as const,
+          successColor: '#10b981' as const,
+          errorColor: '#ef4444' as const,
+          bgColor: '#0a0a0f' as const,
+          outroSeed: 'trade-recap-1x1-preview',
+          narrationDataUrl: null,
+        }}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: computeTradeRecapTotalFrames(props as any),
+        })}
+      />
+      <Composition
+        id="TobTradeRecap_16x9"
+        component={TobTradeRecap}
+        fps={30}
+        width={1920}
+        height={1080}
+        schema={tobTradeRecapSchema}
+        defaultProps={{
+          dateLabel: 'TODAY',
+          trades: [{ ticker: '$XOS', entryPrice: 2.49, hodPrice: 2.90 }],
+          longTermInvestments: [],
+          alertImages: [],
+          secondsPerAlert: 1.0,
+          alertsHoldEndSeconds: 3,
+          alertsFallbackSeconds: 4,
+          accentColor: '#fbbf24' as const,
+          successColor: '#10b981' as const,
+          errorColor: '#ef4444' as const,
+          bgColor: '#0a0a0f' as const,
+          outroSeed: 'trade-recap-16x9-preview',
+          narrationDataUrl: null,
+        }}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: computeTradeRecapTotalFrames(props as any),
+        })}
+      />
+      <Composition
+        id="ChartTemplate_1x1"
+        component={ChartTemplate}
+        durationInFrames={608}
+        fps={30}
+        width={1080}
+        height={1080}
+        schema={chartTemplateSchema}
+        defaultProps={chartTemplateDefaults}
+      />
+      <Composition
+        id="ChartTemplate_16x9"
+        component={ChartTemplate}
+        durationInFrames={608}
+        fps={30}
+        width={1920}
+        height={1080}
+        schema={chartTemplateSchema}
+        defaultProps={chartTemplateDefaults}
+      />
     </>
   );
 };

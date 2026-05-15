@@ -608,13 +608,32 @@ async function processJob(
     console.log(`[worker] job #${job.id}: narration MP3 generated (${(narrationDataUrl.length * 0.75 / 1024).toFixed(0)} KB data URL)`);
   }
 
+  // Aspect ratio variant : lit props_override.aspectRatio ('9x16'|'1x1'|
+  // '16x9'). Default 9x16 (TikTok/Reels). Pour les autres ratios, on
+  // suffix l'id de composition pour matcher les variants dans Root.tsx
+  // (ex: TobTradeRecap → TobTradeRecap_1x1).
+  const baseCompositionId = (job.composition === 'BoomProof' || !job.composition)
+    ? 'ChartTemplate'
+    : job.composition;
+  let aspectRatio = '9x16';
+  if (job.props_override) {
+    try {
+      const o = JSON.parse(job.props_override);
+      if (o && (o.aspectRatio === '1x1' || o.aspectRatio === '16x9' || o.aspectRatio === '9x16')) {
+        aspectRatio = o.aspectRatio;
+      }
+    } catch { /* swallow, use default */ }
+  }
+  const compositionId = aspectRatio === '9x16'
+    ? baseCompositionId
+    : `${baseCompositionId}_${aspectRatio}`;
+  if (aspectRatio !== '9x16') {
+    console.log(`[worker] job #${job.id}: rendering aspect ratio ${aspectRatio} → composition '${compositionId}'`);
+  }
+
   const composition = await selectComposition({
     serveUrl: bundleLocation,
-    // Alias 'BoomProof' → 'ChartTemplate' pour rétrocompat avec les jobs
-    // déjà en DB avant le rename. Root.tsx ne registre plus 'BoomProof'.
-    id: (job.composition === 'BoomProof' || !job.composition)
-      ? 'ChartTemplate'
-      : job.composition,
+    id: compositionId,
     inputProps: jobPropsToRemotion(job),
   });
   const filename = buildLocalFilename(job);

@@ -143,7 +143,7 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
 
   // ── POST /api/video-studio/render ─────────────────────────────────
   app.post('/api/video-studio/render', requireAuth, (req, res) => {
-    const { galleryId, templateId, ctaUrl, tickerOverride, accentColor, enableNarration } = req.body || {};
+    const { galleryId, templateId, ctaUrl, tickerOverride, accentColor, enableNarration, aspectRatio } = req.body || {};
     if (!galleryId) return res.status(400).json({ error: 'Missing galleryId' });
     if (!templateId) return res.status(400).json({ error: 'Missing templateId' });
 
@@ -276,6 +276,11 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
     if (enableNarration === true || enableNarration === 'true') {
       propsOverride.enableNarration = true;
     }
+    // Aspect ratio variant : '9x16' (default, TikTok/Reels) | '1x1' (IG feed)
+    // | '16x9' (YouTube/Twitter). Le worker suffix l'id de composition.
+    if (aspectRatio === '1x1' || aspectRatio === '16x9' || aspectRatio === '9x16') {
+      propsOverride.aspectRatio = aspectRatio;
+    }
     const propsOverrideJson = Object.keys(propsOverride).length > 0
       ? JSON.stringify(propsOverride)
       : null;
@@ -395,8 +400,13 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
     };
 
     const enableNarrationManual = body.enableNarration === true || body.enableNarration === 'true';
-    const propsOverrideManual = enableNarrationManual
-      ? JSON.stringify({ enableNarration: true })
+    const aspectRatioManual = (body.aspectRatio === '1x1' || body.aspectRatio === '16x9' || body.aspectRatio === '9x16')
+      ? body.aspectRatio : null;
+    const overrideObj = {};
+    if (enableNarrationManual) overrideObj.enableNarration = true;
+    if (aspectRatioManual && aspectRatioManual !== '9x16') overrideObj.aspectRatio = aspectRatioManual;
+    const propsOverrideManual = Object.keys(overrideObj).length > 0
+      ? JSON.stringify(overrideObj)
       : null;
 
     try {

@@ -216,6 +216,17 @@ async function generateViaElevenLabs({ text, outputPath, voice, apiKey, modelId,
     throw new Error(`ElevenLabs TTS: fichier trop petit (${buffer.length} bytes), probable failure`);
   }
   fs.writeFileSync(outputPath, buffer);
+
+  // Cost tracking — ElevenLabs facture par caractère envoyé. Best-effort.
+  try {
+    const { recordElevenLabsCall } = require('./cost-tracker');
+    recordElevenLabsCall({
+      chars: (text || '').length,
+      voiceId,
+      notes: { model, speed: targetSpeed, bytes: buffer.length },
+    });
+  } catch (_) { /* swallow */ }
+
   return { outputPath, mimeType: 'audio/mpeg', bytes: buffer.length, provider: 'elevenlabs', voice: voiceId };
 }
 

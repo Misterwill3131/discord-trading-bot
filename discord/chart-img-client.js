@@ -383,6 +383,18 @@ function createChartImgClient({
       throw new Error('chart-img: response missing arrayBuffer()');
     }
     const ab = await res.arrayBuffer();
+
+    // Cost tracking — chart-img facture par requête (qu'elle hit le cache
+    // de leur côté ou non). Best-effort, ne throw jamais. Le cache local
+    // ttlMs au-dessus évite déjà la majorité des doubles charges.
+    try {
+      const { recordChartImgCall } = require('../utils/cost-tracker');
+      recordChartImgCall({
+        symbol: body && body.symbol,
+        notes: { interval: body && body.interval, range: body && body.range },
+      });
+    } catch (_) { /* swallow */ }
+
     return Buffer.from(ab);
   }
 

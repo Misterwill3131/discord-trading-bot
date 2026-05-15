@@ -346,6 +346,19 @@ async function classify(text, { model = DEFAULT_MODEL, timeoutMs = DEFAULT_TIMEO
     assertNoExternalAccess(apiParams); // garde isolation
     const response = await client.messages.create(apiParams, { timeout: timeoutMs });
 
+    // Cost tracking — best-effort. Une seule classification = 1 appel
+    // Anthropic, on attribue le coût exact (input + output tokens).
+    try {
+      const { recordAnthropicCall } = require('../utils/cost-tracker');
+      const u = response.usage || {};
+      recordAnthropicCall({
+        model: versionedModel,
+        inputTokens: u.input_tokens || 0,
+        outputTokens: u.output_tokens || 0,
+        notes: { kind: 'classify', textHash: hash.slice(0, 12) },
+      });
+    } catch (_) { /* swallow */ }
+
     const rawText = response?.content?.[0]?.type === 'text'
       ? response.content[0].text
       : null;
@@ -544,6 +557,19 @@ async function extractMultiSignals(text, { model = DEFAULT_MODEL, timeoutMs = DE
     };
     assertNoExternalAccess(apiParams); // garde isolation
     const response = await client.messages.create(apiParams, { timeout: timeoutMs });
+
+    // Cost tracking — extract mode (multi-signal). Output souvent plus
+    // gros que classify, donc on track séparément pour pouvoir comparer.
+    try {
+      const { recordAnthropicCall } = require('../utils/cost-tracker');
+      const u = response.usage || {};
+      recordAnthropicCall({
+        model: versionedModel,
+        inputTokens: u.input_tokens || 0,
+        outputTokens: u.output_tokens || 0,
+        notes: { kind: 'extract', textHash: hash.slice(0, 12) },
+      });
+    } catch (_) { /* swallow */ }
 
     const rawText = response?.content?.[0]?.type === 'text'
       ? response.content[0].text

@@ -649,6 +649,7 @@ async function processJob(
   const filename = buildLocalFilename(job);
   const outPath = path.join(outDir, filename);
 
+  const renderStartedAt = Date.now();
   await renderMedia({
     composition,
     serveUrl: bundleLocation,
@@ -662,11 +663,27 @@ async function processJob(
     // fichiers de 30-50 MB qui dépassent la limite Discord.
     videoBitrate: '3M',
   });
+  const renderDurationMs = Date.now() - renderStartedAt;
 
   // Log file size pour debug. Discord accepte 25 MB par défaut (free),
   // 50 MB si Nitro Basic, 100 MB si Boost Level 3.
   const fileSizeMb = (fs.statSync(outPath).size / 1024 / 1024).toFixed(2);
-  console.log(`[worker] rendered ${outPath} (${fileSizeMb} MB)`);
+  console.log(`[worker] rendered ${outPath} (${fileSizeMb} MB, ${(renderDurationMs / 1000).toFixed(1)}s)`);
+
+  // Cost tracking — render local (gratuit en termes USD mais on track le
+  // wall-clock time pour les analytics "combien de minutes de render/jour").
+  // Best-effort, ne throw jamais. Import dynamique car render-worker tourne
+  // dans un process séparé et le module peut ne pas être présent en CI.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { recordRender } = require('../../utils/cost-tracker');
+    recordRender({
+      durationMs: renderDurationMs,
+      composition: compositionId,
+      jobId: job.id,
+      notes: { aspectRatio, fileSizeMb: Number(fileSizeMb) },
+    });
+  } catch (_) { /* swallow */ }
 
   // Caption Discord : si CAPTION_LLM_ENABLED=1 OU props_override.useLlmCaption,
   // demande à Claude (utils/caption-llm.js) de générer la caption à la place

@@ -179,10 +179,11 @@ const SIDEBAR_LINKS = [
   {
     section: 'Logs',
     items: [
-      { href: '/raw-messages', icon: '📋', label: 'Raw Messages' },
-      { href: '/db-viewer',    icon: '🗄️', label: 'DB Viewer' },
-      { href: '/backup-log',   icon: '💾', label: 'Backup Log' },
-      { href: '/welcome-log',  icon: '👋', label: 'Welcome Log' },
+      { href: '/raw-messages',   icon: '📋', label: 'Raw Messages' },
+      { href: '/db-viewer',      icon: '🗄️', label: 'DB Viewer' },
+      { href: '/backup-log',     icon: '💾', label: 'Backup Log' },
+      { href: '/welcome-log',    icon: '👋', label: 'Welcome Log' },
+      { href: '/cost-dashboard', icon: '💵', label: 'Costs' },
     ],
   },
   {

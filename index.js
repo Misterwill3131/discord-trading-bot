@@ -53,6 +53,7 @@ const { registerBackupLogRoutes } = require('./routes/backup-log');
 const { registerWelcomeLogRoutes } = require('./routes/welcome-log');
 const { registerDbSnapshotRoutes } = require('./routes/db-snapshot');
 const { registerChartTestRoutes } = require('./routes/chart-test');
+const { registerCostDashboardRoutes } = require('./routes/cost-dashboard');
 const imageState = require('./state/images');
 const { messageLog } = require('./state/messages');
 
@@ -184,6 +185,9 @@ registerDbSnapshotRoutes(app, requireAuth);
 
 // Chart-img smoke test (admin only, fetch un chart sample avec callouts).
 registerChartTestRoutes(app, requireAuth);
+
+// Cost dashboard (auth-protected) — track des coûts API + render.
+registerCostDashboardRoutes(app, requireAuth);
 
 // Profits : injection du channelId avant d'enregistrer les routes.
 profitCounter.setProfitsChannelId(PROFITS_CHANNEL_ID);

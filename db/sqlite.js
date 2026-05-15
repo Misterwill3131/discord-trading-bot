@@ -488,6 +488,27 @@ db.exec(`
     discord_msg_id  TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_render_jobs_status ON render_jobs(status, created_at);
+
+  -- Cost tracking : événements de coûts (1 ligne / appel API ou render).
+  -- Granularité fine pour pouvoir agréger en daily/weekly/monthly sans
+  -- avoir à reconstruire l'historique. Pricing en USD stocké au moment
+  -- de l'appel (snapshot) — si les tarifs changent, on garde la trace
+  -- de ce qu'on a réellement payé à l'époque.
+  --
+  -- service       : 'anthropic' | 'elevenlabs' | 'chart-img' | 'render' | 'other'
+  -- ts_ms         : Date.now() en ms (UNIX epoch), pour agrégats par jour
+  --                 dans n'importe quelle timezone (calcul côté JS).
+  -- cost_usd      : montant en USD (peut être 0 pour render local).
+  -- meta_json     : payload arbitraire (model, tokens, chars, jobId, etc.)
+  CREATE TABLE IF NOT EXISTS cost_events (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts_ms     INTEGER NOT NULL,
+    service   TEXT NOT NULL,
+    cost_usd  REAL NOT NULL DEFAULT 0,
+    meta_json TEXT NOT NULL DEFAULT '{}'
+  );
+  CREATE INDEX IF NOT EXISTS idx_cost_events_ts      ON cost_events(ts_ms);
+  CREATE INDEX IF NOT EXISTS idx_cost_events_service ON cost_events(service, ts_ms);
 `);
 
 // ── Trend module: daily-reference signals — column migrations ─────────

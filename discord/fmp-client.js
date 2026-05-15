@@ -197,7 +197,19 @@ function createFmpClient({
     return out;
   }
 
-  return { getQuote, getDailyBars, getQuotesBulk };
+  // FMP v4 endpoint — different base path. Returns the global feed of
+  // recent analyst grade events (upgrades, downgrades, initiations,
+  // reiterations) newest-first. Pagination via `page` (default 0 →
+  // ~100 most recent events).
+  async function getAnalystGradesFeed({ page = 0 } = {}) {
+    const v4Base = base.replace(/\/v3\/?$/, '/v4');
+    const url = v4Base + '/upgrades-downgrades-rss-feed?page=' + encodeURIComponent(page)
+      + '&apikey=' + encodeURIComponent(apiKey);
+    const json = await httpJson(url);
+    return Array.isArray(json) ? json : [];
+  }
+
+  return { getQuote, getDailyBars, getQuotesBulk, getAnalystGradesFeed };
 }
 
 module.exports = {

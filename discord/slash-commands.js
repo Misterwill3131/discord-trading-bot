@@ -125,7 +125,11 @@ function createSlashCommands({ marketData, logger = console } = {}) {
       await interaction.editReply({ embeds: [embed] });
     } catch (err) {
       logger.error('[slash-commands] /analyze ' + ticker + ' error: ' + err.message);
-      await interaction.editReply({ content: '❌ Service unavailable, try again later' });
+      try {
+        await interaction.editReply({ content: '❌ Service unavailable, try again later' });
+      } catch (e2) {
+        logger.error('[slash-commands] /analyze editReply failed: ' + e2.message);
+      }
     }
   }
 
@@ -142,7 +146,11 @@ function createSlashCommands({ marketData, logger = console } = {}) {
       await interaction.editReply({ embeds: [embed] });
     } catch (err) {
       logger.error('[slash-commands] /insider ' + ticker + ' error: ' + err.message);
-      await interaction.editReply({ content: '❌ Service unavailable, try again later' });
+      try {
+        await interaction.editReply({ content: '❌ Service unavailable, try again later' });
+      } catch (e2) {
+        logger.error('[slash-commands] /insider editReply failed: ' + e2.message);
+      }
     }
   }
 
@@ -171,7 +179,11 @@ function createSlashCommands({ marketData, logger = console } = {}) {
       await interaction.editReply({ embeds: [embed] });
     } catch (err) {
       logger.error('[slash-commands] /politicians ' + ticker + ' error: ' + err.message);
-      await interaction.editReply({ content: '❌ Service unavailable, try again later' });
+      try {
+        await interaction.editReply({ content: '❌ Service unavailable, try again later' });
+      } catch (e2) {
+        logger.error('[slash-commands] /politicians editReply failed: ' + e2.message);
+      }
     }
   }
 

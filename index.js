@@ -359,9 +359,9 @@ registerDiscordCommands(client, { profitsChannelId: PROFITS_CHANNEL_ID });
 // "command unavailable" message — the rest of the bot still runs.
 const sharedYahoo = createYahooClient();
 
-// FMP REST client shared across slash commands. Reuses FMP_API_KEY.
-// Created with no-op fetch if FMP_API_KEY is absent — handlers will
-// fall back to Yahoo automatically.
+// FMP REST client shared across slash commands. Requires FMP_API_KEY.
+// If FMP_API_KEY is absent, the slash commands are not registered at
+// all (the bot keeps working without /analyze /insider /politicians).
 const fmpKey = process.env.FMP_API_KEY || '';
 const sharedFmp = fmpKey
   ? createFmpClient({ apiKey: fmpKey })

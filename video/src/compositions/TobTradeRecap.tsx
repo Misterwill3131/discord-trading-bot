@@ -4,6 +4,7 @@ import { zColor } from '@remotion/zod-types';
 import { loadFont as loadInter } from '@remotion/google-fonts/Inter';
 import { SharedOutro } from '../components/SharedOutro';
 import { NarrationSubtitles } from '../components/NarrationSubtitles';
+import { LogoOverlay } from '../components/LogoOverlay';
 
 const { fontFamily } = loadInter('normal', { weights: ['400', '600', '700', '800', '900'] });
 
@@ -81,6 +82,9 @@ export const tobTradeRecapSchema = z.object({
   // (TikTok/Reels). Indépendant du dataUrl — on peut activer subtitles
   // sans audio si on veut juste la lisibilité.
   narrationText: z.string().nullable().optional(),
+  // Logo overlay (watermark) configurable par template.
+  logoUrl: z.string().nullable().optional(),
+  logoCorner: z.enum(['top-left', 'top-right', 'bottom-left', 'bottom-right']).default('top-right'),
 });
 
 export type TobTradeRecapProps = z.infer<typeof tobTradeRecapSchema>;
@@ -856,6 +860,7 @@ export const TobTradeRecap: React.FC<TobTradeRecapProps> = (props) => {
     secondsPerAlert,
     accentColor, successColor, errorColor, bgColor, outroSeed,
     narrationDataUrl, narrationText,
+    logoUrl, logoCorner,
   } = props;
   // Pré-calcul de toutes les trades + summary une seule fois (mémoize ?)
   const computed = trades.map(computeTrade);
@@ -888,6 +893,9 @@ export const TobTradeRecap: React.FC<TobTradeRecapProps> = (props) => {
           totalFrames={computeTradeRecapTotalFrames(props)}
         />
       )}
+      {/* Logo watermark — visible toute la durée si logoUrl fourni. */}
+      <LogoOverlay logoUrl={logoUrl} corner={logoCorner} />
+
       <Sequence from={introFrom} durationInFrames={FRAMES_INTRO}>
         <IntroPhase accentColor={accentColor} dateLabel={dateLabel} />
       </Sequence>

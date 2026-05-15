@@ -37,6 +37,8 @@ const chartTemplateDefaults = {
   lifestyleSeedOverride: undefined,
   narrationDataUrl: null,
   narrationText: null,
+  logoUrl: null,
+  logoCorner: 'top-right' as const,
 };
 
 const boomRecapDefaults = {
@@ -191,6 +193,9 @@ export const Root = () => {
           bgColor: '#0a0a0f' as const,
           outroSeed: 'trade-recap-preview',
           narrationDataUrl: null,
+          narrationText: null,
+          logoUrl: null,
+          logoCorner: 'top-right' as const,
         }}
         calculateMetadata={({ props }) => ({
           durationInFrames: computeTradeRecapTotalFrames(props as any),
@@ -224,6 +229,9 @@ export const Root = () => {
           bgColor: '#0a0a0f' as const,
           outroSeed: 'trade-recap-1x1-preview',
           narrationDataUrl: null,
+          narrationText: null,
+          logoUrl: null,
+          logoCorner: 'top-right' as const,
         }}
         calculateMetadata={({ props }) => ({
           durationInFrames: computeTradeRecapTotalFrames(props as any),
@@ -250,6 +258,9 @@ export const Root = () => {
           bgColor: '#0a0a0f' as const,
           outroSeed: 'trade-recap-16x9-preview',
           narrationDataUrl: null,
+          narrationText: null,
+          logoUrl: null,
+          logoCorner: 'top-right' as const,
         }}
         calculateMetadata={({ props }) => ({
           durationInFrames: computeTradeRecapTotalFrames(props as any),

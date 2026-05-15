@@ -13,6 +13,7 @@ const { fontFamily } = loadInter('normal', {
 });
 import { Stinger } from '../components/Stinger';
 import { NarrationSubtitles } from '../components/NarrationSubtitles';
+import { LogoOverlay } from '../components/LogoOverlay';
 import { LifestyleHook } from '../components/LifestyleHook';
 import { ResultTease } from '../components/ResultTease';
 import { TimePassAct } from '../components/TimePassAct';
@@ -76,6 +77,9 @@ export const chartTemplateSchema = z.object({
     .nullable()
     .optional()
     .describe('Texte narration pour subtitles burned-in (autoplay muet). Vide = pas de subs.'),
+  // ─── Logo overlay watermark (optionnel) ───
+  logoUrl: z.string().nullable().optional().describe('URL ou data URL du logo à afficher en watermark. Vide = pas de logo.'),
+  logoCorner: z.enum(['top-left', 'top-right', 'bottom-left', 'bottom-right']).default('top-right'),
 });
 
 // Inferred TypeScript type — cohérent avec le schema, plus de duplication.
@@ -103,6 +107,7 @@ export const ChartTemplate = ({
   proofImageDataUrl, chartImageDataUrl, teaseSubtext, ctaUrl,
   accentColor, musicVolume, sfxEnabled, lifestyleSeedOverride,
   narrationDataUrl, narrationText,
+  logoUrl, logoCorner,
 }: ChartTemplateProps) => {
   const lifestyleSeed = lifestyleSeedOverride || `${ticker}-${entryTimestamp}`;
   // Caption pour la phase ProofImage : ticker + auteur(s) + pnl.
@@ -130,6 +135,8 @@ export const ChartTemplate = ({
           totalFrames={TRANSITION_SERIES_END + SHARED_OUTRO_FRAMES}
         />
       )}
+      <LogoOverlay logoUrl={logoUrl} corner={logoCorner} />
+
 
       {sfxEnabled && (
         <>

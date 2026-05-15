@@ -219,8 +219,10 @@ function startScheduler({ client, tradingChannel, sendAlert } = {}) {
         let marketClient;
         if (useWs) {
           const wsClient = createFmpWsClient({ apiKey: fmpKey, tickers });
+          const maxStalenessMs = Math.max(0, parseInt(
+            process.env.FMP_WS_MAX_STALENESS_MS || '900000', 10) || 900000);
           marketClient = createFmpWsMarketClient({
-            apiKey: fmpKey, tickers, wsClient, restClient,
+            apiKey: fmpKey, tickers, wsClient, restClient, maxStalenessMs,
           });
           marketClient.start();
           console.log('[market-alerts] watching ' + tickers.length + ' tickers via WS (eval every '

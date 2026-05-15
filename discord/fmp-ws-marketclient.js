@@ -49,6 +49,7 @@ function createFmpWsMarketClient({
   logger = console,
   fallbackFailureThreshold = 10,   // disconnects within window before flipping to REST
   fallbackFailureWindowMs = 5 * 60_000,
+  maxStalenessMs = 15 * 60_000,    // cached quote is null if older than this
 } = {}) {
   if (!wsClient)   throw new Error('wsClient required');
   if (!restClient) throw new Error('restClient required');
@@ -124,6 +125,12 @@ function createFmpWsMarketClient({
       const key = String(ticker).toUpperCase();
       const entry = cache.get(key);
       if (!entry || entry.lastPrice == null) return null;
+      // Staleness: if the last trade is older than maxStalenessMs, treat
+      // the cache as no-data. Protects illiquid tickers from firing
+      // spurious alerts against fresh daily bars.
+      if (entry.lastTs != null && (now().getTime() - entry.lastTs) > maxStalenessMs) {
+        return null;
+      }
       return {
         price: entry.lastPrice,
         volume: entry.cumulativeVolumeToday,

@@ -71,13 +71,14 @@ test('getQuote returns last trade price and 0 volume from a single RTH trade', a
 test('getQuote accumulates volume across multiple RTH trades same day', async () => {
   const ws = mockWsClient();
   const rest = mockRestClient();
+  let nowMs = Date.parse('2026-05-14T14:00:00Z');
   const mc = createFmpWsMarketClient({
     apiKey: 'K', tickers: ['AAPL'], wsClient: ws, restClient: rest,
-    now: () => new Date('2026-05-14T14:00:00Z'),
+    now: () => new Date(nowMs),
   });
-  ws._fire('trade', { ticker: 'AAPL', price: 100, tradeSize: 50, ts: 1 });
-  ws._fire('trade', { ticker: 'AAPL', price: 101, tradeSize: 30, ts: 2 });
-  ws._fire('trade', { ticker: 'AAPL', price: 102, tradeSize: 20, ts: 3 });
+  ws._fire('trade', { ticker: 'AAPL', price: 100, tradeSize: 50, ts: nowMs });
+  ws._fire('trade', { ticker: 'AAPL', price: 101, tradeSize: 30, ts: nowMs });
+  ws._fire('trade', { ticker: 'AAPL', price: 102, tradeSize: 20, ts: nowMs });
   const q = await mc.getQuote('AAPL');
   assert.strictEqual(q.price, 102, 'price is the LAST trade');
   assert.strictEqual(q.volume, 100, 'volume sums all three');
@@ -90,11 +91,11 @@ test('cumulative volume resets when the ET-date changes', async () => {
   const mc = createFmpWsMarketClient({
     apiKey: 'K', tickers: ['AAPL'], wsClient: ws, restClient: rest, now: clock.now,
   });
-  ws._fire('trade', { ticker: 'AAPL', price: 100, tradeSize: 1000, ts: 1 });
+  ws._fire('trade', { ticker: 'AAPL', price: 100, tradeSize: 1000, ts: Date.parse('2026-05-14T14:00:00Z') });
   assert.strictEqual((await mc.getQuote('AAPL')).volume, 1000);
   // Advance to next ET-date (still within RTH)
   clock.advanceTo('2026-05-15T14:00:00Z');
-  ws._fire('trade', { ticker: 'AAPL', price: 110, tradeSize: 50, ts: 2 });
+  ws._fire('trade', { ticker: 'AAPL', price: 110, tradeSize: 50, ts: Date.parse('2026-05-15T14:00:00Z') });
   const q = await mc.getQuote('AAPL');
   assert.strictEqual(q.price, 110);
   assert.strictEqual(q.volume, 50, 'cumulative resets on ET-date change');
@@ -108,7 +109,7 @@ test('pre-market trade updates lastPrice but NOT cumulative volume', async () =>
   const mc = createFmpWsMarketClient({
     apiKey: 'K', tickers: ['AAPL'], wsClient: ws, restClient: rest, now: clock.now,
   });
-  ws._fire('trade', { ticker: 'AAPL', price: 99, tradeSize: 500, ts: 1 });
+  ws._fire('trade', { ticker: 'AAPL', price: 99, tradeSize: 500, ts: Date.parse('2026-05-14T13:00:00Z') });
   const q1 = await mc.getQuote('AAPL');
   assert.strictEqual(q1.price, 99, 'pre-market price IS recorded');
   assert.strictEqual(q1.volume, 0, 'pre-market volume is NOT cumulated');
@@ -121,9 +122,9 @@ test('first RTH trade starts cumulative volume from zero (pre-market not counted
   const mc = createFmpWsMarketClient({
     apiKey: 'K', tickers: ['AAPL'], wsClient: ws, restClient: rest, now: clock.now,
   });
-  ws._fire('trade', { ticker: 'AAPL', price: 99, tradeSize: 500, ts: 1 });
+  ws._fire('trade', { ticker: 'AAPL', price: 99, tradeSize: 500, ts: Date.parse('2026-05-14T13:00:00Z') });
   clock.advanceTo('2026-05-14T14:00:00Z');  // 10:00 ET, RTH
-  ws._fire('trade', { ticker: 'AAPL', price: 100, tradeSize: 30, ts: 2 });
+  ws._fire('trade', { ticker: 'AAPL', price: 100, tradeSize: 30, ts: Date.parse('2026-05-14T14:00:00Z') });
   const q = await mc.getQuote('AAPL');
   assert.strictEqual(q.volume, 30, 'RTH cumulative starts at 0 + 30');
 });
@@ -247,4 +248,70 @@ test('in fallback, getQuote returns whatever restClient returns', async () => {
   ws._fire('disconnected', { code: 1006 });
   const q = await mc.getQuote('AAPL');
   assert.deepStrictEqual(q, { price: 250, volume: 12345 });
+});
+
+// ── Staleness tests ─────────────────────────────────────────────────
+
+test('getQuote returns null when cached trade is older than maxStalenessMs', async () => {
+  const ws = mockWsClient();
+  const rest = mockRestClient();
+  let nowMs = Date.parse('2026-05-14T14:00:00Z');
+  const mc = createFmpWsMarketClient({
+    apiKey: 'K', tickers: ['AAPL'], wsClient: ws, restClient: rest,
+    now: () => new Date(nowMs),
+    maxStalenessMs: 15 * 60 * 1000,  // 15 min
+  });
+  ws._fire('trade', { ticker: 'AAPL', price: 100, tradeSize: 50, ts: nowMs });
+  assert.strictEqual((await mc.getQuote('AAPL')).price, 100, 'fresh trade returns price');
+  // Advance clock by 16 minutes — beyond staleness
+  nowMs += 16 * 60 * 1000;
+  assert.strictEqual(await mc.getQuote('AAPL'), null, 'stale trade returns null');
+});
+
+test('getQuote still returns within the staleness window', async () => {
+  const ws = mockWsClient();
+  const rest = mockRestClient();
+  let nowMs = Date.parse('2026-05-14T14:00:00Z');
+  const mc = createFmpWsMarketClient({
+    apiKey: 'K', tickers: ['AAPL'], wsClient: ws, restClient: rest,
+    now: () => new Date(nowMs),
+    maxStalenessMs: 15 * 60 * 1000,
+  });
+  ws._fire('trade', { ticker: 'AAPL', price: 100, tradeSize: 50, ts: nowMs });
+  nowMs += 10 * 60 * 1000;  // 10 min later, within 15min window
+  const q = await mc.getQuote('AAPL');
+  assert.strictEqual(q.price, 100, 'still fresh enough');
+});
+
+test('staleness check uses the cached lastTs, not Date.now()', async () => {
+  const ws = mockWsClient();
+  const rest = mockRestClient();
+  let nowMs = Date.parse('2026-05-14T14:00:00Z');
+  const mc = createFmpWsMarketClient({
+    apiKey: 'K', tickers: ['AAPL'], wsClient: ws, restClient: rest,
+    now: () => new Date(nowMs),
+    maxStalenessMs: 60_000,  // 1 min
+  });
+  // Trade with ts=10 minutes ago (already stale at fire time)
+  ws._fire('trade', { ticker: 'AAPL', price: 100, tradeSize: 50, ts: nowMs - (10 * 60 * 1000) });
+  assert.strictEqual(await mc.getQuote('AAPL'), null, 'should be stale immediately based on lastTs');
+});
+
+test('staleness check is bypassed during REST fallback (REST returns its own fresh quote)', async () => {
+  const ws = mockWsClient();
+  const rest = mockRestClient();
+  rest.getQuote = async () => ({ price: 999, volume: 12345 });
+  let nowMs = Date.parse('2026-05-14T14:00:00Z');
+  const mc = createFmpWsMarketClient({
+    apiKey: 'K', tickers: ['AAPL'], wsClient: ws, restClient: rest,
+    now: () => new Date(nowMs),
+    fallbackFailureThreshold: 1,
+    fallbackFailureWindowMs: 60_000,
+    maxStalenessMs: 60_000,
+  });
+  // Trigger fallback
+  ws._fire('disconnected', { code: 1006 });
+  // Even though no fresh WS trade, REST fallback returns its own data
+  const q = await mc.getQuote('AAPL');
+  assert.deepStrictEqual(q, { price: 999, volume: 12345 });
 });

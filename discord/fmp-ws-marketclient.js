@@ -113,6 +113,24 @@ function createFmpWsMarketClient({
     }
   }
 
+  // Defense: attach an 'error' listener on the wsClient EventEmitter.
+  // Without this, an emit('error', ...) (e.g. FMP rejects login as
+  // "Unauthorized") would be unhandled and crash the entire Node process,
+  // taking down all Discord bots that share the process.
+  // On any WS error → engage REST fallback. On auth errors specifically,
+  // stop the wsClient to avoid spamming reconnects with bad credentials.
+  function handleWsError(err) {
+    const msg = err && err.message ? err.message : String(err);
+    logger.error('[fmp-ws-marketclient] WS error — engaging REST fallback:', msg);
+    inFallback = true;
+    if (/login rejected|unauthorized|forbidden/i.test(msg)) {
+      if (typeof wsClient.stop === 'function') {
+        try { wsClient.stop(); } catch (_) { /* noop */ }
+      }
+    }
+  }
+
+  wsClient.on('error', handleWsError);
   wsClient.on('trade', onTrade);
   wsClient.on('disconnected', recordDisconnect);
   wsClient.on('connected', clearFallback);

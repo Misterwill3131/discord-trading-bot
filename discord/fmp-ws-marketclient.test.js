@@ -315,3 +315,51 @@ test('staleness check is bypassed during REST fallback (REST returns its own fre
   const q = await mc.getQuote('AAPL');
   assert.deepStrictEqual(q, { price: 999, volume: 12345 });
 });
+
+// ── Error handling tests (regression: prod crash from FMP login rejection) ─
+
+test('wsClient error event engages REST fallback (no process crash)', async () => {
+  const ws = mockWsClient();
+  const rest = mockRestClient();
+  rest.getQuote = async () => ({ price: 250, volume: 12345 });
+  const mc = createFmpWsMarketClient({
+    apiKey: 'K', tickers: ['AAPL'], wsClient: ws, restClient: rest,
+    logger: { error: () => {}, warn: () => {}, log: () => {} },
+  });
+  // Reproduce the prod crash trigger: FMP rejects the login.
+  // BEFORE the fix: this would emit an unhandled 'error' on the wsClient
+  // EventEmitter and crash the entire Node process. AFTER the fix: the
+  // marketclient attaches its own 'error' listener that engages fallback.
+  ws._fire('error', new Error('login rejected: Unauthorized'));
+  // Subsequent getQuote must route through restClient.
+  const q = await mc.getQuote('AAPL');
+  assert.deepStrictEqual(q, { price: 250, volume: 12345 });
+  assert.strictEqual(mc.getStatus().source, 'rest-fallback');
+});
+
+test('wsClient auth error (login rejected) stops the WS to prevent reconnect spam', async () => {
+  const ws = mockWsClient();
+  let stopCalls = 0;
+  ws.stop = () => { stopCalls++; };
+  const rest = mockRestClient();
+  createFmpWsMarketClient({
+    apiKey: 'K', tickers: ['AAPL'], wsClient: ws, restClient: rest,
+    logger: { error: () => {}, warn: () => {}, log: () => {} },
+  });
+  ws._fire('error', new Error('login rejected: Unauthorized'));
+  assert.strictEqual(stopCalls, 1, 'auth errors should stop wsClient');
+});
+
+test('wsClient transient error engages fallback but does NOT stop WS', async () => {
+  const ws = mockWsClient();
+  let stopCalls = 0;
+  ws.stop = () => { stopCalls++; };
+  const rest = mockRestClient();
+  const mc = createFmpWsMarketClient({
+    apiKey: 'K', tickers: ['AAPL'], wsClient: ws, restClient: rest,
+    logger: { error: () => {}, warn: () => {}, log: () => {} },
+  });
+  ws._fire('error', new Error('ECONNRESET'));
+  assert.strictEqual(mc.getStatus().source, 'rest-fallback', 'fallback engaged on transient error');
+  assert.strictEqual(stopCalls, 0, 'transient errors should NOT stop wsClient (reconnect allowed)');
+});

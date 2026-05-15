@@ -133,15 +133,17 @@ function createFmpClient({
       if (hit.data && (now() - hit.ts) < ttlMs) return hit.data;
       if (hit.inflight) return hit.inflight;
     }
-    // timeseries=10 : 10 dernières barres daily — assez pour yesterday
-    // (1 barre) + week (5) avec marge pour weekend/holiday gaps.
-    const url = base + '/historical-price-full/' + encodeURIComponent(key)
-      + '?timeseries=10&apikey=' + encodeURIComponent(apiKey);
+    // /stable/ ne supporte pas un param "timeseries" ; on slice côté
+    // client aux 10 dernières barres pour matcher l'ancien contrat.
+    const url = base + '/historical-price-eod/full?symbol=' + encodeURIComponent(key)
+      + '&apikey=' + encodeURIComponent(apiKey);
     const inflight = (async () => {
       const json = await httpJson(url);
-      const hist = json && Array.isArray(json.historical) ? json.historical : [];
-      // FMP envoie newest-first → on inverse pour respecter le contrat
-      // (chronologique croissant), comme extractContext() s'y attend.
+      // /stable/historical-price-eod/full retourne un array PLAT
+      // (plus de wrapper {historical: [...]} comme v3). Toujours
+      // newest-first chez FMP → on slice les 10 premiers (newest)
+      // puis on inverse pour l'ordre chronologique croissant.
+      const hist = Array.isArray(json) ? json.slice(0, 10) : [];
       const bars = [];
       for (let i = hist.length - 1; i >= 0; i--) {
         const b = hist[i];

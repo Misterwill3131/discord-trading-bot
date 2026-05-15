@@ -114,15 +114,12 @@ test('getQuote propagates HTTP errors', async () => {
 test('getDailyBars returns chronological-ascending array with parsed dates', async () => {
   // FMP envoie newest-first.
   const fetcher = makeFakeFetch({
-    'https://financialmodelingprep.com/api/v3/historical-price-full/AAPL?timeseries=10&apikey=KEY':
-      jsonOk({
-        symbol: 'AAPL',
-        historical: [
-          { date: '2026-04-27', open: 100, high: 105, low: 99, close: 103, volume: 200 },
-          { date: '2026-04-24', open: 95,  high: 100, low: 94, close: 98,  volume: 180 },
-          { date: '2026-04-23', open: 92,  high: 96,  low: 91, close: 94,  volume: 170 },
-        ],
-      }),
+    'https://financialmodelingprep.com/stable/historical-price-eod/full?symbol=AAPL&apikey=KEY':
+      jsonOk([
+        { symbol: 'AAPL', date: '2026-04-27', open: 100, high: 105, low: 99, close: 103, volume: 200 },
+        { symbol: 'AAPL', date: '2026-04-24', open: 95,  high: 100, low: 94, close: 98,  volume: 180 },
+        { symbol: 'AAPL', date: '2026-04-23', open: 92,  high: 96,  low: 91, close: 94,  volume: 170 },
+      ]),
   });
   const client = createFmpClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
   const bars = await client.getDailyBars('AAPL');
@@ -137,8 +134,8 @@ test('getDailyBars returns chronological-ascending array with parsed dates', asy
 
 test('getDailyBars returns [] when historical array is missing', async () => {
   const fetcher = makeFakeFetch({
-    'https://financialmodelingprep.com/api/v3/historical-price-full/XXXX?timeseries=10&apikey=KEY':
-      jsonOk({ symbol: 'XXXX' }),
+    'https://financialmodelingprep.com/stable/historical-price-eod/full?symbol=XXXX&apikey=KEY':
+      jsonOk([]),
   });
   const client = createFmpClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
   const bars = await client.getDailyBars('XXXX');
@@ -147,8 +144,8 @@ test('getDailyBars returns [] when historical array is missing', async () => {
 
 test('getDailyBars caches within TTL', async () => {
   const fetcher = makeFakeFetch({
-    'https://financialmodelingprep.com/api/v3/historical-price-full/AAPL?timeseries=10&apikey=KEY':
-      jsonOk({ symbol: 'AAPL', historical: [{ date: '2026-04-24', open: 1, high: 1, low: 1, close: 1, volume: 1 }] }),
+    'https://financialmodelingprep.com/stable/historical-price-eod/full?symbol=AAPL&apikey=KEY':
+      jsonOk([{ symbol: 'AAPL', date: '2026-04-24', open: 1, high: 1, low: 1, close: 1, volume: 1 }]),
   });
   let nowMs = 0;
   const client = createFmpClient({

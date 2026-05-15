@@ -298,3 +298,45 @@ test('an "error" event on the underlying socket is emitted as "error" on the cli
   assert.strictEqual(errors.length, 1);
   assert.strictEqual(errors[0].message, 'TLS handshake failed');
 });
+
+test('reconnect works after socket error fires before open (no wedge)', () => {
+  const WS = makeMockWebSocketFactory();
+  let scheduledCb = null;
+  const fakeSetTimeout = (cb) => { scheduledCb = cb; return 1; };
+  const client = createFmpWsClient({
+    apiKey: 'K', streams: [], WebSocketImpl: WS,
+    setTimeoutImpl: fakeSetTimeout, clearTimeoutImpl: () => {},
+  });
+  client.on('error', () => {});  // attach listener to prevent unhandled-error crash
+  client.start();
+  // Socket emits error before open (TLS handshake failure path)
+  WS.last().triggerError(new Error('UNABLE_TO_VERIFY_LEAF_SIGNATURE'));
+  // Then close fires
+  WS.last().triggerClose(1006, 'tls fail');
+  // Reconnect was scheduled
+  assert.ok(typeof scheduledCb === 'function', 'reconnect should have been scheduled');
+  // Fire the reconnect callback
+  scheduledCb();
+  // A second WS instance was created — proves no wedge on the `connecting` flag
+  assert.strictEqual(WS.instances.length, 2, 'second WS instance proves no wedge');
+});
+
+test('login 4xx response prevents reconnect (stops the retry loop)', () => {
+  const WS = makeMockWebSocketFactory();
+  let scheduledCb = null;
+  const fakeSetTimeout = (cb) => { scheduledCb = cb; return 1; };
+  const client = createFmpWsClient({
+    apiKey: 'BAD_KEY', streams: [], WebSocketImpl: WS,
+    setTimeoutImpl: fakeSetTimeout, clearTimeoutImpl: () => {},
+  });
+  client.on('error', () => {});
+  client.start();
+  WS.last().triggerOpen();
+  WS.last().triggerMessage({ event: 'login', data: { status: 401, message: 'Unauthorized' } });
+  // Server kicks us
+  WS.last().triggerClose(1008, 'auth fail');
+  // No reconnect scheduled (auth fail is non-recoverable)
+  assert.strictEqual(scheduledCb, null, 'no reconnect should be scheduled after auth fail');
+  // Only one WS instance ever created
+  assert.strictEqual(WS.instances.length, 1);
+});

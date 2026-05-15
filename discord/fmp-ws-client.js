@@ -96,6 +96,9 @@ function createFmpWsClient({
       if (status >= 400) {
         const reason = (msg.data && msg.data.message) || ('status ' + status);
         logger.error('[fmp-ws] login rejected:', reason);
+        // Auth failure is non-recoverable — stop reconnect loop. Caller must
+        // recreate the client with valid credentials.
+        stopped = true;
         events.emit('error', new Error('login rejected: ' + reason));
         return;
       }
@@ -136,6 +139,7 @@ function createFmpWsClient({
   }
 
   function handleClose(code, reason) {
+    connecting = false;
     loggedIn = false;
     events.emit('disconnected', { code, reason: String(reason || '') });
     if (stopped) return;

@@ -206,7 +206,7 @@ function startScheduler({ client, tradingChannel, sendAlert } = {}) {
     const tickers = (process.env.WATCHED_TICKERS || '')
       .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
     const fmpKey = process.env.FMP_API_KEY || '';
-    const useWs = process.env.FMP_WS_ENABLED === 'true';
+    const useWs = String(process.env.MARKET_ALERTS_USE_WS || 'false').toLowerCase() === 'true';
     const intervalMin = Math.max(1, parseInt(
       process.env.MARKET_ALERTS_INTERVAL_MIN || '5', 10) || 5);
     const evalIntervalSec = Math.max(1, parseInt(
@@ -218,7 +218,13 @@ function startScheduler({ client, tradingChannel, sendAlert } = {}) {
         const restClient = createFmpClient({ apiKey: fmpKey });
         let marketClient;
         if (useWs) {
-          const wsClient = createFmpWsClient({ apiKey: fmpKey, tickers });
+          const streamsCsv = process.env.FMP_WS_STREAMS || 'fmp-us-equities-stream';
+          const streams = streamsCsv.split(',').map(s => s.trim()).filter(Boolean);
+          const wsClient = createFmpWsClient({
+            apiKey: fmpKey,
+            streams,
+            endpoint: process.env.FMP_WS_ENDPOINT || undefined,
+          });
           const maxStalenessMs = Math.max(0, parseInt(
             process.env.FMP_WS_MAX_STALENESS_MS || '900000', 10) || 900000);
           marketClient = createFmpWsMarketClient({

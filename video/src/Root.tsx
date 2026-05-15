@@ -1,7 +1,7 @@
 import { Composition } from 'remotion';
 import { BrandPromo } from './compositions/BrandPromo';
 import { SignalAlert, SignalAlertProps } from './compositions/SignalAlert';
-import { ChartTemplate, chartTemplateSchema } from './compositions/ChartTemplate';
+import { ChartTemplate, chartTemplateSchema, computeChartTemplateTotalFrames } from './compositions/ChartTemplate';
 import { BoomEntry, boomEntrySchema } from './compositions/BoomEntry';
 import { BoomRecap, boomRecapSchema, computeTotalFrames } from './compositions/BoomRecap';
 import { TobBrandStory, tobBrandStorySchema, computeBrandStoryTotalFrames } from './compositions/TobBrandStory';
@@ -39,6 +39,10 @@ const chartTemplateDefaults = {
   narrationText: null,
   logoUrl: null,
   logoCorner: 'top-right' as const,
+  introStingUrl: null,
+  introStingFrames: 45,
+  outroStingUrl: null,
+  outroStingFrames: 45,
 };
 
 const boomRecapDefaults = {
@@ -90,12 +94,14 @@ export const Root = () => {
       <Composition
         id="ChartTemplate"
         component={ChartTemplate}
-        durationInFrames={608}
         fps={30}
         width={1080}
         height={1920}
         schema={chartTemplateSchema}
         defaultProps={chartTemplateDefaults}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: computeChartTemplateTotalFrames(props as any),
+        })}
       />
       <Composition
         id="BoomEntry"
@@ -196,6 +202,10 @@ export const Root = () => {
           narrationText: null,
           logoUrl: null,
           logoCorner: 'top-right' as const,
+          introStingUrl: null,
+          introStingFrames: 45,
+          outroStingUrl: null,
+          outroStingFrames: 45,
         }}
         calculateMetadata={({ props }) => ({
           durationInFrames: computeTradeRecapTotalFrames(props as any),
@@ -232,6 +242,10 @@ export const Root = () => {
           narrationText: null,
           logoUrl: null,
           logoCorner: 'top-right' as const,
+          introStingUrl: null,
+          introStingFrames: 45,
+          outroStingUrl: null,
+          outroStingFrames: 45,
         }}
         calculateMetadata={({ props }) => ({
           durationInFrames: computeTradeRecapTotalFrames(props as any),
@@ -261,6 +275,10 @@ export const Root = () => {
           narrationText: null,
           logoUrl: null,
           logoCorner: 'top-right' as const,
+          introStingUrl: null,
+          introStingFrames: 45,
+          outroStingUrl: null,
+          outroStingFrames: 45,
         }}
         calculateMetadata={({ props }) => ({
           durationInFrames: computeTradeRecapTotalFrames(props as any),
@@ -269,22 +287,26 @@ export const Root = () => {
       <Composition
         id="ChartTemplate_1x1"
         component={ChartTemplate}
-        durationInFrames={608}
         fps={30}
         width={1080}
         height={1080}
         schema={chartTemplateSchema}
         defaultProps={chartTemplateDefaults}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: computeChartTemplateTotalFrames(props as any),
+        })}
       />
       <Composition
         id="ChartTemplate_16x9"
         component={ChartTemplate}
-        durationInFrames={608}
         fps={30}
         width={1920}
         height={1080}
         schema={chartTemplateSchema}
         defaultProps={chartTemplateDefaults}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: computeChartTemplateTotalFrames(props as any),
+        })}
       />
     </>
   );

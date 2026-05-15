@@ -39,6 +39,22 @@ h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
 .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:16px; }
 .card-img { background:rgba(255,255,255,0.03); border-radius:10px; overflow:hidden; border:1px solid rgba(255,255,255,0.08); cursor:pointer; transition:all .2s; position:relative; }
 .card-img:hover { transform:translateY(-2px); border-color:#8b5cf6; box-shadow: 0 8px 24px rgba(139,92,246,0.2); }
+.card-img.selected { border-color:#10b981; box-shadow: 0 0 0 2px rgba(16,185,129,0.4), 0 8px 24px rgba(16,185,129,0.2); }
+.card-img.selected .select-mark { display:flex; }
+.select-mark { display:none; position:absolute; top:8px; left:8px; width:28px; height:28px; border-radius:50%; background:#10b981; color:#000; font-weight:900; font-size:16px; align-items:center; justify-content:center; box-shadow:0 4px 12px rgba(16,185,129,0.4); z-index:2; }
+
+/* Bulk toolbar (apparaît quand >= 1 sélection) */
+#bulk-toolbar { position: sticky; top: 0; z-index: 50; background: rgba(15,15,20,0.95); backdrop-filter: blur(8px); border:1px solid rgba(139,92,246,0.35); border-radius:10px; padding: 10px 14px; margin-bottom: 14px; display: none; align-items: center; gap: 10px; box-shadow: 0 4px 16px rgba(139,92,246,0.18); }
+#bulk-toolbar.open { display: flex; }
+#bulk-toolbar .bulk-count { font-size: 13px; font-weight: 700; color: #fafafa; }
+#bulk-toolbar select { flex: 1; max-width: 280px; padding: 6px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04); color: #fafafa; font-size: 13px; font-family: inherit; }
+#bulk-toolbar button { padding: 6px 12px; border-radius: 6px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit; }
+#bulk-toolbar .btn-bulk-render { background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); color: white; }
+#bulk-toolbar .btn-bulk-render:disabled { opacity: 0.4; cursor: wait; }
+#bulk-toolbar .btn-bulk-clear { background: rgba(255,255,255,0.06); color: #a0a0b0; }
+#bulk-toolbar .btn-bulk-clear:hover { background: rgba(255,255,255,0.1); color: #fafafa; }
+.bulk-mode-toggle { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:6px; border:1px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.04); color:#a0a0b0; cursor:pointer; font-size:13px; font-weight:500; }
+.bulk-mode-toggle.on { background:linear-gradient(135deg,#10b981 0%, #059669 100%); border-color:transparent; color:#fff; }
 .card-img img { width:100%; display:block; }
 .card-meta { padding:10px 12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .badge { font-size:11px; font-weight:700; padding:2px 8px; border-radius:4px; text-transform:uppercase; letter-spacing:0.5px; }
@@ -146,7 +162,18 @@ ${sidebarHTML('/video-studio')}
       <option value="ticker">Ticker A→Z</option>
     </select>
     <button class="filter-clear" id="f-clear" disabled>✕ reset</button>
+    <span class="filter-divider"></span>
+    <button class="bulk-mode-toggle" id="bulk-toggle" title="Active le mode multi-sélection">☐ Bulk mode</button>
   </div>
+
+  <!-- Toolbar bulk : visible uniquement quand mode bulk + >= 1 sélection -->
+  <div id="bulk-toolbar">
+    <span class="bulk-count" id="bulk-count">0 sélectionnés</span>
+    <select id="bulk-template" title="Template appliqué à tous"></select>
+    <button class="btn-bulk-render" id="bulk-render">🎬 Render all</button>
+    <button class="btn-bulk-clear" id="bulk-clear">✕ Clear</button>
+  </div>
+
   <div class="grid" id="grid"><div class="empty">Aucune image. Le bot doit avoir traité au moins une alerte/exit pour qu'elle apparaisse ici.</div></div>
 </div>
 </div>
@@ -213,6 +240,10 @@ let filterAuthor = '';
 let filterFrom = '';   // YYYY-MM-DD or ''
 let filterTo = '';     // YYYY-MM-DD or ''
 let filterSort = 'recent';
+
+// Bulk mode state
+let bulkMode = false;
+const bulkSelection = new Set();
 
 const TEMPLATES_BY_COMPOSITION = {
   ChartTemplate: [],
@@ -282,8 +313,11 @@ function render() {
   grid.innerHTML = filtered.map(i => {
     const date = new Date(i.ts);
     const fmt = date.toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
-    return '<div class="card-img" data-id="' + i.id + '" onclick="openModal(\\''+i.id+'\\')">' +
-      '<span class="cta-overlay">🎬 Render</span>' +
+    const isSelected = bulkSelection.has(i.id);
+    const handler = bulkMode ? 'toggleBulkSelect' : 'openModal';
+    return '<div class="card-img' + (isSelected ? ' selected' : '') + '" data-id="' + i.id + '" onclick="' + handler + '(\\''+i.id+'\\')">' +
+      '<span class="select-mark">✓</span>' +
+      '<span class="cta-overlay">' + (bulkMode ? '☐ Select' : '🎬 Render') + '</span>' +
       '<img loading="lazy" src="/gallery/image/' + i.id + '" alt="">' +
       '<div class="card-meta">' +
         '<span class="badge badge-' + i.type + '">' + i.type + '</span>' +
@@ -292,6 +326,67 @@ function render() {
         '<span class="ts">' + fmt + '</span>' +
       '</div></div>';
   }).join('');
+}
+
+function toggleBulkSelect(id) {
+  if (bulkSelection.has(id)) bulkSelection.delete(id);
+  else bulkSelection.add(id);
+  render();
+  updateBulkToolbar();
+}
+
+function updateBulkToolbar() {
+  const tb = document.getElementById('bulk-toolbar');
+  const n = bulkSelection.size;
+  if (bulkMode && n > 0) tb.classList.add('open');
+  else tb.classList.remove('open');
+  document.getElementById('bulk-count').textContent = n + ' sélectionné' + (n > 1 ? 's' : '');
+  document.getElementById('bulk-render').disabled = n === 0;
+}
+
+function refreshBulkTemplateSelect() {
+  const sel = document.getElementById('bulk-template');
+  // Tous les templates dispos, regroupés par composition.
+  if (!templates || templates.length === 0) {
+    sel.innerHTML = '<option value="">(no template)</option>';
+    return;
+  }
+  sel.innerHTML = templates.map(t =>
+    '<option value="' + t.id + '">' + t.name + ' [' + t.composition + ']</option>'
+  ).join('');
+}
+
+async function doBulkRender() {
+  const tpl = document.getElementById('bulk-template').value;
+  if (!tpl) return;
+  const btn = document.getElementById('bulk-render');
+  btn.disabled = true;
+  const ids = Array.from(bulkSelection);
+  const total = ids.length;
+  let okCount = 0, failCount = 0;
+  btn.textContent = '⏳ 0/' + total;
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    btn.textContent = '⏳ ' + (i + 1) + '/' + total;
+    try {
+      const res = await fetch('/api/video-studio/render', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ galleryId: id, templateId: tpl }),
+      });
+      if (res.ok) okCount++;
+      else failCount++;
+    } catch (e) {
+      failCount++;
+    }
+  }
+  btn.textContent = '🎬 Render all';
+  btn.disabled = false;
+  alert('Bulk render terminé : ' + okCount + ' OK, ' + failCount + ' échec(s). Vois la section Renders récents pour le statut.');
+  bulkSelection.clear();
+  render();
+  updateBulkToolbar();
+  refreshJobs();
 }
 
 function openModal(id) {
@@ -524,7 +619,30 @@ document.getElementById('modal-accent-override').addEventListener('input', (e) =
   e.currentTarget.dataset.userOverride = '1';
 });
 
-load();
+// ── Bulk mode wire-up ───────────────────────────────────────────────
+document.getElementById('bulk-toggle').addEventListener('click', () => {
+  bulkMode = !bulkMode;
+  const btn = document.getElementById('bulk-toggle');
+  btn.classList.toggle('on', bulkMode);
+  btn.textContent = bulkMode ? '☑ Bulk mode' : '☐ Bulk mode';
+  if (!bulkMode) bulkSelection.clear();
+  render();
+  updateBulkToolbar();
+});
+document.getElementById('bulk-render').addEventListener('click', doBulkRender);
+document.getElementById('bulk-clear').addEventListener('click', () => {
+  bulkSelection.clear();
+  render();
+  updateBulkToolbar();
+});
+
+// Initial load : récupère gallery + templates, puis populate le select
+// du bulk toolbar (qui a besoin de la liste templates).
+async function initialLoad() {
+  await load();
+  refreshBulkTemplateSelect();
+}
+initialLoad();
 startJobsPolling();
 </script>
 </body></html>`;

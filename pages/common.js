@@ -140,6 +140,14 @@ const COMMON_CSS = `
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: var(--r-sm); }
   ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+  /* Chips (unified badge style — opt-in per page) */
+  .chip { display: inline-flex; align-items: center; padding: 2px var(--space-2); border-radius: var(--r-pill); font-size: var(--text-xs); font-weight: 600; font-family: var(--font-mono); white-space: nowrap; }
+  .chip-ok      { background: rgba(59,165,93,0.15);   color: #6ee7b7; }
+  .chip-err     { background: rgba(237,66,69,0.15);   color: #f87171; }
+  .chip-warn    { background: rgba(245,158,11,0.15);  color: #fbbf24; }
+  .chip-info    { background: rgba(59,130,246,0.15);  color: #93c5fd; }
+  .chip-neutral { background: rgba(128,132,142,0.15); color: #a1a1aa; }
 `;
 
 // Liens de la sidebar. Ajouter une page ? Ajouter une entrée ici et

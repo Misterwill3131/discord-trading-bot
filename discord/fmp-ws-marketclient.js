@@ -116,6 +116,10 @@ function createFmpWsMarketClient({
   wsClient.on('trade', onTrade);
   wsClient.on('disconnected', recordDisconnect);
   wsClient.on('connected', clearFallback);
+  wsClient.on('error', (err) => {
+    logger.error('[fmp-ws-marketclient] WS error: ' + (err && err.message ? err.message : String(err)));
+    recordDisconnect();
+  });
 
   return {
     async getQuote(ticker) {

@@ -315,3 +315,56 @@ test('staleness check is bypassed during REST fallback (REST returns its own fre
   const q = await mc.getQuote('AAPL');
   assert.deepStrictEqual(q, { price: 999, volume: 12345 });
 });
+
+// ── Error event tests ────────────────────────────────────────────────
+
+test('an error event from wsClient does not crash the process', () => {
+  const ws = mockWsClient();
+  const rest = mockRestClient();
+  createFmpWsMarketClient({
+    apiKey: 'K', tickers: ['AAPL'], wsClient: ws, restClient: rest,
+    now: () => new Date('2026-05-14T14:00:00Z'),
+  });
+  // Must not throw — no unhandled error event
+  assert.doesNotThrow(() => {
+    ws._fire('error', new Error('TLS handshake failed'));
+  });
+});
+
+test('an error event logs via the injected logger', () => {
+  const ws = mockWsClient();
+  const rest = mockRestClient();
+  const logged = [];
+  const fakeLogger = {
+    log: () => {},
+    warn: () => {},
+    error: (...args) => logged.push(args.join(' ')),
+  };
+  createFmpWsMarketClient({
+    apiKey: 'K', tickers: ['AAPL'], wsClient: ws, restClient: rest,
+    now: () => new Date('2026-05-14T14:00:00Z'),
+    logger: fakeLogger,
+  });
+  ws._fire('error', new Error('UNABLE_TO_VERIFY_LEAF_SIGNATURE'));
+  assert.strictEqual(logged.length, 1, 'logger.error called once');
+  assert.ok(logged[0].includes('WS error'), 'log message contains "WS error"');
+  assert.ok(logged[0].includes('UNABLE_TO_VERIFY_LEAF_SIGNATURE'), 'log message contains original error message');
+});
+
+test('repeated errors trigger fallback after threshold', () => {
+  const ws = mockWsClient();
+  const rest = mockRestClient();
+  let nowMs = Date.parse('2026-05-14T14:00:00Z');
+  const mc = createFmpWsMarketClient({
+    apiKey: 'K', tickers: ['AAPL'], wsClient: ws, restClient: rest,
+    now: () => new Date(nowMs),
+    fallbackFailureThreshold: 3,
+    fallbackFailureWindowMs: 60_000,
+  });
+  ws._fire('error', new Error('TLS fail 1'));
+  nowMs += 10_000;
+  ws._fire('error', new Error('TLS fail 2'));
+  nowMs += 10_000;
+  ws._fire('error', new Error('TLS fail 3'));
+  assert.strictEqual(mc.getStatus().source, 'rest-fallback', 'should be in rest-fallback after 3 errors');
+});

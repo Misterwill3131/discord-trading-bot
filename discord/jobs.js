@@ -32,11 +32,14 @@ const profitCounter = require('../profit/counter');
 const { backupDb, purgeFilteredMessagesWithoutData } = require('../db/sqlite');
 const { createMarketAlertsScheduler, registerMarketAlertCommands } = require('./market-alerts');
 const { createFmpClient } = require('./fmp-client');
+const milestoneChecker = require('./milestone-checker');
 
 // Dernière exécution de chaque job — évite les doublons si
 // l'intervalle de 60s tombe deux fois dans la même minute cible.
 let lastSummaryDate = null;
 let lastBackupDate = null;
+// Used to throttle milestone-checker ticks to the configured cadence.
+let lastMilestoneTickMin = null;
 
 // Historique du backup (utile si on veut un jour exposer un endpoint
 // de supervision). Gardé en module scope car non-critique et pas exposé.
@@ -289,6 +292,32 @@ function startScheduler({ client, tradingChannel, sendAlert } = {}) {
       if (marketAlerts && now.getMinutes() % intervalMin === 0) {
         marketAlerts.tick(now).catch(err =>
           console.error('[market-alerts] tick failed:', err.message));
+      }
+
+      // Milestone checker — cadence configurable (défaut 30 min).
+      // Le tick lui-même filtre RTH, donc fire-and-forget. On déduplique
+      // par minute pour éviter de fire 2× dans la même minute cible.
+      const milestoneIntervalMin = Math.max(1, parseInt(
+        process.env.MILESTONE_POLL_INTERVAL_MIN || '30', 10) || 30);
+      const minuteKey = now.getHours() * 60 + now.getMinutes();
+      if (now.getMinutes() % milestoneIntervalMin === 0
+          && lastMilestoneTickMin !== minuteKey) {
+        lastMilestoneTickMin = minuteKey;
+        const fmpKeyForMilestone = process.env.FMP_API_KEY || '';
+        if (fmpKeyForMilestone) {
+          let milestoneMarketClient = null;
+          try {
+            milestoneMarketClient = createFmpClient({ apiKey: fmpKeyForMilestone });
+          } catch (err) {
+            console.error('[milestone-checker] FMP init failed:', err.message);
+          }
+          if (milestoneMarketClient) {
+            milestoneChecker.tick(client, now.getTime(), {
+              marketClient: milestoneMarketClient,
+            }).catch(err =>
+              console.error('[milestone-checker] tick failed:', err.message));
+          }
+        }
       }
     }, 60000);
   });

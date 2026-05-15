@@ -418,6 +418,56 @@ db.exec(`
     last_bearish_reversal_at     INTEGER,
     last_scan_at                 INTEGER
   );
+
+  -- Audit log de tous les messages du trading-floor channel.
+  -- Chaque ligne = 1 message Discord (bot ou humain).
+  -- Base de données brute pour l'analyst-watchlist et milestone-alerts :
+  -- on stocke tout, on filtre au moment de la lecture.
+  CREATE TABLE IF NOT EXISTS tracked_messages (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id        TEXT NOT NULL UNIQUE,
+    channel_id        TEXT NOT NULL,
+    author_id         TEXT NOT NULL,
+    author_username   TEXT,
+    is_bot            INTEGER NOT NULL DEFAULT 0,
+    content           TEXT,
+    embed_json        TEXT,
+    extracted_ticker  TEXT,
+    extracted_price   REAL,
+    created_at        INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_tracked_messages_ticker
+    ON tracked_messages(extracted_ticker);
+  CREATE INDEX IF NOT EXISTS idx_tracked_messages_created
+    ON tracked_messages(created_at);
+
+  CREATE TABLE IF NOT EXISTS analyst_watchlist (
+    ticker                  TEXT PRIMARY KEY,
+    initial_price           REAL NOT NULL,
+    initial_price_source    TEXT NOT NULL,
+    source_message_id       TEXT NOT NULL,
+    source_channel_id       TEXT NOT NULL,
+    mentioned_by_user_id    TEXT NOT NULL,
+    mentioned_by_username   TEXT,
+    first_seen_at           INTEGER NOT NULL,
+    last_milestone_pct      INTEGER,
+    last_alert_at           INTEGER,
+    archived_at             INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_watchlist_active
+    ON analyst_watchlist(archived_at);
+
+  CREATE TABLE IF NOT EXISTS milestone_alerts (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker              TEXT NOT NULL,
+    milestone_pct       INTEGER NOT NULL,
+    initial_price       REAL NOT NULL,
+    current_price       REAL NOT NULL,
+    gain_pct            REAL NOT NULL,
+    fired_at            INTEGER NOT NULL,
+    discord_message_id  TEXT,
+    UNIQUE (ticker, milestone_pct)
+  );
 `);
 
 db.exec(`
@@ -1884,6 +1934,154 @@ function getRecapByDate(date) {
   return stmtGetRecapByDate.get(date) || null;
 }
 
+// ── tracked_messages (analyst-watchlist audit) ──────────────────────
+const stmtTrackedMessageInsert = db.prepare(`
+  INSERT OR IGNORE INTO tracked_messages
+    (message_id, channel_id, author_id, author_username, is_bot,
+     content, embed_json, extracted_ticker, extracted_price, created_at)
+  VALUES
+    (@messageId, @channelId, @authorId, @authorUsername, @isBot,
+     @content, @embedJson, @extractedTicker, @extractedPrice, @createdAt)
+`);
+
+const stmtTrackedMessageGet = db.prepare(`
+  SELECT * FROM tracked_messages WHERE message_id = ?
+`);
+
+function insertTrackedMessage(entry) {
+  stmtTrackedMessageInsert.run({
+    messageId:       String(entry.messageId),
+    channelId:       String(entry.channelId),
+    authorId:        String(entry.authorId),
+    authorUsername:  entry.authorUsername ?? null,
+    isBot:           entry.isBot ? 1 : 0,
+    content:         entry.content ?? null,
+    embedJson:       entry.embedJson ?? null,
+    extractedTicker: entry.extractedTicker ?? null,
+    extractedPrice:  Number.isFinite(entry.extractedPrice) ? entry.extractedPrice : null,
+    createdAt:       Number(entry.createdAt),
+  });
+}
+
+function getTrackedMessage(messageId) {
+  return stmtTrackedMessageGet.get(String(messageId)) || null;
+}
+
+// ── analyst_watchlist (active tickers tracked for milestones) ───────
+const stmtWatchlistInsert = db.prepare(`
+  INSERT OR IGNORE INTO analyst_watchlist
+    (ticker, initial_price, initial_price_source, source_message_id,
+     source_channel_id, mentioned_by_user_id, mentioned_by_username,
+     first_seen_at)
+  VALUES
+    (@ticker, @initialPrice, @initialPriceSource, @sourceMessageId,
+     @sourceChannelId, @mentionedByUserId, @mentionedByUsername,
+     @firstSeenAt)
+`);
+
+const stmtWatchlistGet = db.prepare(`
+  SELECT * FROM analyst_watchlist WHERE ticker = ?
+`);
+
+const stmtWatchlistActive = db.prepare(`
+  SELECT * FROM analyst_watchlist
+  WHERE archived_at IS NULL
+  ORDER BY first_seen_at ASC
+`);
+
+const stmtWatchlistUpdateAfterAlert = db.prepare(`
+  UPDATE analyst_watchlist
+  SET last_milestone_pct = @lastMilestonePct,
+      last_alert_at      = @lastAlertAt
+  WHERE ticker = @ticker
+`);
+
+const stmtWatchlistArchiveExpired = db.prepare(`
+  UPDATE analyst_watchlist
+  SET archived_at = @now
+  WHERE archived_at IS NULL AND first_seen_at < @cutoff
+`);
+
+function insertWatchlistEntry(entry) {
+  stmtWatchlistInsert.run({
+    ticker:              String(entry.ticker).toUpperCase(),
+    initialPrice:        Number(entry.initialPrice),
+    initialPriceSource:  String(entry.initialPriceSource),
+    sourceMessageId:     String(entry.sourceMessageId),
+    sourceChannelId:     String(entry.sourceChannelId),
+    mentionedByUserId:   String(entry.mentionedByUserId),
+    mentionedByUsername: entry.mentionedByUsername ?? null,
+    firstSeenAt:         Number(entry.firstSeenAt),
+  });
+}
+
+function getWatchlistEntry(ticker) {
+  return stmtWatchlistGet.get(String(ticker).toUpperCase()) || null;
+}
+
+function getActiveWatchlist() {
+  return stmtWatchlistActive.all();
+}
+
+function updateWatchlistAfterAlert({ ticker, lastMilestonePct, lastAlertAt }) {
+  stmtWatchlistUpdateAfterAlert.run({
+    ticker:           String(ticker).toUpperCase(),
+    lastMilestonePct: Number(lastMilestonePct),
+    lastAlertAt:      Number(lastAlertAt),
+  });
+}
+
+function archiveExpiredWatchlist(cutoffMs, nowMs = Date.now()) {
+  const result = stmtWatchlistArchiveExpired.run({
+    cutoff: Number(cutoffMs),
+    now:    Number(nowMs),
+  });
+  return result.changes;
+}
+
+// ── milestone_alerts (atomic dedup via UNIQUE constraint) ───────────
+const stmtMilestoneAlertInsert = db.prepare(`
+  INSERT OR IGNORE INTO milestone_alerts
+    (ticker, milestone_pct, initial_price, current_price,
+     gain_pct, fired_at, discord_message_id)
+  VALUES
+    (@ticker, @milestonePct, @initialPrice, @currentPrice,
+     @gainPct, @firedAt, @discordMessageId)
+`);
+
+// Returns true when the insert actually wrote (= this caller may post).
+// Returns false when UNIQUE constraint blocked it (= already fired).
+function insertMilestoneAlert(entry) {
+  const result = stmtMilestoneAlertInsert.run({
+    ticker:           String(entry.ticker).toUpperCase(),
+    milestonePct:     Number(entry.milestonePct),
+    initialPrice:     Number(entry.initialPrice),
+    currentPrice:     Number(entry.currentPrice),
+    gainPct:          Number(entry.gainPct),
+    firedAt:          Number(entry.firedAt),
+    discordMessageId: entry.discordMessageId ?? null,
+  });
+  return result.changes > 0;
+}
+
+const stmtMilestoneAlertSetDiscordId = db.prepare(`
+  UPDATE milestone_alerts
+  SET discord_message_id = @discordMessageId
+  WHERE ticker = @ticker AND milestone_pct = @milestonePct
+`);
+
+// Updates the discord_message_id for an already-inserted milestone alert.
+// Called from milestone-checker after a successful Discord reply.
+// Returns true if a row was updated, false otherwise.
+function setMilestoneAlertDiscordId({ ticker, milestonePct, discordMessageId }) {
+  const result = stmtMilestoneAlertSetDiscordId.run({
+    ticker:           String(ticker).toUpperCase(),
+    milestonePct:     Number(milestonePct),
+    discordMessageId: discordMessageId == null ? null : String(discordMessageId),
+  });
+  return result.changes > 0;
+}
+
 module.exports = {
   db,
   DB_PATH,
@@ -2030,4 +2228,19 @@ module.exports = {
   tryClaimRecapDate,
   setRecapRenderJobId,
   getRecapByDate,
+
+  // analyst-watchlist audit
+  insertTrackedMessage,
+  getTrackedMessage,
+
+  // analyst-watchlist module
+  insertWatchlistEntry,
+  getWatchlistEntry,
+  getActiveWatchlist,
+  updateWatchlistAfterAlert,
+  archiveExpiredWatchlist,
+
+  // analyst-watchlist module — milestone dedup
+  insertMilestoneAlert,
+  setMilestoneAlertDiscordId,
 };

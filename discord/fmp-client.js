@@ -166,7 +166,38 @@ function createFmpClient({
     }
   }
 
-  return { getQuote, getDailyBars };
+  // Bulk quote: FMP supports up to ~250 tickers per call via comma-joined
+  // path (`/quote/AAPL,TSLA,NVDA`). Returns { TICKER: { price, volume }, ... }
+  // keyed by upper-cased symbol. Tickers missing from the response simply
+  // don't appear in the output map (no exception). Non-finite prices are
+  // skipped — same sanity rule as getQuote.
+  async function getQuotesBulk(tickers) {
+    const list = Array.from(new Set(
+      (Array.isArray(tickers) ? tickers : [])
+        .map(t => String(t).toUpperCase())
+        .filter(Boolean)
+    ));
+    if (list.length === 0) return {};
+    const url = base + '/quote/' + list.map(encodeURIComponent).join(',')
+      + '?apikey=' + encodeURIComponent(apiKey);
+    const json = await httpJson(url);
+    const rows = Array.isArray(json) ? json : [];
+    const out = {};
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue;
+      const sym = typeof row.symbol === 'string' ? row.symbol.toUpperCase() : null;
+      if (!sym) continue;
+      const price = Number.isFinite(row.price) ? row.price : null;
+      if (price == null) continue;
+      out[sym] = {
+        price,
+        volume: Number.isFinite(row.volume) ? row.volume : 0,
+      };
+    }
+    return out;
+  }
+
+  return { getQuote, getDailyBars, getQuotesBulk };
 }
 
 module.exports = {

@@ -86,13 +86,59 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
   // ── GET /api/video-studio/templates ───────────────────────────────
   app.get('/api/video-studio/templates', requireAuth, (_req, res) => {
     const templates = loadTemplates();
-    // Renvoie sans les props complètes pour réduire le payload (le client
-    // n'a besoin que des métadonnées pour afficher le dropdown).
+    // Inclut props pour le swatch preview du modal et l'éditeur templates.
     res.json({
       templates: templates.map(t => ({
         id: t.id, name: t.name, composition: t.composition, description: t.description,
+        props: t.props || {},
       })),
     });
+  });
+
+  // ── GET /api/video-studio/templates/:id ───────────────────────────
+  // Renvoie le JSON complet d'un template pour l'éditeur (id + raw file).
+  app.get('/api/video-studio/templates/:id', requireAuth, (req, res) => {
+    const safeId = String(req.params.id || '').replace(/[^a-z0-9-]/gi, '');
+    if (!safeId) return res.status(400).json({ error: 'Invalid template id' });
+    const file = path.join(TEMPLATES_DIR, safeId + '.json');
+    if (!fs.existsSync(file)) return res.status(404).json({ error: 'Template not found' });
+    try {
+      const raw = fs.readFileSync(file, 'utf-8');
+      const parsed = JSON.parse(raw);
+      res.json({ id: safeId, ...parsed });
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to read template: ' + e.message });
+    }
+  });
+
+  // ── PUT /api/video-studio/templates/:id ───────────────────────────
+  // Sauvegarde un template existant. Body = JSON complet { composition,
+  // name, description, props }. Validation : composition obligatoire,
+  // props doit être objet. Pas de création new file ici (cf POST).
+  app.put('/api/video-studio/templates/:id', requireAuth, (req, res) => {
+    const safeId = String(req.params.id || '').replace(/[^a-z0-9-]/gi, '');
+    if (!safeId) return res.status(400).json({ error: 'Invalid template id' });
+    const body = req.body || {};
+    if (!body.composition || typeof body.composition !== 'string') {
+      return res.status(400).json({ error: 'composition is required' });
+    }
+    if (body.props && (typeof body.props !== 'object' || Array.isArray(body.props))) {
+      return res.status(400).json({ error: 'props must be an object' });
+    }
+    const file = path.join(TEMPLATES_DIR, safeId + '.json');
+    if (!fs.existsSync(file)) return res.status(404).json({ error: 'Template not found' });
+    const out = {
+      composition: body.composition,
+      name: body.name || safeId,
+      description: body.description || '',
+      props: body.props || {},
+    };
+    try {
+      fs.writeFileSync(file, JSON.stringify(out, null, 2) + '\n');
+      res.json({ saved: true, id: safeId });
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to write template: ' + e.message });
+    }
   });
 
   // ── POST /api/video-studio/render ─────────────────────────────────

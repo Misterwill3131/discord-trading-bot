@@ -130,7 +130,12 @@ h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
 <body>
 ${sidebarHTML('/video-studio')}
 <div class="page-content">
-<div class="page-header"><div class="page-title">🎬 Video Studio</div></div>
+<div class="page-header">
+  <div class="page-title">🎬 Video Studio</div>
+  <div style="margin-left:auto; padding-right:24px;">
+    <a href="/video-studio/templates" style="font-size:13px; color:#8b5cf6; text-decoration:none;">⚙ Edit templates →</a>
+  </div>
+</div>
 <div id="wrap">
   <h1>Génère une vidéo depuis une alerte<span id="count"></span></h1>
   <p class="sub">Pick une image canvas générée par le bot (gallery) et transforme-la en vidéo Remotion auto-postée sur Discord.</p>

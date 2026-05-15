@@ -599,6 +599,14 @@ addColumnIfMissing('render_jobs', 'output_channel_id', 'TEXT');
 // NULL = pas de surcharge. Format : '{"accentColor":"#ff00ff",...}'.
 addColumnIfMissing('render_jobs', 'props_override', 'TEXT');
 
+// ── render_jobs : ab_group (A/B testing) ──────────────────────────────
+// Quand un même contenu est rendu avec 2 templates différents pour A/B
+// tester l'engagement, on associe les 2 jobs au même `ab_group` (uuid).
+// NULL = pas d'A/B test. Permet ensuite de query "tous les A/B groups
+// avec leur engagement final" et de pinner le winner pour future renders.
+addColumnIfMissing('render_jobs', 'ab_group', 'TEXT');
+addColumnIfMissing('render_jobs', 'ab_variant', 'TEXT');  // 'A' | 'B' (string label)
+
 // ── SaaS licenses : passthrough channel séparé pour bots upstream ─────
 // Permet de router les alertes "passthrough" (ex: TrendVision) vers un
 // salon distinct du target_channel_id (signaux principaux).
@@ -1830,12 +1838,14 @@ const stmtEnqueueRenderJob = db.prepare(`
     (ticker, entry_author, entry_message, entry_ts,
      exit_author, exit_message, exit_ts, pnl, proof_image_base64,
      template_name, composition, recap_data, tease_action, tease_subtext,
-     entry_price, exit_price, output_channel_id, props_override)
+     entry_price, exit_price, output_channel_id, props_override,
+     ab_group, ab_variant)
   VALUES
     (@ticker, @entry_author, @entry_message, @entry_ts,
      @exit_author, @exit_message, @exit_ts, @pnl, @proof_image_base64,
      @template_name, @composition, @recap_data, @tease_action, @tease_subtext,
-     @entry_price, @exit_price, @output_channel_id, @props_override)
+     @entry_price, @exit_price, @output_channel_id, @props_override,
+     @ab_group, @ab_variant)
 `);
 
 const stmtGetPendingRenderJobs = db.prepare(`
@@ -1843,7 +1853,7 @@ const stmtGetPendingRenderJobs = db.prepare(`
          exit_author, exit_message, exit_ts, pnl, status, created_at,
          proof_image_base64, template_name, composition, recap_data,
          tease_action, tease_subtext, entry_price, exit_price,
-         output_channel_id, props_override
+         output_channel_id, props_override, ab_group, ab_variant
   FROM render_jobs
   WHERE status = 'pending'
   ORDER BY created_at ASC
@@ -1855,7 +1865,7 @@ const stmtGetRenderJobById = db.prepare(`
          exit_author, exit_message, exit_ts, pnl, status, created_at,
          proof_image_base64, template_name, composition, recap_data,
          tease_action, tease_subtext, entry_price, exit_price,
-         output_channel_id, props_override
+         output_channel_id, props_override, ab_group, ab_variant
   FROM render_jobs
   WHERE id = ?
 `);
@@ -1887,9 +1897,34 @@ function enqueueRenderJob(payload) {
     exit_price: null,
     output_channel_id: null,
     props_override: null,
+    ab_group: null,
+    ab_variant: null,
     ...payload,
   });
   return result.lastInsertRowid;
+}
+
+// Liste les jobs A/B groupés par ab_group, avec leur status courant.
+// Sert au dashboard A/B testing pour voir les paires en cours.
+const stmtGetAbGroups = db.prepare(`
+  SELECT ab_group, ab_variant, id, ticker, status, template_name,
+         discord_msg_id, output_channel_id, created_at, done_at, pnl
+  FROM render_jobs
+  WHERE ab_group IS NOT NULL
+  ORDER BY created_at DESC
+  LIMIT ?
+`);
+function getAbGroupedJobs(limit = 100) {
+  const cap = Math.min(Math.max(parseInt(limit, 10) || 100, 1), 500);
+  const rows = stmtGetAbGroups.all(cap);
+  // Regroupe par ab_group → { ab_group, jobs: {A: ..., B: ...} }
+  const groups = new Map();
+  for (const r of rows) {
+    if (!groups.has(r.ab_group)) groups.set(r.ab_group, { ab_group: r.ab_group, jobs: {} });
+    const g = groups.get(r.ab_group);
+    g.jobs[r.ab_variant || '?'] = r;
+  }
+  return [...groups.values()];
 }
 
 function getPendingRenderJobs(limit = 10) {
@@ -2267,6 +2302,7 @@ module.exports = {
   getPendingRenderJobs,
   getRenderJobById,
   getAllRenderJobs,
+  getAbGroupedJobs,
   markRenderJobDone,
   markRenderJobFailed,
 

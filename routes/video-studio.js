@@ -16,7 +16,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const { enqueueRenderJob, getMessagesByTicker, getAllRenderJobs } = require('../db/sqlite');
+const { enqueueRenderJob, getMessagesByTicker, getAllRenderJobs, getAbGroupedJobs } = require('../db/sqlite');
+const crypto = require('crypto');
 const { computePnlString, extractPrices } = require('../utils/prices');
 const { pickTease, parsePnlNumeric } = require('../utils/pick-tease');
 const { getDisplayName } = require('../utils/authors');
@@ -75,6 +76,8 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
           error: j.error,
           discordMsgId: j.discord_msg_id,
           outputChannelId: j.output_channel_id,
+          abGroup: j.ab_group || null,
+          abVariant: j.ab_variant || null,
         })),
       });
     } catch (err) {
@@ -434,6 +437,126 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
       });
     } catch (err) {
       console.error('[video-studio/manual-recap] enqueue failed:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── POST /api/video-studio/ab-render ──────────────────────────────
+  // Enqueue 2 render jobs depuis la même image avec 2 templates
+  // différents (variants A + B). Les jobs partagent le même ab_group
+  // (UUID). Après render, les MP4 sont postés dans Discord avec un
+  // libellé A/B et l'audience vote avec les reactions — l'engagement
+  // est analysable via getAbGroupedJobs() côté analytics.
+  app.post('/api/video-studio/ab-render', requireAuth, (req, res) => {
+    const { galleryId, templateIdA, templateIdB } = req.body || {};
+    if (!galleryId) return res.status(400).json({ error: 'Missing galleryId' });
+    if (!templateIdA || !templateIdB) return res.status(400).json({ error: 'Both templateIdA and templateIdB required' });
+    if (templateIdA === templateIdB) return res.status(400).json({ error: 'A and B templates must differ' });
+
+    const item = imageState.imageGallery.find(e => e.id === galleryId);
+    if (!item) return res.status(404).json({ error: 'Gallery item not found' });
+
+    const templates = loadTemplates();
+    const tplA = templates.find(t => t.id === templateIdA);
+    const tplB = templates.find(t => t.id === templateIdB);
+    if (!tplA) return res.status(404).json({ error: `Template A not found: ${templateIdA}` });
+    if (!tplB) return res.status(404).json({ error: `Template B not found: ${templateIdB}` });
+
+    // Génère un ab_group ID unique (uuid v4).
+    const abGroup = crypto.randomUUID();
+
+    // Helper pour enqueuer une variante (réplique la logique de /render).
+    const author = item.author || 'Z';
+    const ts = item.ts || new Date().toISOString();
+    const ticker = (item.ticker || 'BOOM').toUpperCase();
+
+    let messageStr = `$${ticker} signal`;
+    let computedPnl = '+0%';
+    let entryTsIso = ts;
+    let entryAuthor = author;
+    let entryMessageStr = messageStr;
+    let exitTsIso = ts;
+    let entryPriceNum = null;
+    let exitPriceNum = null;
+    try {
+      const galleryTime = new Date(ts).getTime();
+      const sinceForCurrent = new Date(galleryTime - 60_000).toISOString();
+      const currentRows = getMessagesByTicker(ticker, sinceForCurrent);
+      const currentMatch = currentRows.find(r => {
+        const t = new Date(r.ts).getTime();
+        return Math.abs(t - galleryTime) < 60_000
+          && (r.author || '').toLowerCase() === author.toLowerCase();
+      });
+      if (currentMatch && currentMatch.content) {
+        messageStr = currentMatch.content;
+        const pnl = computePnlString(currentMatch.content);
+        if (pnl) computedPnl = pnl;
+        exitTsIso = currentMatch.ts;
+        try {
+          const exitPrices = extractPrices(currentMatch.content);
+          if (exitPrices && Number.isFinite(exitPrices.entry_price)) exitPriceNum = exitPrices.entry_price;
+        } catch { /* skip */ }
+        if (item.type === 'proof') {
+          const sinceForEntry = new Date(galleryTime - 30 * 86400000).toISOString();
+          const entryRows = getMessagesByTicker(ticker, sinceForEntry);
+          const entryMatch = entryRows.find(m =>
+            m.passed && m.type === 'entry' && m.entry_price != null &&
+            Number.isFinite(m.entry_price) && new Date(m.ts) < new Date(currentMatch.ts)
+          );
+          if (entryMatch) {
+            entryTsIso = entryMatch.ts;
+            entryAuthor = entryMatch.author || author;
+            entryMessageStr = entryMatch.content || messageStr;
+            entryPriceNum = entryMatch.entry_price;
+          }
+        }
+      }
+    } catch { /* swallow, defaults will apply */ }
+
+    function enqueueVariant(tpl, variant) {
+      const composition = tpl.composition || (item.type === 'proof' ? 'ChartTemplate' : 'BoomEntry');
+      const tease = pickTease({ type: item.type, pnl: computedPnl, seed: `${galleryId}-${variant}` });
+      return enqueueRenderJob({
+        ticker,
+        entry_author: getDisplayName(entryAuthor),
+        entry_message: entryMessageStr,
+        entry_ts: entryTsIso,
+        exit_author: getDisplayName(author),
+        exit_message: messageStr,
+        exit_ts: exitTsIso,
+        pnl: computedPnl,
+        proof_image_base64: item.buffer.toString('base64'),
+        template_name: tpl.id,
+        composition,
+        tease_action: tease ? tease.teaseAction : null,
+        tease_subtext: tease ? tease.teaseSubtext : null,
+        entry_price: entryPriceNum,
+        exit_price: exitPriceNum,
+        ab_group: abGroup,
+        ab_variant: variant,
+      });
+    }
+
+    try {
+      const jobIdA = enqueueVariant(tplA, 'A');
+      const jobIdB = enqueueVariant(tplB, 'B');
+      console.log(`[video-studio] A/B group ${abGroup}: A=#${jobIdA} (${templateIdA}) + B=#${jobIdB} (${templateIdB})`);
+      res.json({ abGroup, jobIdA, jobIdB, templateIdA, templateIdB });
+    } catch (err) {
+      console.error('[video-studio/ab-render] enqueue failed:', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── GET /api/video-studio/ab-groups ──────────────────────────────
+  // Liste les paires A/B groupées avec leur statut courant pour le
+  // dashboard A/B.
+  app.get('/api/video-studio/ab-groups', requireAuth, (_req, res) => {
+    try {
+      const groups = getAbGroupedJobs(100);
+      res.json({ groups });
+    } catch (err) {
+      console.error('[video-studio] GET /ab-groups failed:', err);
       res.status(500).json({ error: err.message });
     }
   });

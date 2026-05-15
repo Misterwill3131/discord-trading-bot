@@ -126,6 +126,7 @@ h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
 .jobs-empty { color:#6b7280; font-size:13px; padding: 18px 0; text-align:center; width: 100%; }
 .live-indicator { display:inline-flex; align-items:center; gap:4px; font-size:11px; color:#10b981; font-weight:600; }
 .live-indicator .dot { width:6px; height:6px; border-radius:50%; background:#10b981; animation: pulse 1.2s ease-in-out infinite; }
+.job-ab { font-size:10px; font-weight:900; padding:2px 6px; border-radius:4px; background:linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); color:#fff; margin-left:4px; }
 </style></head>
 <body>
 ${sidebarHTML('/video-studio')}
@@ -250,7 +251,34 @@ ${sidebarHTML('/video-studio')}
 
     <div class="modal-actions">
       <button class="btn btn-secondary" id="btn-cancel">Cancel</button>
+      <button class="btn btn-secondary" id="btn-ab" title="Render 2 versions avec 2 templates différents pour A/B tester">⚖ A/B test</button>
       <button class="btn btn-primary" id="btn-render">🎬 Render</button>
+    </div>
+  </div>
+</div>
+
+<!-- A/B test modal (secondary) -->
+<div id="ab-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.9); z-index:1100; align-items:center; justify-content:center; padding:30px;">
+  <div class="modal-box" style="max-width:560px;">
+    <h2>⚖ A/B test — 2 templates, 2 vidéos</h2>
+    <p style="font-size:12px; color:#a0a0b0; margin-bottom:14px;">
+      Génère 2 renders depuis la même image avec 2 templates différents.
+      Les 2 MP4 sont postés sur Discord avec un libellé A/B → l'audience
+      vote avec les reactions, et le winner sera trackable via
+      <code>getAbGroupedJobs()</code>.
+    </p>
+    <div class="field">
+      <label for="ab-template-a">Template A</label>
+      <select id="ab-template-a"></select>
+    </div>
+    <div class="field">
+      <label for="ab-template-b">Template B</label>
+      <select id="ab-template-b"></select>
+    </div>
+    <div id="ab-status" style="margin-top:14px;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="ab-cancel">Cancel</button>
+      <button class="btn btn-primary" id="ab-launch">🚀 Launch A/B</button>
     </div>
   </div>
 </div>
@@ -558,9 +586,10 @@ function renderJobs() {
     const tplLabel = j.templateName || j.composition || '';
     const safePnl = (j.pnl || '').replace(/</g, '&lt;');
     const safeErr = (j.error || '').replace(/</g, '&lt;');
+    const abBadge = j.abVariant ? '<span class="job-ab">A/B · ' + j.abVariant + '</span>' : '';
     return '<div class="job-card" data-id="' + j.id + '">' +
       '<div class="job-row">' +
-        '<span class="job-ticker">' + ticker + '</span>' +
+        '<span class="job-ticker">' + ticker + abBadge + '</span>' +
         '<span class="job-pnl' + (pnlNeg ? ' neg' : '') + '">' + safePnl + '</span>' +
       '</div>' +
       '<div class="job-row">' +
@@ -647,6 +676,68 @@ document.getElementById('modal').addEventListener('click', e => { if (e.target.i
 document.getElementById('modal-accent-override').addEventListener('input', (e) => {
   e.currentTarget.dataset.userOverride = '1';
 });
+
+// ── A/B test modal ──────────────────────────────────────────────────
+function openAbModal() {
+  if (!selectedItem) return;
+  // Pre-fill les selects avec les templates éligibles pour cette image.
+  const composition = selectedItem.type === 'proof' ? 'ChartTemplate' : 'BoomEntry';
+  const eligible = TEMPLATES_BY_COMPOSITION[composition] || [];
+  const opts = eligible.map(t => '<option value="' + t.id + '">' + t.name + '</option>').join('');
+  document.getElementById('ab-template-a').innerHTML = opts;
+  document.getElementById('ab-template-b').innerHTML = opts;
+  // Default A = premier, B = deuxième (si dispo)
+  if (eligible.length >= 2) document.getElementById('ab-template-b').value = eligible[1].id;
+  document.getElementById('ab-status').textContent = '';
+  document.getElementById('ab-status').className = '';
+  document.getElementById('ab-modal').style.display = 'flex';
+}
+
+function closeAbModal() {
+  document.getElementById('ab-modal').style.display = 'none';
+}
+
+async function launchAb() {
+  if (!selectedItem) return;
+  const tplA = document.getElementById('ab-template-a').value;
+  const tplB = document.getElementById('ab-template-b').value;
+  const status = document.getElementById('ab-status');
+  if (tplA === tplB) {
+    status.className = 'error';
+    status.textContent = '❌ A et B doivent être 2 templates différents.';
+    status.style.cssText = 'padding:10px 12px; border-radius:6px; font-size:12px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#ef4444;';
+    return;
+  }
+  const btn = document.getElementById('ab-launch');
+  btn.disabled = true;
+  btn.textContent = '⏳ Enqueuing…';
+  try {
+    const res = await fetch('/api/video-studio/ab-render', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ galleryId: selectedItem.id, templateIdA: tplA, templateIdB: tplB }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    status.className = 'success';
+    status.style.cssText = 'padding:10px 12px; border-radius:6px; font-size:12px; background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.3); color:#10b981;';
+    status.textContent = '✅ A/B group ' + data.abGroup.slice(0, 8) + '… : Job A=#' + data.jobIdA + ' (' + data.templateIdA + ') + Job B=#' + data.jobIdB + ' (' + data.templateIdB + ')';
+    refreshJobs();
+    setTimeout(closeAbModal, 1500);
+  } catch (e) {
+    status.className = 'error';
+    status.style.cssText = 'padding:10px 12px; border-radius:6px; font-size:12px; background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); color:#ef4444;';
+    status.textContent = '❌ ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🚀 Launch A/B';
+  }
+}
+
+document.getElementById('btn-ab').addEventListener('click', openAbModal);
+document.getElementById('ab-cancel').addEventListener('click', closeAbModal);
+document.getElementById('ab-launch').addEventListener('click', launchAb);
+document.getElementById('ab-modal').addEventListener('click', e => { if (e.target.id === 'ab-modal') closeAbModal(); });
 
 // ── Bulk mode wire-up ───────────────────────────────────────────────
 document.getElementById('bulk-toggle').addEventListener('click', () => {

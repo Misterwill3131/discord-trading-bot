@@ -63,6 +63,13 @@ h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
 .field select, .field input[type="text"] { width:100%; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.1); border-radius:6px; padding:9px 12px; color:#fafafa; font-size:13px; font-family:inherit; }
 .field select:focus, .field input:focus { outline:none; border-color:#8b5cf6; }
 .tpl-desc { font-size:11px; color:#6b7280; margin-top:4px; font-style:italic; }
+.tpl-preview { display:flex; align-items:center; gap:10px; margin-top:8px; padding:10px 12px; border-radius:8px; background: rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.08); }
+.tpl-swatch { width:36px; height:36px; border-radius:8px; flex-shrink:0; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+.tpl-preview-info { display:flex; flex-direction:column; gap:2px; font-size:11px; color:#a0a0b0; }
+.tpl-preview-info strong { color:#fafafa; font-size:12px; font-weight:700; }
+.fields-row { display:flex; gap:10px; }
+.fields-row > .field { flex: 1; margin-bottom: 0; }
+.field-helper { font-size:10px; color:#6b7280; margin-top:3px; }
 .modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
 .btn { padding:10px 18px; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; }
 .btn-primary { background:linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); color:white; }
@@ -160,6 +167,26 @@ ${sidebarHTML('/video-studio')}
       <label for="modal-template">Template</label>
       <select id="modal-template"></select>
       <div class="tpl-desc" id="modal-tpl-desc"></div>
+      <div class="tpl-preview" id="modal-tpl-preview" style="display:none;">
+        <div class="tpl-swatch" id="modal-tpl-swatch"></div>
+        <div class="tpl-preview-info">
+          <strong id="modal-tpl-name">—</strong>
+          <span><span id="modal-tpl-comp">—</span> · accent <span id="modal-tpl-accent">—</span></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="fields-row">
+      <div class="field">
+        <label for="modal-ticker-override">Ticker (override)</label>
+        <input type="text" id="modal-ticker-override" maxlength="10" placeholder="TSLA">
+        <div class="field-helper">Laisse vide pour garder celui de l'image</div>
+      </div>
+      <div class="field">
+        <label for="modal-accent-override">Accent color</label>
+        <input type="color" id="modal-accent-override" style="height:42px; padding: 2px; cursor: pointer;">
+        <div class="field-helper">Override la couleur du template</div>
+      </div>
     </div>
 
     <div class="field">
@@ -294,9 +321,13 @@ function openModal(id) {
   sel.onchange = updateTplDesc;
 
   document.getElementById('modal-cta-url').value = '';
+  document.getElementById('modal-ticker-override').value = '';
+  const colorPicker = document.getElementById('modal-accent-override');
+  delete colorPicker.dataset.userOverride; // reset le flag pour que updateTplDesc resync
   document.getElementById('status-msg').className = '';
   document.getElementById('status-msg').textContent = '';
   document.getElementById('btn-render').disabled = false;
+  updateTplDesc(); // refresh preview avec le bon accent
 
   document.getElementById('modal').classList.add('open');
 }
@@ -305,6 +336,23 @@ function updateTplDesc() {
   const id = document.getElementById('modal-template').value;
   const tpl = templates.find(t => t.id === id);
   document.getElementById('modal-tpl-desc').textContent = tpl ? (tpl.description || '') : '';
+  // Preview swatch + accent
+  const preview = document.getElementById('modal-tpl-preview');
+  const accentHex = (tpl && tpl.props && tpl.props.accentColor) || '#10b981';
+  if (tpl) {
+    preview.style.display = 'flex';
+    document.getElementById('modal-tpl-swatch').style.background = accentHex;
+    document.getElementById('modal-tpl-name').textContent = tpl.name || id;
+    document.getElementById('modal-tpl-comp').textContent = tpl.composition || '?';
+    document.getElementById('modal-tpl-accent').textContent = accentHex;
+  } else {
+    preview.style.display = 'none';
+  }
+  // Sync color picker au accent du template (sauf si user a déjà override).
+  const colorPicker = document.getElementById('modal-accent-override');
+  if (!colorPicker.dataset.userOverride) {
+    colorPicker.value = accentHex;
+  }
 }
 
 function closeModal() {
@@ -316,6 +364,11 @@ async function doRender() {
   if (!selectedItem) return;
   const templateId = document.getElementById('modal-template').value;
   const ctaUrl = document.getElementById('modal-cta-url').value.trim();
+  const tickerOverride = document.getElementById('modal-ticker-override').value.trim().toUpperCase().replace(/^\$+/, '');
+  const accentPicker = document.getElementById('modal-accent-override');
+  // Ne send accent que si user a explicitement touché le picker (sinon
+  // template default = automatique, pas besoin de l'envoyer).
+  const accentOverride = accentPicker.dataset.userOverride ? accentPicker.value : null;
 
   const btn = document.getElementById('btn-render');
   btn.disabled = true;
@@ -333,6 +386,8 @@ async function doRender() {
         galleryId: selectedItem.id,
         templateId,
         ctaUrl: ctaUrl || undefined,
+        tickerOverride: tickerOverride || undefined,
+        accentColor: accentOverride || undefined,
       }),
     });
     const data = await res.json();
@@ -462,6 +517,12 @@ document.getElementById('f-clear').addEventListener('click', () => {
 document.getElementById('btn-cancel').addEventListener('click', closeModal);
 document.getElementById('btn-render').addEventListener('click', doRender);
 document.getElementById('modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
+
+// Marque le color picker comme "user override" dès qu'il bouge — pour
+// que updateTplDesc ne resync pas la valeur au prochain change de template.
+document.getElementById('modal-accent-override').addEventListener('input', (e) => {
+  e.currentTarget.dataset.userOverride = '1';
+});
 
 load();
 startJobsPolling();

@@ -61,6 +61,10 @@ function jobToApiShape(row) {
     // dans ce cas le chart est fetché sans annotations.
     entryPrice: row.entry_price != null ? row.entry_price : null,
     exitPrice:  row.exit_price  != null ? row.exit_price  : null,
+    // JSON sérialisé d'overrides arbitraires (ex: {"accentColor":"#ff00ff",
+    // "ctaUrl":"foo.com"}). Le worker merge tout ça en priorité ultime
+    // sur les props finales. null si pas d'override.
+    props_override: row.props_override || null,
   };
 }
 

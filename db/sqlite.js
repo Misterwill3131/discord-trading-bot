@@ -591,6 +591,14 @@ addColumnIfMissing('render_jobs', 'exit_price',  'REAL');
 // renvoyer le rendu dans le même canal que l'image source.
 addColumnIfMissing('render_jobs', 'output_channel_id', 'TEXT');
 
+// ── render_jobs : props_override (JSON arbitraire) ────────────────────
+// Permet de surcharger n'importe quelle prop de la composition Remotion
+// sans modifier le template (ex: accentColor, ctaUrl, musicVolume). Le
+// worker merge dans cet ordre :
+//   templateProps (base) ← job columns ← props_override (top priority)
+// NULL = pas de surcharge. Format : '{"accentColor":"#ff00ff",...}'.
+addColumnIfMissing('render_jobs', 'props_override', 'TEXT');
+
 // ── SaaS licenses : passthrough channel séparé pour bots upstream ─────
 // Permet de router les alertes "passthrough" (ex: TrendVision) vers un
 // salon distinct du target_channel_id (signaux principaux).
@@ -1822,12 +1830,12 @@ const stmtEnqueueRenderJob = db.prepare(`
     (ticker, entry_author, entry_message, entry_ts,
      exit_author, exit_message, exit_ts, pnl, proof_image_base64,
      template_name, composition, recap_data, tease_action, tease_subtext,
-     entry_price, exit_price, output_channel_id)
+     entry_price, exit_price, output_channel_id, props_override)
   VALUES
     (@ticker, @entry_author, @entry_message, @entry_ts,
      @exit_author, @exit_message, @exit_ts, @pnl, @proof_image_base64,
      @template_name, @composition, @recap_data, @tease_action, @tease_subtext,
-     @entry_price, @exit_price, @output_channel_id)
+     @entry_price, @exit_price, @output_channel_id, @props_override)
 `);
 
 const stmtGetPendingRenderJobs = db.prepare(`
@@ -1835,7 +1843,7 @@ const stmtGetPendingRenderJobs = db.prepare(`
          exit_author, exit_message, exit_ts, pnl, status, created_at,
          proof_image_base64, template_name, composition, recap_data,
          tease_action, tease_subtext, entry_price, exit_price,
-         output_channel_id
+         output_channel_id, props_override
   FROM render_jobs
   WHERE status = 'pending'
   ORDER BY created_at ASC
@@ -1847,7 +1855,7 @@ const stmtGetRenderJobById = db.prepare(`
          exit_author, exit_message, exit_ts, pnl, status, created_at,
          proof_image_base64, template_name, composition, recap_data,
          tease_action, tease_subtext, entry_price, exit_price,
-         output_channel_id
+         output_channel_id, props_override
   FROM render_jobs
   WHERE id = ?
 `);
@@ -1878,6 +1886,7 @@ function enqueueRenderJob(payload) {
     entry_price: null,
     exit_price: null,
     output_channel_id: null,
+    props_override: null,
     ...payload,
   });
   return result.lastInsertRowid;

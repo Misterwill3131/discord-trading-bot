@@ -97,7 +97,7 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
 
   // ── POST /api/video-studio/render ─────────────────────────────────
   app.post('/api/video-studio/render', requireAuth, (req, res) => {
-    const { galleryId, templateId, ctaUrl } = req.body || {};
+    const { galleryId, templateId, ctaUrl, tickerOverride, accentColor } = req.body || {};
     if (!galleryId) return res.status(400).json({ error: 'Missing galleryId' });
     if (!templateId) return res.status(400).json({ error: 'Missing templateId' });
 
@@ -216,9 +216,28 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
       seed: galleryId,
     });
 
+    // Construit props_override : merge des champs surchargeables depuis
+    // le body. Le worker mergera ce JSON sur les template props.
+    const propsOverride = {};
+    if (typeof ctaUrl === 'string' && ctaUrl.trim()) {
+      propsOverride.ctaUrl = ctaUrl.trim();
+    }
+    if (typeof accentColor === 'string' && /^#[0-9a-f]{6}$/i.test(accentColor)) {
+      propsOverride.accentColor = accentColor;
+    }
+    const propsOverrideJson = Object.keys(propsOverride).length > 0
+      ? JSON.stringify(propsOverride)
+      : null;
+
+    // Ticker override : remplace le ticker stocké (utilisé partout dans
+    // le pipeline). Si non fourni, on garde celui dérivé de l'image.
+    const finalTicker = (typeof tickerOverride === 'string' && tickerOverride.trim())
+      ? tickerOverride.trim().toUpperCase().replace(/^\$+/, '')
+      : ticker;
+
     try {
       const jobId = enqueueRenderJob({
-        ticker,
+        ticker: finalTicker,
         // Display names (ex: 'traderzz1m' → 'ZZ') pour cohérence avec
         // le flow auto-render (maybeEnqueueProofRender).
         entry_author: getDisplayName(entryAuthor),
@@ -237,6 +256,9 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
         // Avec : entry arrow ↑ "When alerted" + exit arrow ↓ "$prix".
         entry_price: entryPriceNum,
         exit_price: exitPriceNum,
+        // Props override (accentColor, ctaUrl, etc.) — surchargent les
+        // template props côté worker via jobPropsToRemotion.
+        props_override: propsOverrideJson,
       });
       console.log(`[video-studio] enqueue render_job #${jobId} from gallery ${galleryId} (${item.type}) → composition ${composition}, template ${templateId}, pnl ${computedPnl}, entry=${entryPriceNum ?? 'n/a'}, exit=${exitPriceNum ?? 'n/a'}, tease ctx '${tease ? tease.context : 'none'}'`);
       res.json({
@@ -248,11 +270,6 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
       console.error('[video-studio] enqueue failed:', err);
       res.status(500).json({ error: err.message });
     }
-
-    // Note: ctaUrl est ignoré pour l'instant — le template détermine la
-    // CTA URL via ses props. Future: passer un props_override JSON pour
-    // override per-job des fields comme ctaUrl, ctaTitle, etc.
-    void ctaUrl;
   });
 }
 

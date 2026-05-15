@@ -61,6 +61,10 @@ export type RenderJob = {
   // Liste de paths staticFile relatifs (ex: 'recap-alerts/alert-1.png') où
   // les PNG d'alertes du jour ont été décodés depuis recap_data.alertImagesBase64.
   preparedAlertImages?: Array<{ imagePath: string; ticker?: string | null }>;
+  // JSON sérialisé d'overrides arbitraires (ex: accentColor, ctaUrl) qu'on
+  // merge SUR les props finales en priorité ultime. Sert au flow Video
+  // Studio quand l'utilisateur tweak ces champs au moment du render.
+  props_override?: string | null;
 };
 
 // Charge un template JSON depuis video/templates/<name>.json.
@@ -78,12 +82,27 @@ export function loadTemplateProps(name: string | null | undefined): Record<strin
   }
 }
 
+// Parse le props_override JSON du job en objet sûr. Retourne {} si null/
+// invalide pour ne jamais crasher le render à cause d'une override pourrie.
+function parsePropsOverride(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const obj = JSON.parse(raw);
+    return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : {};
+  } catch (err) {
+    console.warn('[worker] props_override JSON invalid, ignored:', (err as Error).message);
+    return {};
+  }
+}
+
 // Props passées à la composition (sans le id, composition, et template
 // côté DB qui ne sont pas des props Remotion).
-// Ordre du merge : template props (base) ← job props (override) ← image data URL.
+// Ordre du merge : template props (base) ← job props ← image data URL
+//                  ← props_override (top priority).
 export function jobPropsToRemotion(job: RenderJob) {
-  const { id: _id, composition: _comp, proofImageBase64, templateName, recap_data, ...rest } = job;
+  const { id: _id, composition: _comp, proofImageBase64, templateName, recap_data, props_override, ...rest } = job;
   const templateProps = loadTemplateProps(templateName) || {};
+  const override = parsePropsOverride(props_override);
 
   // Pour BoomRecap : parse recap_data JSON et remplace les props.
   // Le worker ignore les entry_*/exit_* fields qui sont des placeholders
@@ -94,11 +113,12 @@ export function jobPropsToRemotion(job: RenderJob) {
       return {
         ...templateProps,
         ...parsed,  // overrides avec date, tickers, runners, tagline, totalGainPct
+        ...override,
       };
     } catch (err) {
       console.error('[worker] Failed to parse recap_data:', (err as Error).message);
       // Continue avec template-only props (defaults sortiront depuis le schema Zod)
-      return { ...templateProps };
+      return { ...templateProps, ...override };
     }
   }
 
@@ -116,10 +136,11 @@ export function jobPropsToRemotion(job: RenderJob) {
         trades: parsed.trades || [],
         longTermInvestments: parsed.longTermInvestments || [],
         alertImages: job.preparedAlertImages || [],
+        ...override,
       };
     } catch (err) {
       console.error('[worker] Failed to parse TobTradeRecap recap_data:', (err as Error).message);
-      return { ...templateProps };
+      return { ...templateProps, ...override };
     }
   }
 
@@ -140,6 +161,7 @@ export function jobPropsToRemotion(job: RenderJob) {
     proofImageDataUrl: dataUrl,
     entryImageDataUrl: dataUrl,
     chartImageDataUrl: chartDataUrl,
+    ...override,
   };
 }
 

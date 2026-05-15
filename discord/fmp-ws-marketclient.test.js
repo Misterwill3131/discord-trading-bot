@@ -171,3 +171,80 @@ test('getStatus exposes ws status + data source', () => {
   assert.strictEqual(s.wsAttemptCount, 2);
   assert.deepStrictEqual(s.subscribedTickers, ['AAPL']);
 });
+
+// ── Fallback tests (Task 5) ─────────────────────────────────────────
+
+test('after N reconnect failures within window, getQuote uses restClient', async () => {
+  const ws = mockWsClient();
+  const rest = mockRestClient();
+  let nowMs = Date.parse('2026-05-14T14:00:00Z');
+  const mc = createFmpWsMarketClient({
+    apiKey: 'K', tickers: ['AAPL'], wsClient: ws, restClient: rest,
+    now: () => new Date(nowMs),
+    fallbackFailureThreshold: 3,
+    fallbackFailureWindowMs: 60_000,
+  });
+  // Fire 3 disconnect events within 60s
+  ws._fire('disconnected', { code: 1006, reason: 'abnormal' });
+  nowMs += 10_000;
+  ws._fire('disconnected', { code: 1006, reason: 'abnormal' });
+  nowMs += 10_000;
+  ws._fire('disconnected', { code: 1006, reason: 'abnormal' });
+  // Now in fallback — getQuote calls REST
+  await mc.getQuote('AAPL');
+  assert.strictEqual(rest.calls.length, 1);
+  assert.deepStrictEqual(rest.calls[0], { method: 'getQuote', ticker: 'AAPL' });
+});
+
+test('fallback flips back to ws on successful reconnect', async () => {
+  const ws = mockWsClient();
+  const rest = mockRestClient();
+  let nowMs = Date.parse('2026-05-14T14:00:00Z');
+  const mc = createFmpWsMarketClient({
+    apiKey: 'K', tickers: ['AAPL'], wsClient: ws, restClient: rest,
+    now: () => new Date(nowMs),
+    fallbackFailureThreshold: 2,
+    fallbackFailureWindowMs: 60_000,
+  });
+  ws._fire('disconnected', { code: 1006 });
+  nowMs += 10_000;
+  ws._fire('disconnected', { code: 1006 });
+  // In fallback — verify
+  assert.strictEqual(mc.getStatus().source, 'rest-fallback');
+  // WS reconnects
+  ws._fire('connected');
+  assert.strictEqual(mc.getStatus().source, 'ws');
+});
+
+test('disconnects spaced beyond the window do NOT trigger fallback', async () => {
+  const ws = mockWsClient();
+  const rest = mockRestClient();
+  let nowMs = Date.parse('2026-05-14T14:00:00Z');
+  const mc = createFmpWsMarketClient({
+    apiKey: 'K', tickers: ['AAPL'], wsClient: ws, restClient: rest,
+    now: () => new Date(nowMs),
+    fallbackFailureThreshold: 2,
+    fallbackFailureWindowMs: 60_000,
+  });
+  ws._fire('disconnected', { code: 1006 });
+  nowMs += 65_000;  // beyond the window
+  ws._fire('disconnected', { code: 1006 });
+  // Still ws (only one disconnect within the window)
+  assert.strictEqual(mc.getStatus().source, 'ws');
+});
+
+test('in fallback, getQuote returns whatever restClient returns', async () => {
+  const ws = mockWsClient();
+  const rest = mockRestClient();
+  rest.getQuote = async () => ({ price: 250, volume: 12345 });
+  let nowMs = Date.parse('2026-05-14T14:00:00Z');
+  const mc = createFmpWsMarketClient({
+    apiKey: 'K', tickers: ['AAPL'], wsClient: ws, restClient: rest,
+    now: () => new Date(nowMs),
+    fallbackFailureThreshold: 1,
+    fallbackFailureWindowMs: 60_000,
+  });
+  ws._fire('disconnected', { code: 1006 });
+  const q = await mc.getQuote('AAPL');
+  assert.deepStrictEqual(q, { price: 250, volume: 12345 });
+});

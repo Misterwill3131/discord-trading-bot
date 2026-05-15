@@ -47,12 +47,41 @@ function createFmpWsMarketClient({
   restClient,
   now = () => new Date(),
   logger = console,
+  fallbackFailureThreshold = 10,   // disconnects within window before flipping to REST
+  fallbackFailureWindowMs = 5 * 60_000,
 } = {}) {
   if (!wsClient)   throw new Error('wsClient required');
   if (!restClient) throw new Error('restClient required');
 
   // ticker (UPPERCASE) → { lastPrice, lastTs, cumulativeVolumeToday, etDateOfCumulative }
   const cache = new Map();
+
+  // Track recent disconnect timestamps. When length within the rolling
+  // window exceeds the threshold, flip `inFallback` true. The 'connected'
+  // event resets fallback to false.
+  let disconnectTimes = [];
+  let inFallback = false;
+
+  function recordDisconnect() {
+    const t = now().getTime();
+    // Drop events older than the window
+    disconnectTimes = disconnectTimes.filter(x => (t - x) <= fallbackFailureWindowMs);
+    disconnectTimes.push(t);
+    if (!inFallback && disconnectTimes.length >= fallbackFailureThreshold) {
+      inFallback = true;
+      logger.warn('[fmp-ws-marketclient] WS unstable — flipping to REST fallback ('
+        + disconnectTimes.length + ' disconnects in '
+        + Math.round(fallbackFailureWindowMs / 1000) + 's window)');
+    }
+  }
+
+  function clearFallback() {
+    if (inFallback) {
+      logger.log('[fmp-ws-marketclient] WS reconnected — leaving REST fallback');
+      inFallback = false;
+    }
+    disconnectTimes = [];
+  }
 
   function onTrade({ ticker, price, tradeSize, ts }) {
     const key = String(ticker).toUpperCase();
@@ -84,9 +113,14 @@ function createFmpWsMarketClient({
   }
 
   wsClient.on('trade', onTrade);
+  wsClient.on('disconnected', recordDisconnect);
+  wsClient.on('connected', clearFallback);
 
   return {
     async getQuote(ticker) {
+      if (inFallback) {
+        return restClient.getQuote(ticker);
+      }
       const key = String(ticker).toUpperCase();
       const entry = cache.get(key);
       if (!entry || entry.lastPrice == null) return null;
@@ -111,10 +145,11 @@ function createFmpWsMarketClient({
     getStatus() {
       const ws = typeof wsClient.getStatus === 'function' ? wsClient.getStatus() : {};
       return {
-        source: 'ws',
+        source: inFallback ? 'rest-fallback' : 'ws',
         wsConnected: !!ws.connected,
         wsAttemptCount: ws.attemptCount || 0,
         subscribedTickers: Array.isArray(ws.subscribedTickers) ? ws.subscribedTickers : [],
+        recentDisconnects: disconnectTimes.length,
       };
     },
   };

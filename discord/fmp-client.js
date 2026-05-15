@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────
-// discord/fmp-client.js — Client Financial Modeling Prep (FMP) v3
+// discord/fmp-client.js — Client Financial Modeling Prep (FMP) /stable/
 // ─────────────────────────────────────────────────────────────────────
 // Wrapper minimal autour de l'API FMP pour les alertes prix/volume.
 // Conforme au contrat marketClient attendu par discord/market-alerts.js :
@@ -9,12 +9,15 @@
 //                          (ordre chronologique CROISSANT — plus ancien en
 //                          premier, comme attendu par extractContext())
 //
-// Endpoints utilisés :
-//   GET /api/v3/quote/{symbol}
-//     → [{ symbol, price, volume, dayLow, dayHigh, ... }]
-//   GET /api/v3/historical-price-full/{symbol}?timeseries=10
-//     → { symbol, historical: [{ date: 'YYYY-MM-DD', open, high, low, close, volume, ... }] }
-//     historical[] vient newest-first chez FMP — on inverse pour l'ordre attendu.
+// Endpoints utilisés (FMP /stable/, migré le 2026-05-15) :
+//   GET /stable/quote?symbol={s}
+//     → [{ symbol, price, volume, dayLow, dayHigh, changePercentage, ... }]
+//   GET /stable/batch-quote?symbols={s1},{s2},...
+//     → same shape as /stable/quote
+//   GET /stable/historical-price-eod/full?symbol={s}
+//     → [{ symbol, date: 'YYYY-MM-DD', open, high, low, close, volume }, ...]
+//     Array plat (plus de wrapper {historical}). Newest-first chez FMP →
+//     on inverse pour l'ordre attendu et on slice à 10 dernières barres.
 //
 // Auth : query param `apikey=...`. Plan free = ~250 req/jour ; on cache
 // agressivement (TTL 30s sur les quotes, idem chart) pour rester sous
@@ -33,7 +36,7 @@
 // pour les tests qui passent un mock).
 // ─────────────────────────────────────────────────────────────────────
 
-const FMP_BASE = 'https://financialmodelingprep.com/api/v3';
+const FMP_BASE = 'https://financialmodelingprep.com/stable';
 
 function withTimeout(promise, ms) {
   let handle;
@@ -98,8 +101,8 @@ function createFmpClient({
       if (hit.data && (now() - hit.ts) < ttlMs) return hit.data;
       if (hit.inflight) return hit.inflight;
     }
-    const url = base + '/quote/' + encodeURIComponent(key)
-      + '?apikey=' + encodeURIComponent(apiKey);
+    const url = base + '/quote?symbol=' + encodeURIComponent(key)
+      + '&apikey=' + encodeURIComponent(apiKey);
     const inflight = (async () => {
       const json = await httpJson(url);
       // FMP renvoie un tableau (souvent à 1 élément) ; tableau vide =

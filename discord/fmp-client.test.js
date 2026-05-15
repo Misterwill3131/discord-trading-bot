@@ -54,7 +54,7 @@ test('createFmpClient throws if apiKey missing', () => {
 
 test('getQuote returns { price, volume } from FMP quote endpoint', async () => {
   const fetcher = makeFakeFetch({
-    'https://financialmodelingprep.com/api/v3/quote/AAPL?apikey=KEY':
+    'https://financialmodelingprep.com/stable/quote?symbol=AAPL&apikey=KEY':
       jsonOk([{ symbol: 'AAPL', price: 185.42, volume: 52_000_000, dayHigh: 186 }]),
   });
   const client = createFmpClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
@@ -64,7 +64,7 @@ test('getQuote returns { price, volume } from FMP quote endpoint', async () => {
 
 test('getQuote returns null for empty FMP response (unknown ticker)', async () => {
   const fetcher = makeFakeFetch({
-    'https://financialmodelingprep.com/api/v3/quote/XXXX?apikey=KEY': jsonOk([]),
+    'https://financialmodelingprep.com/stable/quote?symbol=XXXX&apikey=KEY': jsonOk([]),
   });
   const client = createFmpClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
   assert.strictEqual(await client.getQuote('XXXX'), null);
@@ -72,7 +72,7 @@ test('getQuote returns null for empty FMP response (unknown ticker)', async () =
 
 test('getQuote caches within TTL', async () => {
   const fetcher = makeFakeFetch({
-    'https://financialmodelingprep.com/api/v3/quote/AAPL?apikey=KEY':
+    'https://financialmodelingprep.com/stable/quote?symbol=AAPL&apikey=KEY':
       jsonOk([{ symbol: 'AAPL', price: 100, volume: 10 }]),
   });
   let nowMs = 1_000_000;
@@ -90,7 +90,7 @@ test('getQuote caches within TTL', async () => {
 test('getQuote dedupes concurrent in-flight calls', async () => {
   let resolveFn;
   const fetcher = makeFakeFetch({
-    'https://financialmodelingprep.com/api/v3/quote/AAPL?apikey=KEY':
+    'https://financialmodelingprep.com/stable/quote?symbol=AAPL&apikey=KEY':
       () => new Promise((r) => { resolveFn = () => r(jsonOk([{ price: 1, volume: 1 }])); }),
   });
   const client = createFmpClient({ apiKey: 'KEY', fetchImpl: fetcher.fn });
@@ -103,7 +103,7 @@ test('getQuote dedupes concurrent in-flight calls', async () => {
 
 test('getQuote propagates HTTP errors', async () => {
   const fetcher = makeFakeFetch({
-    'https://financialmodelingprep.com/api/v3/quote/AAPL?apikey=KEY': {
+    'https://financialmodelingprep.com/stable/quote?symbol=AAPL&apikey=KEY': {
       ok: false, status: 429, text: async () => 'rate limited', json: async () => ({}),
     },
   });

@@ -1,4 +1,4 @@
-import { AbsoluteFill, Img, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
+import { AbsoluteFill, Audio, Img, Sequence, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from 'remotion';
 import { z } from 'zod';
 import { zColor } from '@remotion/zod-types';
 import { loadFont as loadInter } from '@remotion/google-fonts/Inter';
@@ -71,6 +71,10 @@ export const tobTradeRecapSchema = z.object({
   errorColor: zColor().default('#ef4444'),
   bgColor: zColor().default('#0a0a0f'),
   outroSeed: z.string().default('trade-recap'),
+  // TTS narration MP3 inline (data:audio/mpeg;base64,...). Si fourni, la
+  // composition layer un <Audio> par-dessus la BG music au volume plein.
+  // null/empty = pas de voix off.
+  narrationDataUrl: z.string().nullable().optional(),
 });
 
 export type TobTradeRecapProps = z.infer<typeof tobTradeRecapSchema>;
@@ -841,6 +845,7 @@ export const TobTradeRecap: React.FC<TobTradeRecapProps> = (props) => {
     dateLabel, trades, longTermInvestments, alertImages,
     secondsPerAlert,
     accentColor, successColor, errorColor, bgColor, outroSeed,
+    narrationDataUrl,
   } = props;
   // Pré-calcul de toutes les trades + summary une seule fois (mémoize ?)
   const computed = trades.map(computeTrade);
@@ -857,6 +862,13 @@ export const TobTradeRecap: React.FC<TobTradeRecapProps> = (props) => {
 
   return (
     <AbsoluteFill style={{ backgroundColor: bgColor, fontFamily }}>
+      {/* Voice-over narration TTS (commence à l'intro, joue par-dessus tout).
+          Volume plein (1.0) — la BG music devra être dim à ~0.3 dans les
+          templates pour ne pas masquer la voix. Si pas de narrationDataUrl,
+          l'<Audio> est skip. */}
+      {narrationDataUrl && (
+        <Audio src={narrationDataUrl} volume={1} />
+      )}
       <Sequence from={introFrom} durationInFrames={FRAMES_INTRO}>
         <IntroPhase accentColor={accentColor} dateLabel={dateLabel} />
       </Sequence>

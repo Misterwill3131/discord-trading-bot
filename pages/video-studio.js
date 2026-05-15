@@ -227,6 +227,14 @@ ${sidebarHTML('/video-studio')}
       <input type="text" id="modal-cta-url" placeholder="discord.gg/templeofboom">
     </div>
 
+    <div class="field">
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+        <input type="checkbox" id="modal-narration" style="width:auto; cursor:pointer;">
+        <span>🎙 Activer la voix off (TTS)</span>
+      </label>
+      <div class="field-helper">Génère une narration AI (ElevenLabs) qui lit le récap par-dessus la BG music. ~$0.02/render.</div>
+    </div>
+
     <div id="status-msg"></div>
 
     <div class="modal-actions">
@@ -423,6 +431,7 @@ function openModal(id) {
 
   document.getElementById('modal-cta-url').value = '';
   document.getElementById('modal-ticker-override').value = '';
+  document.getElementById('modal-narration').checked = false;
   const colorPicker = document.getElementById('modal-accent-override');
   delete colorPicker.dataset.userOverride; // reset le flag pour que updateTplDesc resync
   document.getElementById('status-msg').className = '';
@@ -489,6 +498,7 @@ async function doRender() {
         ctaUrl: ctaUrl || undefined,
         tickerOverride: tickerOverride || undefined,
         accentColor: accentOverride || undefined,
+        enableNarration: document.getElementById('modal-narration').checked || undefined,
       }),
     });
     const data = await res.json();

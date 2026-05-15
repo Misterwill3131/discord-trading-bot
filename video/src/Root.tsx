@@ -186,6 +186,7 @@ export const Root = () => {
           errorColor: '#ef4444' as const,
           bgColor: '#0a0a0f' as const,
           outroSeed: 'trade-recap-preview',
+          narrationDataUrl: null,
         }}
         calculateMetadata={({ props }) => ({
           durationInFrames: computeTradeRecapTotalFrames(props as any),

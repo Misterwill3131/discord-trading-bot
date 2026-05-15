@@ -80,6 +80,13 @@ ${sidebarHTML('/video-studio')}
         <div class="helper">Le MP4 sera posté dans ce canal (Discord ID). Vide → utilise RENDER_OUTPUT_CHANNEL_ID env.</div>
       </div>
     </div>
+    <div style="margin-top: 10px;">
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+        <input type="checkbox" id="cfg-narration" style="width:auto; cursor:pointer;">
+        <span>🎙 Activer la voix off (TTS)</span>
+      </label>
+      <div class="helper">Narration AI (ElevenLabs) lue par-dessus la BG music. ~$0.02/render.</div>
+    </div>
   </div>
 
   <!-- Trades table -->
@@ -244,6 +251,7 @@ async function submitRecap() {
       outputChannelId: document.getElementById('cfg-channel').value || null,
       trades: cleanTrades,
       longTermInvestments: cleanLts,
+      enableNarration: document.getElementById('cfg-narration').checked,
     };
     const r = await fetch('/api/video-studio/manual-recap', {
       method: 'POST',

@@ -143,7 +143,7 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
 
   // ── POST /api/video-studio/render ─────────────────────────────────
   app.post('/api/video-studio/render', requireAuth, (req, res) => {
-    const { galleryId, templateId, ctaUrl, tickerOverride, accentColor } = req.body || {};
+    const { galleryId, templateId, ctaUrl, tickerOverride, accentColor, enableNarration } = req.body || {};
     if (!galleryId) return res.status(400).json({ error: 'Missing galleryId' });
     if (!templateId) return res.status(400).json({ error: 'Missing templateId' });
 
@@ -271,6 +271,11 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
     if (typeof accentColor === 'string' && /^#[0-9a-f]{6}$/i.test(accentColor)) {
       propsOverride.accentColor = accentColor;
     }
+    // Toggle TTS narration per-job (le worker check ce field dans
+    // props_override.enableNarration avant d'appeler generateTTS).
+    if (enableNarration === true || enableNarration === 'true') {
+      propsOverride.enableNarration = true;
+    }
     const propsOverrideJson = Object.keys(propsOverride).length > 0
       ? JSON.stringify(propsOverride)
       : null;
@@ -389,6 +394,11 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
       alertImagesBase64,
     };
 
+    const enableNarrationManual = body.enableNarration === true || body.enableNarration === 'true';
+    const propsOverrideManual = enableNarrationManual
+      ? JSON.stringify({ enableNarration: true })
+      : null;
+
     try {
       const jobId = enqueueRenderJob({
         ticker: 'TOB-RECAP',
@@ -403,6 +413,7 @@ function registerVideoStudioRoutes(app, requireAuth, imageState) {
         template_name: 'trade-recap-default',
         recap_data: JSON.stringify(recapData),
         output_channel_id: outputChannelId,
+        props_override: propsOverrideManual,
       });
       console.log(`[video-studio/manual-recap] enqueue render_job #${jobId} (${normalizedTrades.length} trades + ${normalizedLts.length} long-term, ${alertImagesBase64.length} alerts)`);
       res.json({

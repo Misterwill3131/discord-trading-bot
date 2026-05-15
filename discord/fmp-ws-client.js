@@ -6,19 +6,19 @@
 // last-trade message; ignores quote-update (Q) and trade-break (B)
 // messages. Reconnect with exponential backoff handled in Task 3.
 //
-// Protocol (verified from FMP docs):
-//   wss://websockets.financialmodelingprep.com (stocks)
+// Protocol (verified from FMP /stable/ docs 2026-05-15) :
+//   wss://financialmodelingprep.com/ws/us-stocks   (was wss://websockets.financialmodelingprep.com)
 //   Login:       { event: 'login',     data: { apiKey } }
 //   Subscribe:   { event: 'subscribe', data: { ticker: ['aapl', ...] } }   (lowercase)
 //   Unsubscribe: { event: 'unsubscribe', data: { ticker: [...] } }
 //   Trade msg:   { s: '<ticker>', t: <ms>, type: 'T', lp: <price>, ls: <size> }
 //
-// Spec : docs/superpowers/specs/2026-05-14-fmp-websocket-stocks-design.md
+// Spec : docs/superpowers/specs/2026-05-15-fmp-stable-migration-design.md
 // ─────────────────────────────────────────────────────────────────────
 
 const { EventEmitter } = require('node:events');
 
-const DEFAULT_ENDPOINT = 'wss://websockets.financialmodelingprep.com';
+const DEFAULT_ENDPOINT = 'wss://financialmodelingprep.com/ws/us-stocks';
 
 function createFmpWsClient({
   apiKey,

@@ -28,6 +28,7 @@ const { VIDEO_STUDIO_HTML }  = require('../pages/video-studio');
 const { VIDEO_TEMPLATES_EDITOR_HTML } = require('../pages/video-templates-editor');
 const { VIDEO_MANUAL_RECAP_HTML } = require('../pages/video-manual-recap');
 const { VIDEO_AB_LEADERBOARD_HTML } = require('../pages/video-ab-leaderboard');
+const { COST_DASHBOARD_HTML } = require('../pages/cost-dashboard');
 
 // Factory : retourne un handler Express qui sert un HTML statique.
 // Centralise le Content-Type pour éviter de l'oublier sur une route.
@@ -55,6 +56,7 @@ const PAGES = [
   { path: '/video-studio/templates', html: VIDEO_TEMPLATES_EDITOR_HTML },
   { path: '/video-studio/manual-recap', html: VIDEO_MANUAL_RECAP_HTML },
   { path: '/video-studio/ab-results', html: VIDEO_AB_LEADERBOARD_HTML },
+  { path: '/cost-dashboard',  html: COST_DASHBOARD_HTML },
 ];
 
 function registerPageRoutes(app, requireAuth) {

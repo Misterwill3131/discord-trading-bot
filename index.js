@@ -30,6 +30,9 @@ const { registerRecapImageHandler } = require('./discord/recap-image-handler');
 const { registerDiscordCommands } = require('./discord/commands');
 const { registerMarketCommands } = require('./discord/market-commands');
 const { createYahooClient } = require('./discord/market-commands');
+const { createFmpClient } = require('./discord/fmp-client');
+const { createMarketData: createDiscordMarketData } = require('./discord/market-data');
+const { createSlashCommands } = require('./discord/slash-commands');
 const { createChartImgClient } = require('./discord/chart-img-client');
 const { db } = require('./db/sqlite');
 const { createTrendStore } = require('./db/trend-store');
@@ -53,6 +56,7 @@ const { registerBackupLogRoutes } = require('./routes/backup-log');
 const { registerWelcomeLogRoutes } = require('./routes/welcome-log');
 const { registerDbSnapshotRoutes } = require('./routes/db-snapshot');
 const { registerChartTestRoutes } = require('./routes/chart-test');
+const { registerCostDashboardRoutes } = require('./routes/cost-dashboard');
 const imageState = require('./state/images');
 const { messageLog } = require('./state/messages');
 
@@ -184,6 +188,9 @@ registerDbSnapshotRoutes(app, requireAuth);
 
 // Chart-img smoke test (admin only, fetch un chart sample avec callouts).
 registerChartTestRoutes(app, requireAuth);
+
+// Cost dashboard (auth-protected) — track des coûts API + render.
+registerCostDashboardRoutes(app, requireAuth);
 
 // Profits : injection du channelId avant d'enregistrer les routes.
 profitCounter.setProfitsChannelId(PROFITS_CHANNEL_ID);
@@ -351,6 +358,30 @@ registerDiscordCommands(client, { profitsChannelId: PROFITS_CHANNEL_ID });
 // local renderer. If CHART_IMG_API_KEY is unset, !chart replies with a
 // "command unavailable" message — the rest of the bot still runs.
 const sharedYahoo = createYahooClient();
+
+// FMP REST client shared across slash commands. Requires FMP_API_KEY.
+// If FMP_API_KEY is absent, the slash commands are not registered at
+// all (the bot keeps working without /analyze /insider /politicians).
+const fmpKey = process.env.FMP_API_KEY || '';
+const sharedFmp = fmpKey
+  ? createFmpClient({ apiKey: fmpKey })
+  : null;
+
+// Market-data orchestrator with FMP-then-Yahoo fallback. Only wires the
+// slash commands when both clients are available — if FMP_API_KEY is
+// missing we skip registration entirely (the bot keeps working without
+// the slash commands).
+if (sharedFmp) {
+  const sharedMarketData = createDiscordMarketData({
+    fmpClient: sharedFmp,
+    yahooClient: sharedYahoo,
+  });
+  const slashCommands = createSlashCommands({ marketData: sharedMarketData });
+  slashCommands.wire(client);
+} else {
+  console.warn('[slash-commands] FMP_API_KEY missing — /analyze, /insider, /politicians not registered');
+}
+
 const chartImgClient = CHART_IMG_API_KEY
   ? createChartImgClient({ apiKey: CHART_IMG_API_KEY })
   : null;

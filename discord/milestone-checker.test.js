@@ -49,19 +49,15 @@ test('nextMilestone handles non-default thresholds', () => {
 
 const { buildAlertMessage } = require('./milestone-checker');
 
-test('buildAlertMessage produces the canonical English reply', () => {
+test('buildAlertMessage produces the canonical compact reply', () => {
   const msg = buildAlertMessage({
     ticker: 'AAPL',
     milestonePct: 20,
     initialPrice: 200,
     currentPrice: 240,
-    gainPct: 20,
     mentionedByUsername: 'alice',
   });
-  assert.strictEqual(
-    msg,
-    '🚀 **$AAPL** hit **+20%** milestone — now $240.00 (entry $200.00, gain +20.00%) — first flagged by @alice'
-  );
+  assert.strictEqual(msg, '🚀 (AAPL 200.00-240.00) +20% — by @alice');
 });
 
 test('buildAlertMessage uses fallback username when missing', () => {
@@ -70,10 +66,9 @@ test('buildAlertMessage uses fallback username when missing', () => {
     milestonePct: 100,
     initialPrice: 100,
     currentPrice: 200,
-    gainPct: 100,
     mentionedByUsername: null,
   });
-  assert.ok(msg.endsWith('first flagged by @analyst'));
+  assert.ok(msg.endsWith('by @analyst'));
 });
 
 test('buildAlertMessage formats decimal prices to 2 places', () => {
@@ -82,12 +77,9 @@ test('buildAlertMessage formats decimal prices to 2 places', () => {
     milestonePct: 50,
     initialPrice: 12.345,
     currentPrice: 18.555,
-    gainPct: 50.31,
     mentionedByUsername: 'bob',
   });
-  assert.ok(msg.includes('$18.56'));
-  assert.ok(msg.includes('entry $12.35'));
-  assert.ok(msg.includes('gain +50.31%'));
+  assert.strictEqual(msg, '🚀 (HOOD 12.35-18.56) +50% — by @bob');
 });
 
 const { tick } = require('./milestone-checker');

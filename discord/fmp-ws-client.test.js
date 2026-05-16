@@ -34,13 +34,17 @@ function makeMockWebSocketFactory() {
   return MockWebSocket;
 }
 
-test('start() opens the WS and sends login as the first message after open', () => {
+test('start() opens the WS at /stable/ endpoint with apikey query param', () => {
   const WS = makeMockWebSocketFactory();
   const client = createFmpWsClient({ apiKey: 'KEY', tickers: [], WebSocketImpl: WS });
   client.start();
   assert.strictEqual(WS.instances.length, 1, 'should construct one WS');
-  assert.strictEqual(WS.last().url, 'wss://websockets.financialmodelingprep.com');
+  assert.strictEqual(
+    WS.last().url,
+    'wss://api.financialmodelingprep.com/ws/us-stocks?apikey=KEY'
+  );
   WS.last().triggerOpen();
+  // With empty tickers, only the legacy-compat login event is sent on open.
   assert.strictEqual(WS.last().sent.length, 1, 'should have sent exactly one message after open');
   assert.deepStrictEqual(
     JSON.parse(WS.last().sent[0]),
@@ -48,39 +52,50 @@ test('start() opens the WS and sends login as the first message after open', () 
   );
 });
 
-test('endpoint can be overridden via the `endpoint` option', () => {
+test('endpoint can be overridden via the `endpoint` option (apikey still appended)', () => {
   const WS = makeMockWebSocketFactory();
   const client = createFmpWsClient({
     apiKey: 'K', tickers: [], WebSocketImpl: WS,
     endpoint: 'wss://test.example/ws',
   });
   client.start();
-  assert.strictEqual(WS.last().url, 'wss://test.example/ws');
+  assert.strictEqual(WS.last().url, 'wss://test.example/ws?apikey=K');
 });
 
-test('subscribe is sent after login response confirms', () => {
+test('endpoint override preserves existing query params (uses & separator)', () => {
+  const WS = makeMockWebSocketFactory();
+  const client = createFmpWsClient({
+    apiKey: 'K', tickers: [], WebSocketImpl: WS,
+    endpoint: 'wss://test.example/ws?ver=2',
+  });
+  client.start();
+  assert.strictEqual(WS.last().url, 'wss://test.example/ws?ver=2&apikey=K');
+});
+
+test('subscribe is sent immediately on open (HTTP-layer auth via apikey URL)', () => {
   const WS = makeMockWebSocketFactory();
   const client = createFmpWsClient({ apiKey: 'K', tickers: ['AAPL', 'MSFT'], WebSocketImpl: WS });
   client.start();
   WS.last().triggerOpen();
-  // Only login sent so far
-  assert.strictEqual(WS.last().sent.length, 1);
-  // FMP login response confirms with { event: 'login', status: 200, message: 'OK' }
-  WS.last().triggerMessage({ event: 'login', status: 200, message: 'Welcome to FMP' });
-  // Now the subscribe should fire
+  // On open: login (legacy compat) + subscribe immediately, no wait for response.
   assert.strictEqual(WS.last().sent.length, 2);
+  const login = JSON.parse(WS.last().sent[0]);
   const sub = JSON.parse(WS.last().sent[1]);
+  assert.deepStrictEqual(login, { event: 'login', data: { apiKey: 'K' } });
   assert.strictEqual(sub.event, 'subscribe');
   assert.deepStrictEqual(sub.data.ticker, ['aapl', 'msft'], 'tickers should be lowercased');
 });
 
-test('subscribe is NOT sent before login response', () => {
+test('login response after open is idempotent (no duplicate subscribe)', () => {
   const WS = makeMockWebSocketFactory();
   const client = createFmpWsClient({ apiKey: 'K', tickers: ['AAPL'], WebSocketImpl: WS });
   client.start();
   WS.last().triggerOpen();
-  // No login response yet — only the login should have been sent
-  assert.strictEqual(WS.last().sent.length, 1);
+  const sentAfterOpen = WS.last().sent.length;  // login + subscribe = 2
+  // If the server happens to send a login confirmation, we already
+  // marked logged-in and flushed subscriptions — no duplicate sub.
+  WS.last().triggerMessage({ event: 'login', status: 200, message: 'Welcome' });
+  assert.strictEqual(WS.last().sent.length, sentAfterOpen);
 });
 
 test('incoming type=T message emits "trade" with uppercase ticker', () => {
@@ -152,25 +167,26 @@ test('unsubscribe(tickers) sends unsubscribe + removes from internal set', () =>
   assert.deepStrictEqual(client.getStatus().subscribedTickers, ['AAPL']);
 });
 
-test('getStatus returns connected=true after login response, false initially', () => {
+test('getStatus returns connected=true after open, false initially', () => {
   const WS = makeMockWebSocketFactory();
   const client = createFmpWsClient({ apiKey: 'K', tickers: ['AAPL'], WebSocketImpl: WS });
   assert.strictEqual(client.getStatus().connected, false);
   client.start();
+  assert.strictEqual(client.getStatus().connected, false, 'still false until open');
   WS.last().triggerOpen();
-  assert.strictEqual(client.getStatus().connected, false, 'still false until login response');
-  WS.last().triggerMessage({ event: 'login', status: 200 });
   assert.strictEqual(client.getStatus().connected, true);
 });
 
-test('"connected" event fires on login response', () => {
+test('"connected" event fires once on open, idempotent across login response', () => {
   const WS = makeMockWebSocketFactory();
   const client = createFmpWsClient({ apiKey: 'K', tickers: [], WebSocketImpl: WS });
   let connectedFired = 0;
   client.on('connected', () => connectedFired++);
   client.start();
-  WS.last().triggerOpen();
   assert.strictEqual(connectedFired, 0);
+  WS.last().triggerOpen();
+  assert.strictEqual(connectedFired, 1);
+  // Server may or may not send a login response; either way no duplicate emit.
   WS.last().triggerMessage({ event: 'login', status: 200 });
   assert.strictEqual(connectedFired, 1);
 });
@@ -229,7 +245,7 @@ test('on socket close, schedule reconnect at reconnectMinMs', () => {
   assert.strictEqual(clock.scheduled[0].ms, 1000);
 });
 
-test('reconnect creates a new WS and re-logs in', () => {
+test('reconnect creates a new WS and re-authenticates + resubscribes on open', () => {
   const WS = makeMockWebSocketFactory();
   const clock = makeFakeScheduler();
   const client = createFmpWsClient({
@@ -239,18 +255,19 @@ test('reconnect creates a new WS and re-logs in', () => {
   });
   client.start();
   WS.last().triggerOpen();
-  WS.last().triggerMessage({ event: 'login', status: 200 });
   const firstInstance = WS.last();
   firstInstance.triggerClose(1006, '');
   // Fire the scheduled reconnect
   clock.runNext();
   assert.strictEqual(WS.instances.length, 2, 'should construct a 2nd WS');
   WS.last().triggerOpen();
-  assert.strictEqual(WS.last().sent.length, 1);
-  assert.deepStrictEqual(
-    JSON.parse(WS.last().sent[0]),
-    { event: 'login', data: { apiKey: 'K' } }
-  );
+  // After reconnect open: login + resubscribe with retained tickers
+  assert.strictEqual(WS.last().sent.length, 2);
+  const login = JSON.parse(WS.last().sent[0]);
+  const sub = JSON.parse(WS.last().sent[1]);
+  assert.deepStrictEqual(login, { event: 'login', data: { apiKey: 'K' } });
+  assert.strictEqual(sub.event, 'subscribe');
+  assert.deepStrictEqual(sub.data.ticker, ['aapl']);
 });
 
 test('reconnect resubscribes to all previously subscribed tickers', () => {

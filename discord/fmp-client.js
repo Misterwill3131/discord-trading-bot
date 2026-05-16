@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────
-// discord/fmp-client.js — Client Financial Modeling Prep (FMP) v3
+// discord/fmp-client.js — Client Financial Modeling Prep (FMP) /stable/
 // ─────────────────────────────────────────────────────────────────────
 // Wrapper minimal autour de l'API FMP pour les alertes prix/volume.
 // Conforme au contrat marketClient attendu par discord/market-alerts.js :
@@ -9,12 +9,15 @@
 //                          (ordre chronologique CROISSANT — plus ancien en
 //                          premier, comme attendu par extractContext())
 //
-// Endpoints utilisés :
-//   GET /api/v3/quote/{symbol}
-//     → [{ symbol, price, volume, dayLow, dayHigh, ... }]
-//   GET /api/v3/historical-price-full/{symbol}?timeseries=10
-//     → { symbol, historical: [{ date: 'YYYY-MM-DD', open, high, low, close, volume, ... }] }
-//     historical[] vient newest-first chez FMP — on inverse pour l'ordre attendu.
+// Endpoints utilisés (FMP /stable/, migré le 2026-05-15) :
+//   GET /stable/quote?symbol={s}
+//     → [{ symbol, price, volume, dayLow, dayHigh, changePercentage, ... }]
+//   GET /stable/batch-quote?symbols={s1},{s2},...
+//     → same shape as /stable/quote
+//   GET /stable/historical-price-eod/full?symbol={s}
+//     → [{ symbol, date: 'YYYY-MM-DD', open, high, low, close, volume }, ...]
+//     Array plat (plus de wrapper {historical}). Newest-first chez FMP →
+//     on inverse pour l'ordre attendu et on slice à 10 dernières barres.
 //
 // Auth : query param `apikey=...`. Plan free = ~250 req/jour ; on cache
 // agressivement (TTL 30s sur les quotes, idem chart) pour rester sous
@@ -33,7 +36,7 @@
 // pour les tests qui passent un mock).
 // ─────────────────────────────────────────────────────────────────────
 
-const FMP_BASE = 'https://financialmodelingprep.com/api/v3';
+const FMP_BASE = 'https://financialmodelingprep.com/stable';
 
 function withTimeout(promise, ms) {
   let handle;
@@ -72,8 +75,18 @@ function createFmpClient({
   if (!apiKey) throw new Error('FMP apiKey required');
   if (!fetchImpl) throw new Error('fetch not available — provide fetchImpl');
 
+  const FUNDAMENTALS_TTL_MS = 5 * 60_000;   // 5 min
+  const POLITICAL_TTL_MS    = 15 * 60_000;  // 15 min
+
   const quoteCache = new Map();    // ticker → { ts, data } | { inflight }
   const barsCache = new Map();     // ticker → { ts, data } | { inflight }
+
+  const ratiosCache       = new Map();    // TTL 5min
+  const priceTargetCache  = new Map();    // TTL 5min
+  const earningsCache     = new Map();    // TTL 5min
+  const insiderCache      = new Map();    // TTL 15min
+  const senateCache       = new Map();    // TTL 15min
+  const houseCache        = new Map();    // TTL 15min
 
   async function httpJson(url) {
     const res = await withTimeout(fetchImpl(url), timeoutMs);
@@ -98,8 +111,8 @@ function createFmpClient({
       if (hit.data && (now() - hit.ts) < ttlMs) return hit.data;
       if (hit.inflight) return hit.inflight;
     }
-    const url = base + '/quote/' + encodeURIComponent(key)
-      + '?apikey=' + encodeURIComponent(apiKey);
+    const url = base + '/quote?symbol=' + encodeURIComponent(key)
+      + '&apikey=' + encodeURIComponent(apiKey);
     const inflight = (async () => {
       const json = await httpJson(url);
       // FMP renvoie un tableau (souvent à 1 élément) ; tableau vide =
@@ -130,15 +143,17 @@ function createFmpClient({
       if (hit.data && (now() - hit.ts) < ttlMs) return hit.data;
       if (hit.inflight) return hit.inflight;
     }
-    // timeseries=10 : 10 dernières barres daily — assez pour yesterday
-    // (1 barre) + week (5) avec marge pour weekend/holiday gaps.
-    const url = base + '/historical-price-full/' + encodeURIComponent(key)
-      + '?timeseries=10&apikey=' + encodeURIComponent(apiKey);
+    // /stable/ ne supporte pas un param "timeseries" ; on slice côté
+    // client aux 10 dernières barres pour matcher l'ancien contrat.
+    const url = base + '/historical-price-eod/full?symbol=' + encodeURIComponent(key)
+      + '&apikey=' + encodeURIComponent(apiKey);
     const inflight = (async () => {
       const json = await httpJson(url);
-      const hist = json && Array.isArray(json.historical) ? json.historical : [];
-      // FMP envoie newest-first → on inverse pour respecter le contrat
-      // (chronologique croissant), comme extractContext() s'y attend.
+      // /stable/historical-price-eod/full retourne un array PLAT
+      // (plus de wrapper {historical: [...]} comme v3). Toujours
+      // newest-first chez FMP → on slice les 10 premiers (newest)
+      // puis on inverse pour l'ordre chronologique croissant.
+      const hist = Array.isArray(json) ? json.slice(0, 10) : [];
       const bars = [];
       for (let i = hist.length - 1; i >= 0; i--) {
         const b = hist[i];
@@ -166,8 +181,8 @@ function createFmpClient({
     }
   }
 
-  // Bulk quote: FMP supports up to ~250 tickers per call via comma-joined
-  // path (`/quote/AAPL,TSLA,NVDA`). Returns { TICKER: { price, volume }, ... }
+  // Bulk quote: FMP supports up to ~250 tickers per call via query-param
+  // (`/batch-quote?symbols=AAPL,TSLA,NVDA`). Returns { TICKER: { price, volume }, ... }
   // keyed by upper-cased symbol. Tickers missing from the response simply
   // don't appear in the output map (no exception). Non-finite prices are
   // skipped — same sanity rule as getQuote.
@@ -178,8 +193,8 @@ function createFmpClient({
         .filter(Boolean)
     ));
     if (list.length === 0) return {};
-    const url = base + '/quote/' + list.map(encodeURIComponent).join(',')
-      + '?apikey=' + encodeURIComponent(apiKey);
+    const url = base + '/batch-quote?symbols=' + list.map(encodeURIComponent).join(',')
+      + '&apikey=' + encodeURIComponent(apiKey);
     const json = await httpJson(url);
     const rows = Array.isArray(json) ? json : [];
     const out = {};
@@ -197,19 +212,198 @@ function createFmpClient({
     return out;
   }
 
-  // FMP v4 endpoint — different base path. Returns the global feed of
-  // recent analyst grade events (upgrades, downgrades, initiations,
-  // reiterations) newest-first. Pagination via `page` (default 0 →
-  // ~100 most recent events).
+  // FMP v4 endpoint — different base path from /stable/. Returns the
+  // global feed of recent analyst grade events (upgrades, downgrades,
+  // initiations, reiterations) newest-first. Pagination via `page`
+  // (default 0 → ~100 most recent events). Hardcodes the v4 URL since
+  // the rest of the client may use /stable/ or /v3/ — v4 endpoints
+  // remain accessible across the migration.
   async function getAnalystGradesFeed({ page = 0 } = {}) {
-    const v4Base = base.replace(/\/v3\/?$/, '/v4');
-    const url = v4Base + '/upgrades-downgrades-rss-feed?page=' + encodeURIComponent(page)
-      + '&apikey=' + encodeURIComponent(apiKey);
+    const url = 'https://financialmodelingprep.com/api/v4/upgrades-downgrades-rss-feed?page='
+      + encodeURIComponent(page) + '&apikey=' + encodeURIComponent(apiKey);
     const json = await httpJson(url);
     return Array.isArray(json) ? json : [];
   }
 
-  return { getQuote, getDailyBars, getQuotesBulk, getAnalystGradesFeed };
+  // ── Fundamentals : Ratios TTM ───────────────────────────────────
+  async function getRatiosTtm(ticker) {
+    const key = String(ticker).toUpperCase();
+    const hit = ratiosCache.get(key);
+    if (hit) {
+      if (hit.data !== undefined && (now() - hit.ts) < FUNDAMENTALS_TTL_MS) return hit.data;
+      if (hit.inflight) return hit.inflight;
+    }
+    const url = base + '/ratios-ttm?symbol=' + encodeURIComponent(key)
+      + '&apikey=' + encodeURIComponent(apiKey);
+    const inflight = (async () => {
+      const json = await httpJson(url);
+      return Array.isArray(json) && json.length > 0 ? json[0] : null;
+    })();
+    ratiosCache.set(key, { inflight });
+    try {
+      const data = await inflight;
+      ratiosCache.set(key, { ts: now(), data });
+      return data;
+    } catch (err) {
+      ratiosCache.delete(key);
+      throw err;
+    }
+  }
+
+  // ── Fundamentals : Price Target Summary ──────────────────────────
+  async function getPriceTargetSummary(ticker) {
+    const key = String(ticker).toUpperCase();
+    const hit = priceTargetCache.get(key);
+    if (hit) {
+      if (hit.data !== undefined && (now() - hit.ts) < FUNDAMENTALS_TTL_MS) return hit.data;
+      if (hit.inflight) return hit.inflight;
+    }
+    const url = base + '/price-target-summary?symbol=' + encodeURIComponent(key)
+      + '&apikey=' + encodeURIComponent(apiKey);
+    const inflight = (async () => {
+      const json = await httpJson(url);
+      // /stable/ retourne souvent un array d'un seul objet ; on tolère
+      // les deux shapes pour rester robuste si le format change.
+      if (Array.isArray(json)) return json.length > 0 ? json[0] : null;
+      return json && typeof json === 'object' ? json : null;
+    })();
+    priceTargetCache.set(key, { inflight });
+    try {
+      const data = await inflight;
+      priceTargetCache.set(key, { ts: now(), data });
+      return data;
+    } catch (err) {
+      priceTargetCache.delete(key);
+      throw err;
+    }
+  }
+
+  // ── Fundamentals : Earnings (actual vs estimate = surprises) ────
+  async function getEarningsSurprises(ticker) {
+    const key = String(ticker).toUpperCase();
+    const hit = earningsCache.get(key);
+    if (hit) {
+      if (hit.data !== undefined && (now() - hit.ts) < FUNDAMENTALS_TTL_MS) return hit.data;
+      if (hit.inflight) return hit.inflight;
+    }
+    // /stable/ rename : `earnings-surprises` → `earnings` ; le payload
+    // contient eps + estimatedEps, ce qui suffit pour déduire la
+    // surprise côté caller.
+    const url = base + '/earnings?symbol=' + encodeURIComponent(key)
+      + '&apikey=' + encodeURIComponent(apiKey);
+    const inflight = (async () => {
+      const json = await httpJson(url);
+      return Array.isArray(json) ? json : null;
+    })();
+    earningsCache.set(key, { inflight });
+    try {
+      const data = await inflight;
+      earningsCache.set(key, { ts: now(), data });
+      return data;
+    } catch (err) {
+      earningsCache.delete(key);
+      throw err;
+    }
+  }
+
+  // ── Insider Trades ──────────────────────────────────────────────
+  async function getInsiderTrades(ticker, limit = 5) {
+    const key = String(ticker).toUpperCase() + '|' + Number(limit);
+    const hit = insiderCache.get(key);
+    if (hit) {
+      if (hit.data !== undefined && (now() - hit.ts) < POLITICAL_TTL_MS) return hit.data;
+      if (hit.inflight) return hit.inflight;
+    }
+    const url = base + '/insider-trading/search?symbol=' + encodeURIComponent(String(ticker).toUpperCase())
+      + '&limit=' + encodeURIComponent(Number(limit))
+      + '&apikey=' + encodeURIComponent(apiKey);
+    const inflight = (async () => {
+      const json = await httpJson(url);
+      return Array.isArray(json) ? json : null;
+    })();
+    insiderCache.set(key, { inflight });
+    try {
+      const data = await inflight;
+      insiderCache.set(key, { ts: now(), data });
+      return data;
+    } catch (err) {
+      insiderCache.delete(key);
+      throw err;
+    }
+  }
+
+  // ── Senate Trades ───────────────────────────────────────────────
+  async function getSenateTrades(ticker, limit = 5) {
+    const key = String(ticker).toUpperCase();
+    const hit = senateCache.get(key);
+    if (hit) {
+      if (hit.data !== undefined && (now() - hit.ts) < POLITICAL_TTL_MS) {
+        return hit.data ? hit.data.slice(0, Number(limit)) : null;
+      }
+      if (hit.inflight) {
+        const data = await hit.inflight;
+        return data ? data.slice(0, Number(limit)) : null;
+      }
+    }
+    const url = base + '/senate-trades?symbol=' + encodeURIComponent(key)
+      + '&apikey=' + encodeURIComponent(apiKey);
+    const inflight = (async () => {
+      const json = await httpJson(url);
+      return Array.isArray(json) ? json : null;
+    })();
+    senateCache.set(key, { inflight });
+    try {
+      const data = await inflight;
+      senateCache.set(key, { ts: now(), data });
+      return data ? data.slice(0, Number(limit)) : null;
+    } catch (err) {
+      senateCache.delete(key);
+      throw err;
+    }
+  }
+
+  // ── House Trades ────────────────────────────────────────────────
+  async function getHouseTrades(ticker, limit = 5) {
+    const key = String(ticker).toUpperCase();
+    const hit = houseCache.get(key);
+    if (hit) {
+      if (hit.data !== undefined && (now() - hit.ts) < POLITICAL_TTL_MS) {
+        return hit.data ? hit.data.slice(0, Number(limit)) : null;
+      }
+      if (hit.inflight) {
+        const data = await hit.inflight;
+        return data ? data.slice(0, Number(limit)) : null;
+      }
+    }
+    const url = base + '/house-trades?symbol=' + encodeURIComponent(key)
+      + '&apikey=' + encodeURIComponent(apiKey);
+    const inflight = (async () => {
+      const json = await httpJson(url);
+      return Array.isArray(json) ? json : null;
+    })();
+    houseCache.set(key, { inflight });
+    try {
+      const data = await inflight;
+      houseCache.set(key, { ts: now(), data });
+      return data ? data.slice(0, Number(limit)) : null;
+    } catch (err) {
+      houseCache.delete(key);
+      throw err;
+    }
+  }
+
+  return {
+    getQuote,
+    getDailyBars,
+    getQuotesBulk,
+    getAnalystGradesFeed,
+    getRatiosTtm,
+    getPriceTargetSummary,
+    getEarningsSurprises,
+    getInsiderTrades,
+    getSenateTrades,
+    getHouseTrades,
+  };
 }
 
 module.exports = {

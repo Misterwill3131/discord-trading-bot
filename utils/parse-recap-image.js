@@ -143,6 +143,18 @@ async function parseRecapImage(imagePath, opts = {}) {
   const response = await client.messages.create(payload);
   const latencyMs = Date.now() - startedAt;
 
+  // Tracking coût Anthropic (vision OCR). Best-effort, ne throw jamais.
+  try {
+    const { recordAnthropicCall } = require('./cost-tracker');
+    const u = response.usage || {};
+    recordAnthropicCall({
+      model,
+      inputTokens: u.input_tokens || 0,
+      outputTokens: u.output_tokens || 0,
+      notes: { kind: 'recap-image-ocr', imageSizeKB: parseInt(sizeKB, 10) },
+    });
+  } catch (_) { /* swallow */ }
+
   if (!response.content || !response.content.length || response.content[0].type !== 'text') {
     throw new Error('Réponse Claude vide ou format inattendu');
   }

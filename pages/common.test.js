@@ -9,9 +9,9 @@ test('SIDEBAR_LINKS is an array of 4 groups', () => {
   assert.deepStrictEqual(sectionNames, ['Overview', 'Content', 'Logs', 'Settings']);
 });
 
-test('SIDEBAR_LINKS_FLAT exposes the 14 items as a flat array', () => {
+test('SIDEBAR_LINKS_FLAT exposes the 15 items as a flat array', () => {
   assert.ok(Array.isArray(SIDEBAR_LINKS_FLAT));
-  assert.strictEqual(SIDEBAR_LINKS_FLAT.length, 14);
+  assert.strictEqual(SIDEBAR_LINKS_FLAT.length, 15);
   for (const item of SIDEBAR_LINKS_FLAT) {
     assert.strictEqual(typeof item.href, 'string');
     assert.strictEqual(typeof item.icon, 'string');
@@ -23,7 +23,7 @@ test('SIDEBAR_LINKS_FLAT contains all the expected hrefs', () => {
   const expectedHrefs = [
     '/dashboard', '/stats', '/profits', '/leaderboard',
     '/news', '/image-generator', '/proof-generator', '/gallery', '/video-studio',
-    '/raw-messages', '/db-viewer', '/backup-log', '/welcome-log',
+    '/raw-messages', '/db-viewer', '/backup-log', '/welcome-log', '/cost-dashboard',
     '/config',
   ];
   const actualHrefs = SIDEBAR_LINKS_FLAT.map(l => l.href);

@@ -5,6 +5,7 @@ import { loadFont as loadInter } from '@remotion/google-fonts/Inter';
 import { SharedOutro } from '../components/SharedOutro';
 import { NarrationSubtitles } from '../components/NarrationSubtitles';
 import { LogoOverlay } from '../components/LogoOverlay';
+import { Sting } from '../components/Sting';
 
 const { fontFamily } = loadInter('normal', { weights: ['400', '600', '700', '800', '900'] });
 
@@ -85,6 +86,13 @@ export const tobTradeRecapSchema = z.object({
   // Logo overlay (watermark) configurable par template.
   logoUrl: z.string().nullable().optional(),
   logoCorner: z.enum(['top-left', 'top-right', 'bottom-left', 'bottom-right']).default('top-right'),
+  // Intro/outro stings (URLs ou data URLs vers de courts MP4). Si fourni,
+  // un clip est joué AVANT/APRÈS la composition principale. Durées en
+  // frames @ 30fps (default 45 = 1.5s).
+  introStingUrl: z.string().nullable().optional(),
+  introStingFrames: z.number().min(15).max(180).default(45),
+  outroStingUrl: z.string().nullable().optional(),
+  outroStingFrames: z.number().min(15).max(180).default(45),
 });
 
 export type TobTradeRecapProps = z.infer<typeof tobTradeRecapSchema>;
@@ -112,7 +120,9 @@ function computeAlertsFrames(props: TobTradeRecapProps): number {
 }
 
 export function computeTradeRecapTotalFrames(props: TobTradeRecapProps): number {
-  return FRAMES_INTRO + FRAMES_TABLE + computeAlertsFrames(props) + FRAMES_STATS + FRAMES_LONGTERM + FRAMES_OUTRO;
+  const introSting = props.introStingUrl ? (props.introStingFrames || 45) : 0;
+  const outroSting = props.outroStingUrl ? (props.outroStingFrames || 45) : 0;
+  return introSting + FRAMES_INTRO + FRAMES_TABLE + computeAlertsFrames(props) + FRAMES_STATS + FRAMES_LONGTERM + FRAMES_OUTRO + outroSting;
 }
 
 // ─── Helpers : calculs stats trades ──────────────────────────────────
@@ -861,19 +871,27 @@ export const TobTradeRecap: React.FC<TobTradeRecapProps> = (props) => {
     accentColor, successColor, errorColor, bgColor, outroSeed,
     narrationDataUrl, narrationText,
     logoUrl, logoCorner,
+    introStingUrl, introStingFrames, outroStingUrl, outroStingFrames,
   } = props;
   // Pré-calcul de toutes les trades + summary une seule fois (mémoize ?)
   const computed = trades.map(computeTrade);
   const summary = computeSummary(computed);
   const alertsFrames = computeAlertsFrames(props);
 
+  // Cursor avance dans l'ordre : sting intro → intro → table → alerts →
+  // stats → long-term → outro → sting outro.
+  const introStingFr = introStingUrl ? (introStingFrames || 45) : 0;
+  const outroStingFr = outroStingUrl ? (outroStingFrames || 45) : 0;
+
   let cursor = 0;
+  const introStingFrom = cursor; cursor += introStingFr;
   const introFrom = cursor; cursor += FRAMES_INTRO;
   const tableFrom = cursor; cursor += FRAMES_TABLE;
   const alertsFrom = cursor; cursor += alertsFrames;
   const statsFrom = cursor; cursor += FRAMES_STATS;
   const longTermFrom = cursor; cursor += FRAMES_LONGTERM;
-  const outroFrom = cursor;
+  const outroFrom = cursor; cursor += FRAMES_OUTRO;
+  const outroStingFrom = cursor;
 
   return (
     <AbsoluteFill style={{ backgroundColor: bgColor, fontFamily }}>
@@ -895,6 +913,15 @@ export const TobTradeRecap: React.FC<TobTradeRecapProps> = (props) => {
       )}
       {/* Logo watermark — visible toute la durée si logoUrl fourni. */}
       <LogoOverlay logoUrl={logoUrl} corner={logoCorner} />
+
+      {/* Intro sting (~1.5s clip d'ouverture). Si introStingUrl absent,
+          introStingFr=0 et toutes les autres Sequences démarrent à frame 0
+          comme avant — pas de phase vide. */}
+      {introStingUrl && (
+        <Sequence from={introStingFrom} durationInFrames={introStingFr}>
+          <Sting stingUrl={introStingUrl} />
+        </Sequence>
+      )}
 
       <Sequence from={introFrom} durationInFrames={FRAMES_INTRO}>
         <IntroPhase accentColor={accentColor} dateLabel={dateLabel} />
@@ -942,6 +969,15 @@ export const TobTradeRecap: React.FC<TobTradeRecapProps> = (props) => {
       <Sequence from={outroFrom} durationInFrames={FRAMES_OUTRO}>
         <SharedOutro seed={outroSeed} />
       </Sequence>
+
+      {/* Outro sting (~1.5s clip de fermeture/branding). Joué après le
+          SharedOutro, donc en absolute final. Si outroStingUrl absent,
+          la composition se termine au SharedOutro comme avant. */}
+      {outroStingUrl && (
+        <Sequence from={outroStingFrom} durationInFrames={outroStingFr}>
+          <Sting stingUrl={outroStingUrl} />
+        </Sequence>
+      )}
     </AbsoluteFill>
   );
 };

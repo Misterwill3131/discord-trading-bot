@@ -10,6 +10,9 @@ import { loadFont as loadInter } from '@remotion/google-fonts/Inter';
 import { LifestyleHook } from '../components/LifestyleHook';
 import { MoneyRain } from '../components/MoneyRain';
 import { SharedOutro } from '../components/SharedOutro';
+import { NarrationSubtitles } from '../components/NarrationSubtitles';
+import { LogoOverlay } from '../components/LogoOverlay';
+import { Sting } from '../components/Sting';
 
 // Frames pour le SharedOutro (image lion brandée TOB) ajouté en fin de
 // composition. 90 frames @ 30fps = 3s. Met à jour Root.tsx durationInFrames
@@ -76,9 +79,37 @@ export const boomEntrySchema = z.object({
     .nullable()
     .optional()
     .describe('Data URL MP3 voice-over. Vide = pas de voix off.'),
+  // Texte de la narration pour subtitles burned-in (autoplay muet TikTok/Reels).
+  // Indépendant du dataUrl — on peut activer subtitles sans audio.
+  narrationText: z
+    .string()
+    .nullable()
+    .optional()
+    .describe('Texte narration pour subtitles burned-in. Vide = pas de subs.'),
+  // ─── Logo overlay watermark (optionnel) ───
+  logoUrl: z.string().nullable().optional().describe('URL ou data URL du logo watermark. Vide = pas de logo.'),
+  logoCorner: z.enum(['top-left', 'top-right', 'bottom-left', 'bottom-right']).default('top-right'),
+  // ─── Intro/outro stings (clips brandés ~1-3s) ───
+  // Si fourni, joué AVANT (intro) ou APRÈS (outro) la composition principale.
+  // L'horloge interne de la composition (TransitionSeries + SharedOutro) est
+  // wrap dans une <Sequence from={introStingFr}> donc tous les SFX/timings
+  // restent local-relative inchangés.
+  introStingUrl: z.string().nullable().optional().describe('URL ou data URL d\'un MP4 court (~1-3s) joué en intro. Vide = pas d\'intro sting.'),
+  introStingFrames: z.number().min(15).max(180).default(45).describe('Durée du sting intro en frames @ 30fps. Default 45 (1.5s).'),
+  outroStingUrl: z.string().nullable().optional().describe('URL ou data URL d\'un MP4 court joué en outro. Vide = pas d\'outro sting.'),
+  outroStingFrames: z.number().min(15).max(180).default(45).describe('Durée du sting outro en frames @ 30fps. Default 45 (1.5s).'),
 });
 
 export type BoomEntryProps = z.infer<typeof boomEntrySchema>;
+
+// Helper exporté pour calculer la durée totale de BoomEntry selon les
+// stings activés. Used by Root.tsx via calculateMetadata().
+const BOOM_ENTRY_BASE_FRAMES = 466;  // TransitionSeries (376) + SharedOutro (90)
+export function computeBoomEntryTotalFrames(props: { introStingUrl?: string | null; introStingFrames?: number; outroStingUrl?: string | null; outroStingFrames?: number }): number {
+  const introSting = props.introStingUrl ? (props.introStingFrames || 45) : 0;
+  const outroSting = props.outroStingUrl ? (props.outroStingFrames || 45) : 0;
+  return introSting + BOOM_ENTRY_BASE_FRAMES + outroSting;
+}
 
 const FADE_FRAMES = 6;
 const SLIDE_FRAMES = 8;
@@ -241,7 +272,9 @@ export const BoomEntry = ({
   ctaTitle, ctaUrl, ctaSubtitle,
   accentColor, musicVolume, sfxEnabled, lifestyleSeedOverride,
   stingerFontSize, tickerFontSize, ctaTitleFontSize, transitionType,
-  narrationDataUrl,
+  narrationDataUrl, narrationText,
+  logoUrl, logoCorner,
+  introStingUrl, introStingFrames, outroStingUrl, outroStingFrames,
 }: BoomEntryProps) => {
   const fallbackSrc = staticFile('signal-alert/card-default.png');
   const cardSrc = entryImageDataUrl || fallbackSrc;
@@ -249,8 +282,33 @@ export const BoomEntry = ({
   const transitionPresentation = pickTransition(transitionType);
   // Duck music quand TTS narration active.
   const duckedMusicVolume = narrationDataUrl ? musicVolume * 0.3 : musicVolume;
+
+  // Sting cursors — si absent, fr=0 et la composition se comporte comme
+  // avant. Le wrap Sequence shift le main content pour que SFX absolus
+  // (frames 0/70/290) restent local-relative inchangés.
+  const introStingFr = introStingUrl ? (introStingFrames || 45) : 0;
+  const outroStingFr = outroStingUrl ? (outroStingFrames || 45) : 0;
+  const BASE_FRAMES = TRANSITION_SERIES_END_BE + SHARED_OUTRO_FRAMES_BE;  // 466
+  const totalFrames = introStingFr + BASE_FRAMES + outroStingFr;
+
   return (
     <AbsoluteFill style={{ backgroundColor: 'black', fontFamily }}>
+      {/* === Overlays full-duration (sting compris) === */}
+      {narrationText && (
+        <NarrationSubtitles text={narrationText} totalFrames={totalFrames} />
+      )}
+      <LogoOverlay logoUrl={logoUrl} corner={logoCorner} />
+
+      {/* Intro sting (~1.5s) — joué AVANT le main content */}
+      {introStingUrl && (
+        <Sequence from={0} durationInFrames={introStingFr}>
+          <Sting stingUrl={introStingUrl} />
+        </Sequence>
+      )}
+
+      {/* === Main content wrap — shift par introStingFr === */}
+      <Sequence from={introStingFr} durationInFrames={BASE_FRAMES}>
+        <AbsoluteFill>
       {/* === AUDIO === */}
       <Audio src={staticFile('audio/proof-track.mp3')} volume={duckedMusicVolume} />
       {narrationDataUrl && (
@@ -305,6 +363,15 @@ export const BoomEntry = ({
       <Sequence from={TRANSITION_SERIES_END_BE} durationInFrames={SHARED_OUTRO_FRAMES_BE}>
         <SharedOutro seed={`${ticker}-${timestamp}`} />
       </Sequence>
+        </AbsoluteFill>
+      </Sequence>
+
+      {/* Outro sting (~1.5s) — joué APRÈS le SharedOutro */}
+      {outroStingUrl && (
+        <Sequence from={introStingFr + BASE_FRAMES} durationInFrames={outroStingFr}>
+          <Sting stingUrl={outroStingUrl} />
+        </Sequence>
+      )}
     </AbsoluteFill>
   );
 };

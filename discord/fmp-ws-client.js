@@ -6,19 +6,23 @@
 // last-trade message; ignores quote-update (Q) and trade-break (B)
 // messages. Reconnect with exponential backoff handled in Task 3.
 //
-// Protocol (verified from FMP docs):
-//   wss://websockets.financialmodelingprep.com (stocks)
-//   Login:       { event: 'login',     data: { apiKey } }
+// Protocol (verified empirically 2026-05-16 after /stable/ migration) :
+//   wss://api.financialmodelingprep.com/ws/us-stocks?apikey={k}
+//     (apex financialmodelingprep.com 301-redirects to site.; the actual
+//      WS server is on the `api.` subdomain. Auth happens at HTTP-layer
+//      via query param — without apikey the server returns 401 before
+//      the WS upgrade completes.)
+//   Login:       { event: 'login',     data: { apiKey } }   (legacy, kept for compat)
 //   Subscribe:   { event: 'subscribe', data: { ticker: ['aapl', ...] } }   (lowercase)
 //   Unsubscribe: { event: 'unsubscribe', data: { ticker: [...] } }
 //   Trade msg:   { s: '<ticker>', t: <ms>, type: 'T', lp: <price>, ls: <size> }
 //
-// Spec : docs/superpowers/specs/2026-05-14-fmp-websocket-stocks-design.md
+// Spec : docs/superpowers/specs/2026-05-15-fmp-stable-migration-design.md
 // ─────────────────────────────────────────────────────────────────────
 
 const { EventEmitter } = require('node:events');
 
-const DEFAULT_ENDPOINT = 'wss://websockets.financialmodelingprep.com';
+const DEFAULT_ENDPOINT = 'wss://api.financialmodelingprep.com/ws/us-stocks';
 
 function createFmpWsClient({
   apiKey,
@@ -85,17 +89,23 @@ function createFmpWsClient({
       logger.warn('[fmp-ws] malformed message dropped:', String(raw).slice(0, 100));
       return;
     }
-    // Login response → flush queued subscriptions.
+    // Login response → flush queued subscriptions (legacy path).
+    // Idempotent: the open handler already marks loggedIn=true and flushes,
+    // so this only fires meaningfully if a server emits the response and
+    // we hadn't already transitioned (e.g., if open-handler ordering
+    // changes in the future).
     if (msg && msg.event === 'login') {
       if (msg.status && msg.status >= 400) {
         logger.error('[fmp-ws] login rejected:', msg.message || msg.status);
         events.emit('error', new Error('login rejected: ' + (msg.message || msg.status)));
         return;
       }
-      loggedIn = true;
-      attemptCount = 0;  // reset backoff on successful login
-      events.emit('connected');
-      if (subscribed.size > 0) sendSubscribe(Array.from(subscribed));
+      if (!loggedIn) {
+        loggedIn = true;
+        attemptCount = 0;  // reset backoff on successful login
+        events.emit('connected');
+        if (subscribed.size > 0) sendSubscribe(Array.from(subscribed));
+      }
       return;
     }
     // Trade tick.
@@ -138,11 +148,19 @@ function createFmpWsClient({
     }, delay);
   }
 
+  // /stable/ WS auth happens at HTTP-layer via ?apikey query param.
+  // We append it to whatever endpoint URL we have (works for both the
+  // default endpoint and any custom override passed by tests/callers).
+  function buildAuthedUrl() {
+    const sep = endpoint.includes('?') ? '&' : '?';
+    return endpoint + sep + 'apikey=' + encodeURIComponent(apiKey);
+  }
+
   function connect() {
     if (stopped || connecting) return;
     connecting = true;
     try {
-      sock = new WebSocketImpl(endpoint);
+      sock = new WebSocketImpl(buildAuthedUrl());
     } catch (err) {
       connecting = false;
       events.emit('error', err);
@@ -150,7 +168,18 @@ function createFmpWsClient({
     }
     sock.on('open', () => {
       connecting = false;
+      // Legacy compat: still send the login event in case the server
+      // expects it. New /stable/ server already authed us at HTTP layer
+      // via the URL apikey, so we ALSO mark loggedIn immediately and
+      // flush any pending subscriptions — that way subscribe goes out
+      // whether or not the server emits a login response message.
       sendLogin();
+      if (!loggedIn) {
+        loggedIn = true;
+        attemptCount = 0;
+        events.emit('connected');
+        if (subscribed.size > 0) sendSubscribe(Array.from(subscribed));
+      }
     });
     sock.on('message', handleMessage);
     sock.on('close', handleClose);

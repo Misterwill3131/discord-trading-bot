@@ -1,8 +1,8 @@
 import { Composition } from 'remotion';
 import { BrandPromo } from './compositions/BrandPromo';
 import { SignalAlert, SignalAlertProps } from './compositions/SignalAlert';
-import { ChartTemplate, chartTemplateSchema } from './compositions/ChartTemplate';
-import { BoomEntry, boomEntrySchema } from './compositions/BoomEntry';
+import { ChartTemplate, chartTemplateSchema, computeChartTemplateTotalFrames } from './compositions/ChartTemplate';
+import { BoomEntry, boomEntrySchema, computeBoomEntryTotalFrames } from './compositions/BoomEntry';
 import { BoomRecap, boomRecapSchema, computeTotalFrames } from './compositions/BoomRecap';
 import { TobBrandStory, tobBrandStorySchema, computeBrandStoryTotalFrames } from './compositions/TobBrandStory';
 import { TobTradeRecap, tobTradeRecapSchema, computeTradeRecapTotalFrames } from './compositions/TobTradeRecap';
@@ -39,6 +39,10 @@ const chartTemplateDefaults = {
   narrationText: null,
   logoUrl: null,
   logoCorner: 'top-right' as const,
+  introStingUrl: null,
+  introStingFrames: 45,
+  outroStingUrl: null,
+  outroStingFrames: 45,
 };
 
 const boomRecapDefaults = {
@@ -65,6 +69,13 @@ const boomRecapDefaults = {
   showTop3Phase: true,
   lifestyleSeed: 0,
   narrationDataUrl: null,
+  narrationText: null,
+  logoUrl: null,
+  logoCorner: 'top-right' as const,
+  introStingUrl: null,
+  introStingFrames: 45,
+  outroStingUrl: null,
+  outroStingFrames: 45,
 };
 
 export const Root = () => {
@@ -90,17 +101,18 @@ export const Root = () => {
       <Composition
         id="ChartTemplate"
         component={ChartTemplate}
-        durationInFrames={608}
         fps={30}
         width={1080}
         height={1920}
         schema={chartTemplateSchema}
         defaultProps={chartTemplateDefaults}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: computeChartTemplateTotalFrames(props as any),
+        })}
       />
       <Composition
         id="BoomEntry"
         component={BoomEntry}
-        durationInFrames={466}
         fps={30}
         width={1080}
         height={1920}
@@ -127,7 +139,17 @@ export const Root = () => {
           ctaTitleFontSize: 200,
           transitionType: 'fade' as const,
           narrationDataUrl: null,
+          narrationText: null,
+          logoUrl: null,
+          logoCorner: 'top-right' as const,
+          introStingUrl: null,
+          introStingFrames: 45,
+          outroStingUrl: null,
+          outroStingFrames: 45,
         }}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: computeBoomEntryTotalFrames(props as any),
+        })}
       />
       <Composition
         id="BoomRecap"
@@ -196,6 +218,10 @@ export const Root = () => {
           narrationText: null,
           logoUrl: null,
           logoCorner: 'top-right' as const,
+          introStingUrl: null,
+          introStingFrames: 45,
+          outroStingUrl: null,
+          outroStingFrames: 45,
         }}
         calculateMetadata={({ props }) => ({
           durationInFrames: computeTradeRecapTotalFrames(props as any),
@@ -232,6 +258,10 @@ export const Root = () => {
           narrationText: null,
           logoUrl: null,
           logoCorner: 'top-right' as const,
+          introStingUrl: null,
+          introStingFrames: 45,
+          outroStingUrl: null,
+          outroStingFrames: 45,
         }}
         calculateMetadata={({ props }) => ({
           durationInFrames: computeTradeRecapTotalFrames(props as any),
@@ -261,6 +291,10 @@ export const Root = () => {
           narrationText: null,
           logoUrl: null,
           logoCorner: 'top-right' as const,
+          introStingUrl: null,
+          introStingFrames: 45,
+          outroStingUrl: null,
+          outroStingFrames: 45,
         }}
         calculateMetadata={({ props }) => ({
           durationInFrames: computeTradeRecapTotalFrames(props as any),
@@ -269,22 +303,26 @@ export const Root = () => {
       <Composition
         id="ChartTemplate_1x1"
         component={ChartTemplate}
-        durationInFrames={608}
         fps={30}
         width={1080}
         height={1080}
         schema={chartTemplateSchema}
         defaultProps={chartTemplateDefaults}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: computeChartTemplateTotalFrames(props as any),
+        })}
       />
       <Composition
         id="ChartTemplate_16x9"
         component={ChartTemplate}
-        durationInFrames={608}
         fps={30}
         width={1920}
         height={1080}
         schema={chartTemplateSchema}
         defaultProps={chartTemplateDefaults}
+        calculateMetadata={({ props }) => ({
+          durationInFrames: computeChartTemplateTotalFrames(props as any),
+        })}
       />
     </>
   );

@@ -14,6 +14,7 @@ const { fontFamily } = loadInter('normal', {
 import { Stinger } from '../components/Stinger';
 import { NarrationSubtitles } from '../components/NarrationSubtitles';
 import { LogoOverlay } from '../components/LogoOverlay';
+import { Sting } from '../components/Sting';
 import { LifestyleHook } from '../components/LifestyleHook';
 import { ResultTease } from '../components/ResultTease';
 import { TimePassAct } from '../components/TimePassAct';
@@ -80,7 +81,25 @@ export const chartTemplateSchema = z.object({
   // ─── Logo overlay watermark (optionnel) ───
   logoUrl: z.string().nullable().optional().describe('URL ou data URL du logo à afficher en watermark. Vide = pas de logo.'),
   logoCorner: z.enum(['top-left', 'top-right', 'bottom-left', 'bottom-right']).default('top-right'),
+  // ─── Intro/outro stings (clips brandés ~1-3s) ───
+  // Si fourni, joué AVANT (intro) ou APRÈS (outro) la composition principale.
+  // L'horloge interne de la composition (TransitionSeries + SharedOutro) est
+  // wrap dans une <Sequence from={introStingFr}> donc tous les SFX/timings
+  // restent local-relative inchangés.
+  introStingUrl: z.string().nullable().optional().describe('URL ou data URL d\'un MP4 court (~1-3s) joué en intro. Vide = pas d\'intro sting.'),
+  introStingFrames: z.number().min(15).max(180).default(45).describe('Durée du sting intro en frames @ 30fps. Default 45 (1.5s).'),
+  outroStingUrl: z.string().nullable().optional().describe('URL ou data URL d\'un MP4 court joué en outro après SharedOutro. Vide = pas d\'outro sting.'),
+  outroStingFrames: z.number().min(15).max(180).default(45).describe('Durée du sting outro en frames @ 30fps. Default 45 (1.5s).'),
 });
+
+// Helper exporté pour calculer la durée totale d'une ChartTemplate selon
+// les stings activés. Used by Root.tsx via calculateMetadata().
+const CHART_TEMPLATE_BASE_FRAMES = 608;
+export function computeChartTemplateTotalFrames(props: { introStingUrl?: string | null; introStingFrames?: number; outroStingUrl?: string | null; outroStingFrames?: number }): number {
+  const introSting = props.introStingUrl ? (props.introStingFrames || 45) : 0;
+  const outroSting = props.outroStingUrl ? (props.outroStingFrames || 45) : 0;
+  return introSting + CHART_TEMPLATE_BASE_FRAMES + outroSting;
+}
 
 // Inferred TypeScript type — cohérent avec le schema, plus de duplication.
 export type ChartTemplateProps = z.infer<typeof chartTemplateSchema>;
@@ -108,6 +127,7 @@ export const ChartTemplate = ({
   accentColor, musicVolume, sfxEnabled, lifestyleSeedOverride,
   narrationDataUrl, narrationText,
   logoUrl, logoCorner,
+  introStingUrl, introStingFrames, outroStingUrl, outroStingFrames,
 }: ChartTemplateProps) => {
   const lifestyleSeed = lifestyleSeedOverride || `${ticker}-${entryTimestamp}`;
   // Caption pour la phase ProofImage : ticker + auteur(s) + pnl.
@@ -122,20 +142,41 @@ export const ChartTemplate = ({
   // masquer la voix off. Sans narration, volume normal du template.
   const duckedMusicVolume = narrationDataUrl ? musicVolume * 0.3 : musicVolume;
 
+  // Cursors stings — si pas d'URL, fr=0 et la composition se comporte
+  // exactement comme avant (pas de phase morte). La Sequence du main
+  // content est shift par introStingFr donc tous les SFX/timings absolus
+  // (SFX_STINGER=0, SFX_REVEAL=460, etc.) restent local-relative inchangés.
+  const introStingFr = introStingUrl ? (introStingFrames || 45) : 0;
+  const outroStingFr = outroStingUrl ? (outroStingFrames || 45) : 0;
+  const BASE_FRAMES = TRANSITION_SERIES_END + SHARED_OUTRO_FRAMES;
+  const totalFrames = introStingFr + BASE_FRAMES + outroStingFr;
+
   return (
     <AbsoluteFill style={{ backgroundColor: 'black', fontFamily }}>
+      {/* === Overlays full-duration (sting compris) === */}
+      {narrationText && (
+        <NarrationSubtitles
+          text={narrationText}
+          totalFrames={totalFrames}
+        />
+      )}
+      <LogoOverlay logoUrl={logoUrl} corner={logoCorner} />
+
+      {/* Intro sting (~1.5s) — joué AVANT le main content */}
+      {introStingUrl && (
+        <Sequence from={0} durationInFrames={introStingFr}>
+          <Sting stingUrl={introStingUrl} />
+        </Sequence>
+      )}
+
+      {/* === Main content wrap — shift par introStingFr === */}
+      <Sequence from={introStingFr} durationInFrames={BASE_FRAMES}>
+        <AbsoluteFill>
       {/* === AUDIO === */}
       <Audio src={staticFile('audio/proof-track.mp3')} volume={duckedMusicVolume} />
       {narrationDataUrl && (
         <Audio src={narrationDataUrl} volume={1} />
       )}
-      {narrationText && (
-        <NarrationSubtitles
-          text={narrationText}
-          totalFrames={TRANSITION_SERIES_END + SHARED_OUTRO_FRAMES}
-        />
-      )}
-      <LogoOverlay logoUrl={logoUrl} corner={logoCorner} />
 
 
       {sfxEnabled && (
@@ -231,6 +272,15 @@ export const ChartTemplate = ({
       <Sequence from={TRANSITION_SERIES_END} durationInFrames={SHARED_OUTRO_FRAMES}>
         <SharedOutro seed={`${ticker}-${entryTimestamp}`} />
       </Sequence>
+        </AbsoluteFill>
+      </Sequence>
+
+      {/* Outro sting (~1.5s) — joué APRÈS le SharedOutro */}
+      {outroStingUrl && (
+        <Sequence from={introStingFr + BASE_FRAMES} durationInFrames={outroStingFr}>
+          <Sting stingUrl={outroStingUrl} />
+        </Sequence>
+      )}
     </AbsoluteFill>
   );
 };

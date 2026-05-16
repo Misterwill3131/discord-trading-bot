@@ -171,6 +171,18 @@ async function generateCaption(composition, payload, platform = 'discord', opts 
       // Strip wrapping quotes si le LLM en a quand même ajouté.
       text = text.replace(/^["']+|["']+$/g, '').trim();
     }
+    // Tracking coût Anthropic. Best-effort : on lit res.usage si dispo
+    // (SDK le renvoie systématiquement) sinon on saute le tracking.
+    try {
+      const { recordAnthropicCall } = require('./cost-tracker');
+      const u = res.usage || {};
+      recordAnthropicCall({
+        model,
+        inputTokens: u.input_tokens || 0,
+        outputTokens: u.output_tokens || 0,
+        notes: { kind: 'caption', platform, composition },
+      });
+    } catch (_) { /* swallow — tracking failure must never break captions */ }
   } catch (err) {
     console.warn(`[caption-llm] Anthropic call failed (${err.message}) — fallback to template caption`);
     return null;

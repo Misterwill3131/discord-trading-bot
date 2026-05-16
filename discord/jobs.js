@@ -237,6 +237,12 @@ function startScheduler({ client, tradingChannel, sendAlert } = {}) {
     const tickers = (process.env.WATCHED_TICKERS || '')
       .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
     const fmpKey = process.env.FMP_API_KEY || '';
+    // FMP gates WebSocket streams with a SEPARATE API key (per their FAQ:
+    // "WebSocket streams require a dedicated API key"). Prefer
+    // FMP_WS_API_KEY when set ; otherwise fall back to the REST key —
+    // fallback only works if the operator's plan happens to share keys
+    // across both surfaces (most don't, hence the 403s).
+    const fmpWsKey = process.env.FMP_WS_API_KEY || fmpKey;
     const useWs = process.env.FMP_WS_ENABLED === 'true';
     const intervalMin = Math.max(1, parseInt(
       process.env.MARKET_ALERTS_INTERVAL_MIN || '5', 10) || 5);
@@ -249,7 +255,7 @@ function startScheduler({ client, tradingChannel, sendAlert } = {}) {
         const restClient = createFmpClient({ apiKey: fmpKey });
         let marketClient;
         if (useWs) {
-          const wsClient = createFmpWsClient({ apiKey: fmpKey, tickers });
+          const wsClient = createFmpWsClient({ apiKey: fmpWsKey, tickers });
           const maxStalenessMs = Math.max(0, parseInt(
             process.env.FMP_WS_MAX_STALENESS_MS || '900000', 10) || 900000);
           marketClient = createFmpWsMarketClient({

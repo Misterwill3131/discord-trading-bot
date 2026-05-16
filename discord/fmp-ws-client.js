@@ -128,7 +128,27 @@ function createFmpWsClient({
     scheduleReconnect();
   }
 
+  // Auth errors (401 = missing/invalid key, 403 = key valid but plan
+  // lacks WS access — FMP gates streaming with a dedicated WS key)
+  // are not recoverable by reconnecting. Latch `stopped` so further
+  // backoff attempts cease until the process restarts with a fixed
+  // FMP_WS_API_KEY.
+  function isAuthError(err) {
+    const msg = err && err.message ? String(err.message) : '';
+    return /\b(401|403)\b/.test(msg);
+  }
+
   function handleError(err) {
+    if (isAuthError(err)) {
+      stopped = true;
+      if (reconnectHandle) {
+        clearTimeoutImpl(reconnectHandle);
+        reconnectHandle = null;
+      }
+      logger.error('[fmp-ws] auth failure (' + err.message
+        + ') — disabling reconnect. Check FMP_WS_API_KEY (separate from FMP_API_KEY '
+        + 'per FMP docs: WebSocket streams require a dedicated key).');
+    }
     events.emit('error', err);
   }
 

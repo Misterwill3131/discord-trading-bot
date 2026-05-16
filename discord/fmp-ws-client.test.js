@@ -373,3 +373,59 @@ test('getStatus().attemptCount tracks reconnect attempts', () => {
   WS.last().triggerClose(1006, '');
   assert.strictEqual(client.getStatus().attemptCount, 2);
 });
+
+test('auth error (403) latches stopped and prevents further reconnects', () => {
+  const WS = makeMockWebSocketFactory();
+  const clock = makeFakeScheduler();
+  const logger = { log: () => {}, warn: () => {}, error: () => {} };
+  const client = createFmpWsClient({
+    apiKey: 'K', tickers: ['AAPL'], WebSocketImpl: WS, logger,
+    reconnectMinMs: 1000,
+    setTimeoutImpl: clock.setTimeoutImpl, clearTimeoutImpl: clock.clearTimeoutImpl,
+  });
+  client.on('error', () => {});  // swallow emitted errors
+  client.start();
+  // Simulate a close with a pending reconnect, then an auth error arrives.
+  WS.last().triggerClose(1006, '');
+  assert.strictEqual(clock.scheduled.filter(h => !h.cancelled).length, 1);
+  WS.last().triggerError(new Error('Unexpected server response: 403'));
+  // The pending reconnect should be cancelled.
+  assert.strictEqual(clock.scheduled.filter(h => !h.cancelled).length, 0);
+  // A subsequent close must NOT schedule a new reconnect.
+  WS.last().triggerClose(1006, '');
+  assert.strictEqual(clock.scheduled.filter(h => !h.cancelled).length, 0,
+    'auth error should permanently disable reconnect');
+});
+
+test('auth error (401) also latches stopped', () => {
+  const WS = makeMockWebSocketFactory();
+  const clock = makeFakeScheduler();
+  const logger = { log: () => {}, warn: () => {}, error: () => {} };
+  const client = createFmpWsClient({
+    apiKey: 'K', tickers: [], WebSocketImpl: WS, logger,
+    reconnectMinMs: 1000,
+    setTimeoutImpl: clock.setTimeoutImpl, clearTimeoutImpl: clock.clearTimeoutImpl,
+  });
+  client.on('error', () => {});
+  client.start();
+  WS.last().triggerError(new Error('Unexpected server response: 401'));
+  WS.last().triggerClose(1006, '');
+  assert.strictEqual(clock.scheduled.filter(h => !h.cancelled).length, 0);
+});
+
+test('non-auth errors still allow reconnect', () => {
+  const WS = makeMockWebSocketFactory();
+  const clock = makeFakeScheduler();
+  const logger = { log: () => {}, warn: () => {}, error: () => {} };
+  const client = createFmpWsClient({
+    apiKey: 'K', tickers: [], WebSocketImpl: WS, logger,
+    reconnectMinMs: 1000,
+    setTimeoutImpl: clock.setTimeoutImpl, clearTimeoutImpl: clock.clearTimeoutImpl,
+  });
+  client.on('error', () => {});
+  client.start();
+  WS.last().triggerError(new Error('socket hang up'));
+  WS.last().triggerClose(1006, '');
+  // Non-auth error → reconnect still scheduled.
+  assert.strictEqual(clock.scheduled.filter(h => !h.cancelled).length, 1);
+});

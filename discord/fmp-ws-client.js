@@ -6,13 +6,13 @@
 // last-trade message; ignores quote-update (Q) and trade-break (B)
 // messages. Reconnect with exponential backoff handled in Task 3.
 //
-// Protocol (verified empirically 2026-05-16 after /stable/ migration) :
-//   wss://api.financialmodelingprep.com/ws/us-stocks?apikey={k}
-//     (apex financialmodelingprep.com 301-redirects to site.; the actual
-//      WS server is on the `api.` subdomain. Auth happens at HTTP-layer
-//      via query param — without apikey the server returns 401 before
-//      the WS upgrade completes.)
-//   Login:       { event: 'login',     data: { apiKey } }   (legacy, kept for compat)
+// Protocol (verified empirically 2026-05-16 from FMP dashboard internals) :
+//   wss://socket.financialmodelingprep.com/?apikey={k}
+//     (no path. Apex financialmodelingprep.com 301-redirects to site.;
+//      `api.` rejects this route with 403; `socket.` is the real WS host.
+//      Same FMP_API_KEY as REST — no "dedicated WS key" despite the FAQ
+//      wording.)
+//   Login:       { event: 'login',     data: { apiKey } }   (sent on open, legacy)
 //   Subscribe:   { event: 'subscribe', data: { ticker: ['aapl', ...] } }   (lowercase)
 //   Unsubscribe: { event: 'unsubscribe', data: { ticker: [...] } }
 //   Trade msg:   { s: '<ticker>', t: <ms>, type: 'T', lp: <price>, ls: <size> }
@@ -22,7 +22,7 @@
 
 const { EventEmitter } = require('node:events');
 
-const DEFAULT_ENDPOINT = 'wss://api.financialmodelingprep.com/ws/us-stocks';
+const DEFAULT_ENDPOINT = 'wss://socket.financialmodelingprep.com/';
 
 function createFmpWsClient({
   apiKey,
@@ -128,7 +128,26 @@ function createFmpWsClient({
     scheduleReconnect();
   }
 
+  // Auth errors (401 = missing/invalid key, 403 = key valid but plan
+  // lacks WS access) are not recoverable by reconnecting. Latch
+  // `stopped` so further backoff attempts cease until the process
+  // restarts with a fixed key or plan.
+  function isAuthError(err) {
+    const msg = err && err.message ? String(err.message) : '';
+    return /\b(401|403)\b/.test(msg);
+  }
+
   function handleError(err) {
+    if (isAuthError(err)) {
+      stopped = true;
+      if (reconnectHandle) {
+        clearTimeoutImpl(reconnectHandle);
+        reconnectHandle = null;
+      }
+      logger.error('[fmp-ws] auth failure (' + err.message
+        + ') — disabling reconnect. Check FMP_API_KEY (or FMP_WS_API_KEY override) '
+        + 'and that your FMP plan includes WebSocket access.');
+    }
     events.emit('error', err);
   }
 

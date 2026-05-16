@@ -389,3 +389,49 @@ test('getHouseTrades sends correct path and returns trimmed array', async () => 
   assert.ok(capturedUrl.includes('symbol=AAPL'));
   assert.strictEqual(r.length, 1);
 });
+
+// ── getAnalystGradesFeed ─────────────────────────────────────────────────────
+
+test('getAnalystGradesFeed hits v4 upgrades-downgrades-rss-feed with apikey + page', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return {
+      ok: true,
+      status: 200,
+      json: async () => [
+        { symbol: 'AAPL', publishedDate: '2026-05-15T12:00:00Z',
+          gradingCompany: 'Morgan Stanley',
+          newGrade: 'Buy', previousGrade: 'Hold',
+          priceTarget: 200, priceWhenPosted: 180,
+          newsURL: 'https://example.com/article-1', action: 'upgrade' },
+      ],
+    };
+  };
+  const client = createFmpClient({ apiKey: 'TEST', fetchImpl });
+  const rows = await client.getAnalystGradesFeed({ page: 0 });
+  assert.strictEqual(calls.length, 1);
+  assert.match(calls[0], /^https:\/\/financialmodelingprep\.com\/api\/v4\/upgrades-downgrades-rss-feed\?/);
+  assert.match(calls[0], /apikey=TEST/);
+  assert.match(calls[0], /page=0/);
+  assert.strictEqual(rows.length, 1);
+  assert.strictEqual(rows[0].symbol, 'AAPL');
+});
+
+test('getAnalystGradesFeed defaults page to 0 when no argument passed', async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(url);
+    return { ok: true, status: 200, json: async () => [] };
+  };
+  const client = createFmpClient({ apiKey: 'TEST', fetchImpl });
+  await client.getAnalystGradesFeed();
+  assert.match(calls[0], /page=0/);
+});
+
+test('getAnalystGradesFeed returns [] on non-array response', async () => {
+  const fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ error: 'whatever' }) });
+  const client = createFmpClient({ apiKey: 'TEST', fetchImpl });
+  const rows = await client.getAnalystGradesFeed();
+  assert.deepStrictEqual(rows, []);
+});

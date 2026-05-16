@@ -468,6 +468,21 @@ db.exec(`
     discord_message_id  TEXT,
     UNIQUE (ticker, milestone_pct)
   );
+
+  -- Wall Street analyst grade alerts dedup table. Mirrors milestone_alerts
+  -- pattern: INSERT OR IGNORE on event_id PK = atomic mark-then-send.
+  CREATE TABLE IF NOT EXISTS analyst_grade_alerts (
+    event_id    TEXT PRIMARY KEY,
+    ticker      TEXT NOT NULL,
+    ts          TEXT NOT NULL,
+    firm        TEXT NOT NULL,
+    action      TEXT NOT NULL,
+    new_grade   TEXT,
+    prev_grade  TEXT,
+    source      TEXT NOT NULL,
+    fired_at    TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_analyst_grade_alerts_ts ON analyst_grade_alerts(ts);
 `);
 
 db.exec(`
@@ -1545,6 +1560,50 @@ function purgeMarketAlertStateOlderThan(keepDateEt) {
   return stmtPurgeOldAlertState.run(String(keepDateEt)).changes;
 }
 
+// ── analyst_grade_alerts (atomic dedup via PK event_id) ─────────────
+
+const stmtAnalystGradeAlertInsert = db.prepare(`
+  INSERT OR IGNORE INTO analyst_grade_alerts
+    (event_id, ticker, ts, firm, action, new_grade, prev_grade, source, fired_at)
+  VALUES
+    (@event_id, @ticker, @ts, @firm, @action, @new_grade, @prev_grade, @source, @fired_at)
+`);
+
+// Atomic dedup: returns true if this is the first fire for `event_id`,
+// false if the row already existed (= some other tick won the race).
+function markAnalystGradeFired(payload) {
+  const result = stmtAnalystGradeAlertInsert.run({
+    event_id:   String(payload.event_id),
+    ticker:     String(payload.ticker).toUpperCase(),
+    ts:         String(payload.ts),
+    firm:       String(payload.firm),
+    action:     String(payload.action),
+    new_grade:  payload.new_grade == null ? null : String(payload.new_grade),
+    prev_grade: payload.prev_grade == null ? null : String(payload.prev_grade),
+    source:     String(payload.source),
+    fired_at:   String(payload.fired_at),
+  });
+  return result.changes === 1;
+}
+
+// Returns a Set of UPPERCASE tickers currently in the analyst_watchlist
+// table (i.e. mentioned by a Discord analyst within the TTL window).
+// Used by the analyst-grades poller to decide "always alert" tickers.
+const stmtAnalystWatchlistTickers = db.prepare(`
+  SELECT ticker FROM analyst_watchlist WHERE archived_at IS NULL
+`);
+
+function getAnalystWatchlistTickers() {
+  const rows = stmtAnalystWatchlistTickers.all();
+  const set = new Set();
+  for (const row of rows) {
+    if (row && typeof row.ticker === 'string') {
+      set.add(row.ticker.toUpperCase());
+    }
+  }
+  return set;
+}
+
 // ═════════════════════════════════════════════════════════════════════
 //  Site public : plans, customers, customer_sessions, magic_links
 // ═════════════════════════════════════════════════════════════════════
@@ -2280,6 +2339,10 @@ module.exports = {
   alertWasFired,
   markAlertFired,
   purgeMarketAlertStateOlderThan,
+
+  // analyst grade alerts (dedup)
+  markAnalystGradeFired,
+  getAnalystWatchlistTickers,
 
   // Site public — plans (CMS pricing)
   planUpsert,

@@ -212,6 +212,19 @@ function createFmpClient({
     return out;
   }
 
+  // FMP v4 endpoint — different base path from /stable/. Returns the
+  // global feed of recent analyst grade events (upgrades, downgrades,
+  // initiations, reiterations) newest-first. Pagination via `page`
+  // (default 0 → ~100 most recent events). Hardcodes the v4 URL since
+  // the rest of the client may use /stable/ or /v3/ — v4 endpoints
+  // remain accessible across the migration.
+  async function getAnalystGradesFeed({ page = 0 } = {}) {
+    const url = 'https://financialmodelingprep.com/api/v4/upgrades-downgrades-rss-feed?page='
+      + encodeURIComponent(page) + '&apikey=' + encodeURIComponent(apiKey);
+    const json = await httpJson(url);
+    return Array.isArray(json) ? json : [];
+  }
+
   // ── Fundamentals : Ratios TTM ───────────────────────────────────
   async function getRatiosTtm(ticker) {
     const key = String(ticker).toUpperCase();
@@ -383,6 +396,7 @@ function createFmpClient({
     getQuote,
     getDailyBars,
     getQuotesBulk,
+    getAnalystGradesFeed,
     getRatiosTtm,
     getPriceTargetSummary,
     getEarningsSurprises,

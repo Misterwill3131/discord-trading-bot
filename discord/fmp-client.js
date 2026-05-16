@@ -220,8 +220,8 @@ function createFmpClient({
       if (hit.data !== undefined && (now() - hit.ts) < FUNDAMENTALS_TTL_MS) return hit.data;
       if (hit.inflight) return hit.inflight;
     }
-    const url = base + '/ratios-ttm/' + encodeURIComponent(key)
-      + '?apikey=' + encodeURIComponent(apiKey);
+    const url = base + '/ratios-ttm?symbol=' + encodeURIComponent(key)
+      + '&apikey=' + encodeURIComponent(apiKey);
     const inflight = (async () => {
       const json = await httpJson(url);
       return Array.isArray(json) && json.length > 0 ? json[0] : null;
@@ -237,7 +237,7 @@ function createFmpClient({
     }
   }
 
-  // ── Fundamentals : Price Target Summary (v4) ─────────────────────
+  // ── Fundamentals : Price Target Summary ──────────────────────────
   async function getPriceTargetSummary(ticker) {
     const key = String(ticker).toUpperCase();
     const hit = priceTargetCache.get(key);
@@ -245,12 +245,14 @@ function createFmpClient({
       if (hit.data !== undefined && (now() - hit.ts) < FUNDAMENTALS_TTL_MS) return hit.data;
       if (hit.inflight) return hit.inflight;
     }
-    const v4Base = base.replace('/api/v3', '/api/v4');
-    const url = v4Base + '/price-target-summary?symbol=' + encodeURIComponent(key)
+    const url = base + '/price-target-summary?symbol=' + encodeURIComponent(key)
       + '&apikey=' + encodeURIComponent(apiKey);
     const inflight = (async () => {
       const json = await httpJson(url);
-      return json && typeof json === 'object' && !Array.isArray(json) ? json : null;
+      // /stable/ retourne souvent un array d'un seul objet ; on tolère
+      // les deux shapes pour rester robuste si le format change.
+      if (Array.isArray(json)) return json.length > 0 ? json[0] : null;
+      return json && typeof json === 'object' ? json : null;
     })();
     priceTargetCache.set(key, { inflight });
     try {
@@ -263,7 +265,7 @@ function createFmpClient({
     }
   }
 
-  // ── Fundamentals : Earnings Surprises ───────────────────────────
+  // ── Fundamentals : Earnings (actual vs estimate = surprises) ────
   async function getEarningsSurprises(ticker) {
     const key = String(ticker).toUpperCase();
     const hit = earningsCache.get(key);
@@ -271,8 +273,11 @@ function createFmpClient({
       if (hit.data !== undefined && (now() - hit.ts) < FUNDAMENTALS_TTL_MS) return hit.data;
       if (hit.inflight) return hit.inflight;
     }
-    const url = base + '/earnings-surprises/' + encodeURIComponent(key)
-      + '?apikey=' + encodeURIComponent(apiKey);
+    // /stable/ rename : `earnings-surprises` → `earnings` ; le payload
+    // contient eps + estimatedEps, ce qui suffit pour déduire la
+    // surprise côté caller.
+    const url = base + '/earnings?symbol=' + encodeURIComponent(key)
+      + '&apikey=' + encodeURIComponent(apiKey);
     const inflight = (async () => {
       const json = await httpJson(url);
       return Array.isArray(json) ? json : null;
@@ -288,7 +293,7 @@ function createFmpClient({
     }
   }
 
-  // ── Insider Trades (v4) ─────────────────────────────────────────
+  // ── Insider Trades ──────────────────────────────────────────────
   async function getInsiderTrades(ticker, limit = 5) {
     const key = String(ticker).toUpperCase() + '|' + Number(limit);
     const hit = insiderCache.get(key);
@@ -296,8 +301,7 @@ function createFmpClient({
       if (hit.data !== undefined && (now() - hit.ts) < POLITICAL_TTL_MS) return hit.data;
       if (hit.inflight) return hit.inflight;
     }
-    const v4Base = base.replace('/api/v3', '/api/v4');
-    const url = v4Base + '/insider-trading?symbol=' + encodeURIComponent(String(ticker).toUpperCase())
+    const url = base + '/insider-trading/search?symbol=' + encodeURIComponent(String(ticker).toUpperCase())
       + '&limit=' + encodeURIComponent(Number(limit))
       + '&apikey=' + encodeURIComponent(apiKey);
     const inflight = (async () => {
@@ -315,7 +319,7 @@ function createFmpClient({
     }
   }
 
-  // ── Senate Trades (v4) ──────────────────────────────────────────
+  // ── Senate Trades ───────────────────────────────────────────────
   async function getSenateTrades(ticker, limit = 5) {
     const key = String(ticker).toUpperCase();
     const hit = senateCache.get(key);
@@ -328,8 +332,7 @@ function createFmpClient({
         return data ? data.slice(0, Number(limit)) : null;
       }
     }
-    const v4Base = base.replace('/api/v3', '/api/v4');
-    const url = v4Base + '/senate-trading?symbol=' + encodeURIComponent(key)
+    const url = base + '/senate-trades?symbol=' + encodeURIComponent(key)
       + '&apikey=' + encodeURIComponent(apiKey);
     const inflight = (async () => {
       const json = await httpJson(url);
@@ -346,7 +349,7 @@ function createFmpClient({
     }
   }
 
-  // ── House Trades (v4) — endpoint is named /senate-disclosure  ──
+  // ── House Trades ────────────────────────────────────────────────
   async function getHouseTrades(ticker, limit = 5) {
     const key = String(ticker).toUpperCase();
     const hit = houseCache.get(key);
@@ -359,8 +362,7 @@ function createFmpClient({
         return data ? data.slice(0, Number(limit)) : null;
       }
     }
-    const v4Base = base.replace('/api/v3', '/api/v4');
-    const url = v4Base + '/senate-disclosure?symbol=' + encodeURIComponent(key)
+    const url = base + '/house-trades?symbol=' + encodeURIComponent(key)
       + '&apikey=' + encodeURIComponent(apiKey);
     const inflight = (async () => {
       const json = await httpJson(url);

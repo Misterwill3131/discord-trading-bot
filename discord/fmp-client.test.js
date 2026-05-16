@@ -385,7 +385,7 @@ test('getHouseTrades sends correct path and returns trimmed array', async () => 
   };
   const client = createFmpClient({ apiKey: 'KEY', fetchImpl });
   const r = await client.getHouseTrades('AAPL', 5);
-  assert.ok(capturedUrl.includes('/senate-disclosure'));
+  assert.ok(capturedUrl.includes('/house-trades'));
   assert.ok(capturedUrl.includes('symbol=AAPL'));
   assert.strictEqual(r.length, 1);
 });

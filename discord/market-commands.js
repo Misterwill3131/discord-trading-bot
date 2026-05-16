@@ -103,6 +103,8 @@ function createYahooClient({
 
   const quoteCache = new Map();
   const chartCache = new Map();
+  const summaryCache = new Map();   // key = ticker|modules.sorted.join(','), TTL 5min
+  const SUMMARY_TTL_MS = 5 * 60_000;
 
   async function getQuote(ticker) {
     const key = String(ticker).toUpperCase();
@@ -196,7 +198,62 @@ function createYahooClient({
     }
   }
 
-  return { getQuote, getChart, getChartCustom };
+  // ── Yahoo Quote Summary (raw passthrough) ─────────────────────────
+  // Used by market-data orchestrator as a fallback source for fundamentals,
+  // earnings, insider transactions, and analyst targets.
+  async function getQuoteSummary(ticker, modules) {
+    const t = String(ticker).toUpperCase();
+    const sortedMods = Array.from(modules).slice().sort();
+    const key = t + '|' + sortedMods.join(',');
+    const hit = summaryCache.get(key);
+    if (hit) {
+      if (hit.data !== undefined && (now() - hit.ts) < SUMMARY_TTL_MS) return hit.data;
+      if (hit.inflight) return hit.inflight;
+    }
+    const inflight = withTimeout(
+      yahoo.quoteSummary(t, { modules: sortedMods }),
+      timeoutMs,
+    );
+    summaryCache.set(key, { inflight });
+    try {
+      const data = await inflight;
+      summaryCache.set(key, { ts: now(), data });
+      return data;
+    } catch (err) {
+      summaryCache.delete(key);
+      throw err;
+    }
+  }
+
+  // ── Yahoo Earnings History (convenience wrapper) ──────────────────
+  async function getEarningsHistory(ticker) {
+    const summary = await getQuoteSummary(ticker, ['earningsHistory']);
+    const history = summary && summary.earningsHistory && summary.earningsHistory.history;
+    return Array.isArray(history) ? history : null;
+  }
+
+  // ── Yahoo Insider Transactions (convenience wrapper) ──────────────
+  async function getInsiderTransactions(ticker) {
+    const summary = await getQuoteSummary(ticker, ['insiderTransactions']);
+    const tx = summary && summary.insiderTransactions && summary.insiderTransactions.transactions;
+    return Array.isArray(tx) ? tx : null;
+  }
+
+  // ── Yahoo Financial Data (analyst price targets) ──────────────────
+  async function getFinancialData(ticker) {
+    const summary = await getQuoteSummary(ticker, ['financialData']);
+    return summary && summary.financialData ? summary.financialData : null;
+  }
+
+  return {
+    getQuote,
+    getChart,
+    getChartCustom,
+    getQuoteSummary,
+    getEarningsHistory,
+    getInsiderTransactions,
+    getFinancialData,
+  };
 }
 
 // Agrège des bars OHLCV N-par-N : O = premier, H = max, L = min,

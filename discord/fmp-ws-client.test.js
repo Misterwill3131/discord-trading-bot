@@ -41,7 +41,7 @@ test('start() opens the WS at /stable/ endpoint with apikey query param', () => 
   assert.strictEqual(WS.instances.length, 1, 'should construct one WS');
   assert.strictEqual(
     WS.last().url,
-    'wss://api.financialmodelingprep.com/ws/us-stocks?apikey=KEY'
+    'wss://socket.financialmodelingprep.com/?apikey=KEY'
   );
   WS.last().triggerOpen();
   // With empty tickers, only the legacy-compat login event is sent on open.

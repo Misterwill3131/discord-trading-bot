@@ -57,7 +57,7 @@ function renderPrivacy(opts = {}) {
 }
 
 function renderLegalPage(path, title, settingKey, defaultHtml, opts) {
-  const brandName = opts.brandName || 'Trading Signals';
+  const brandName = opts.brandName || 'Temple of Boom';
   // Si l'admin a édité, utiliser la version éditée. Sinon le template
   // par défaut. Le HTML est trusted ici (édité par l'admin uniquement).
   const html = (db.getSetting(settingKey, defaultHtml) || defaultHtml)

@@ -296,8 +296,8 @@ const PUBLIC_CSS = `
 // `content` : HTML du <main>.
 // `opts` : { title, brandName, brandDomain, year, isCustomerLoggedIn }.
 function publicLayoutHTML(activePath, content, opts = {}) {
-  const title = opts.title || 'Trading Signals';
-  const brandName = opts.brandName || 'Trading Signals';
+  const title = opts.title || 'Temple of Boom';
+  const brandName = opts.brandName || 'Temple of Boom';
   const year = opts.year || new Date().getFullYear();
   const accountLink = opts.isCustomerLoggedIn
     ? `<a href="/account" class="ghost">My account</a>`

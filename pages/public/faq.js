@@ -50,7 +50,7 @@ const DEFAULT_FAQ = [
 
 function renderFaq(opts = {}) {
   const faq = db.getSetting('marketing.faq', DEFAULT_FAQ);
-  const brandName = opts.brandName || 'Trading Signals';
+  const brandName = opts.brandName || 'Temple of Boom';
 
   const itemsHtml = faq.map(item => `
     <details class="faq-item">

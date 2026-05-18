@@ -30,7 +30,7 @@ function formatPrice(cents, currency) {
 
 function renderPricing(opts = {}) {
   const plans = db.planList(true); // active only
-  const brandName = opts.brandName || 'Trading Signals';
+  const brandName = opts.brandName || 'Temple of Boom';
 
   const cardsHtml = plans.length === 0
     ? `<div class="card" style="grid-column: 1/-1; text-align: center; color: #a0a0b0;">No plans available yet. Check back soon.</div>`

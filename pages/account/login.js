@@ -8,7 +8,7 @@
 const { publicLayoutHTML, escapeHtml } = require('../common');
 
 function renderAccountLogin(opts = {}) {
-  const brandName = opts.brandName || 'Trading Signals';
+  const brandName = opts.brandName || 'Temple of Boom';
   const error = opts.error ? escapeHtml(opts.error) : null;
   const prefilledEmail = opts.prefilledEmail ? escapeHtml(opts.prefilledEmail) : '';
 

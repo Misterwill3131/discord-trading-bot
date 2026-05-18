@@ -4,8 +4,14 @@
 // Écoute le canal TRADING_CHANNEL et :
 //  1. Stocke TOUS les messages (analystes + bots) dans tracked_messages
 //     pour audit.
-//  2. Si non-bot ET ticker détecté → seed analyst_watchlist avec le prix
-//     mentionné dans le message (ou le prix marché FMP en fallback).
+//  2. Si auteur non-blocklisté ET ticker détecté → seed analyst_watchlist
+//     avec le prix mentionné dans le message (ou le prix marché FMP en
+//     fallback).
+//
+// Filtre d'auteur : env var ANALYST_AUTHOR_BLOCKLIST (CSV de username,
+// tag `Name#1234`, ou ID Discord 17+ chars). Par défaut vide = capture
+// tout le monde, humains + bots. Utile pour exclure les bots de feedback
+// (modération, recap) ou des humains qu'on ne veut pas dans la watchlist.
 //
 // La 1ère mention d'un ticker gagne (INSERT OR IGNORE sur PK ticker).
 // Le module milestone-checker.js consomme cette table via le cron 30 min.
@@ -72,12 +78,48 @@ function channelMatches(channelName) {
   return channelName.toLowerCase().includes(target);
 }
 
+// Parse une CSV de noms/tags/IDs d'auteurs à filtrer du seeding watchlist.
+// Format de chaque entry :
+//   - "Username"           → match case-insensitive sur message.author.username
+//   - "Username#1234"      → match sur le tag complet (legacy + bots Discord)
+//   - "1234567890..."      → 17+ digits → traité comme user ID Discord
+// Espaces autour des entries ignorés. Vide si env var absente/vide.
+function parseAuthorBlocklist(raw) {
+  return String(raw || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+// Retourne true si l'auteur du message est dans la blocklist. La comparaison
+// est case-insensitive sur username et tag. Les entries purement numériques
+// (≥17 chars) sont matchées contre l'ID Discord.
+function isBlockedAuthor(author, blocklist) {
+  if (!author || !Array.isArray(blocklist) || blocklist.length === 0) return false;
+  const username = (author.username || '').toLowerCase();
+  const tag      = (author.tag || '').toLowerCase();
+  const id       = String(author.id || '');
+  for (const entry of blocklist) {
+    const e = entry.toLowerCase();
+    if (/^\d{17,}$/.test(entry) && entry === id) return true;
+    if (e === username) return true;
+    if (e === tag)      return true;
+  }
+  return false;
+}
+
 // Hook FMP injecté pour les tests (par défaut : aucun, le caller injectera
 // via register()). Pas de require global du client réel ici — il a besoin
 // d'une apiKey runtime.
-async function handleMessage(message, { marketClient = null } = {}) {
+async function handleMessage(message, { marketClient = null, authorBlocklist = null } = {}) {
   if (!message || !message.channel || !message.author) return;
   if (!channelMatches(message.channel.name)) return;
+  // Resolve blocklist : option (tests) > env var (prod). On le parse une fois
+  // par message ici car register() ne passe pas explicitement la liste —
+  // l'env var lookup est ~free.
+  const blocklist = Array.isArray(authorBlocklist)
+    ? authorBlocklist
+    : parseAuthorBlocklist(process.env.ANALYST_AUTHOR_BLOCKLIST);
 
   const { text, embedJson } = combinedSearchText(message);
   const content = (message.content || '').slice(0, 4000);
@@ -98,8 +140,12 @@ async function handleMessage(message, { marketClient = null } = {}) {
     createdAt:       Number(message.createdTimestamp) || Date.now(),
   });
 
-  // ── Seeding watchlist : non-bot ET ticker détecté ────────────────
-  if (message.author.bot) return;
+  // ── Seeding watchlist : auteur non-blocklisté ET ticker détecté ──
+  // Avant : on filtrait TOUS les bots (`if (message.author.bot) return;`),
+  // ce qui rejetait ~70% du signal en jetant les relais TrendVision et
+  // autres bots analystes. Maintenant on capture tout sauf ce qui est
+  // explicitement listé dans ANALYST_AUTHOR_BLOCKLIST.
+  if (isBlockedAuthor(message.author, blocklist)) return;
   if (!ticker) return;
 
   let initialPrice = messagePrice;
@@ -173,4 +219,7 @@ module.exports = {
   serializeEmbeds,
   handleMessage,
   register,
+  // exposed for tests
+  parseAuthorBlocklist,
+  isBlockedAuthor,
 };

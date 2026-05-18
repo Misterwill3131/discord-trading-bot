@@ -59,7 +59,12 @@ The bottom of the image has a stats panel (Total Calls, Combined Final, etc.) an
 
 Your task: extract ONLY the TICKER + ENTRY PRICE + HOD PRICE from each row of the main table, plus ALL long-term investments if present. The T1/T2/T3/targets/success columns are auto-computed downstream — DO NOT extract them.
 
-Output STRICTLY this JSON shape (no prose, no markdown fences, no explanation):
+IMPORTANT — Non-recap images: If the image is NOT a TOB TRADE RECAP table (e.g., it's a Discord screenshot, a meme, a chart, a chat, or anything else without the "TOB TRADE RECAP" title + trade table structure), output EXACTLY this single-line JSON and NOTHING ELSE:
+{"not_a_recap": true}
+
+Do NOT explain. Do NOT apologize. Do NOT describe what the image is. Just emit that sentinel JSON.
+
+Otherwise, for valid recap images, output STRICTLY this JSON shape (no prose, no markdown fences, no explanation):
 {
   "dateLabel": "TODAY",
   "trades": [
@@ -165,6 +170,29 @@ async function parseRecapImage(imagePath, opts = {}) {
     text = text.replace(/^```(?:json)?\s*\n/, '').replace(/\n```\s*$/, '').trim();
   }
 
+  // Heuristique défensive : si Claude répond en prose (sans JSON) malgré
+  // le prompt qui exige `{"not_a_recap": true}` pour les non-recaps, on
+  // traite quand même la réponse comme "image non-recap" plutôt que de
+  // throw. Évite que le bot poste "❌ Recap render failed" quand un user
+  // envoie une image quelconque dans le salon marketing-materials.
+  //
+  // Le sentinel `{"not_a_recap": true}` est aussi détecté en aval (cf le
+  // check `parsed.not_a_recap` après JSON.parse). Cette branche-ci ne
+  // gère que le cas où Claude ignore l'instruction et répond en texte.
+  if (!text.startsWith('{') && !text.startsWith('[')) {
+    return {
+      notARecap: true,
+      _meta: {
+        model,
+        latencyMs,
+        imageSizeKB: parseInt(sizeKB, 10),
+        reason: 'prose_response',
+        rawPreview: text.slice(0, 200),
+        usage: response.usage || null,
+      },
+    };
+  }
+
   let parsed;
   try {
     parsed = JSON.parse(text);
@@ -176,6 +204,24 @@ async function parseRecapImage(imagePath, opts = {}) {
   if (!parsed || typeof parsed !== 'object') {
     throw new Error('JSON parsed mais pas un object');
   }
+
+  // Sentinel explicite : Claude a détecté que l'image n'est PAS un recap.
+  // On retourne notARecap=true au lieu de throw, pour que le caller (le
+  // handler Discord) puisse simplement skip + cleanup l'ack message sans
+  // poster d'erreur visible au user.
+  if (parsed.not_a_recap === true || parsed.notARecap === true) {
+    return {
+      notARecap: true,
+      _meta: {
+        model,
+        latencyMs,
+        imageSizeKB: parseInt(sizeKB, 10),
+        reason: 'sentinel',
+        usage: response.usage || null,
+      },
+    };
+  }
+
   if (!Array.isArray(parsed.trades)) {
     throw new Error('Le JSON ne contient pas trades[]');
   }

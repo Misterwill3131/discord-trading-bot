@@ -545,6 +545,13 @@ async function handleRecapImageMessage({ message, channelId, deps = {} }) {
 
     const ocrResult = await _parseRecapImage(tmpPath);
 
+    // L'image n'est PAS un recap (Discord screenshot, meme, chart, etc.).
+    // Le module utils/parse-recap-image.js renvoie {notARecap: true} au
+    // lieu de throw, pour que le listener supprime l'ack et reste silent.
+    if (ocrResult && ocrResult.notARecap === true) {
+      return { skipped: true, reason: 'not_a_recap' };
+    }
+
     if (!ocrResult.trades || ocrResult.trades.length === 0) {
       return { skipped: true, reason: 'ocr_no_trades' };
     }
@@ -608,6 +615,13 @@ function registerRecapImageHandler(client, { channelId } = {}) {
 
       if (result.skipped) {
         console.log(`[recap-image-handler] Skipped: ${result.reason}`);
+        if (result.reason === 'not_a_recap') {
+          // Image quelconque (chat screenshot, meme, etc.) — on supprime
+          // l'ack "🎬 detected" et on sort silencieusement. Aucun message
+          // d'erreur visible au user (request explicite mrwill_ 2026-05).
+          if (ack) await ack.delete().catch(() => {});
+          return;
+        }
         if (ack && result.reason === 'ocr_no_trades') {
           await ack.edit('⚠ OCR didn\'t find any trade rows in that image — make sure it\'s the full recap table.').catch(() => {});
         }

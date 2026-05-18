@@ -31,18 +31,26 @@ async function tickOnce({ db, adapters, webhookUrls, notifyAdmin }) {
     if (!adapter) {
       const err = `no adapter for platform '${job.platform}'`;
       db.markSocialPostJobRetryOrFailed(job.id, err, 1);  // force-fail (no retry for unknown platform)
-      await notifyAdmin(`❌ Habs ${job.platform} #${job.id}: ${err}`);
+      await safeNotify(notifyAdmin, `❌ Habs ${job.platform} #${job.id}: ${err}`);
       continue;
     }
     if (!webhookUrl) {
       const err = `no webhook URL for platform '${job.platform}'`;
       db.markSocialPostJobRetryOrFailed(job.id, err, 1);
-      await notifyAdmin(`❌ Habs ${job.platform} #${job.id}: ${err}`);
+      await safeNotify(notifyAdmin, `❌ Habs ${job.platform} #${job.id}: ${err}`);
       continue;
     }
 
-    // Reconstruct payload from the job row.
-    const cashtags = JSON.parse(job.cashtags_json || '[]');
+    // Reconstruct payload from the job row. Defensive parse : cashtags_json
+    // should always be valid JSON (we wrote it), but a corrupt DB row
+    // shouldn't crash the worker — fall back to empty array.
+    let cashtags = [];
+    try {
+      cashtags = JSON.parse(job.cashtags_json || '[]');
+      if (!Array.isArray(cashtags)) cashtags = [];
+    } catch (err) {
+      console.warn(`[habs:worker] job #${job.id} malformed cashtags_json:`, err.message);
+    }
     const payload = {
       body: job.caption,
       source: 'habs-recap',
@@ -66,13 +74,24 @@ async function tickOnce({ db, adapters, webhookUrls, notifyAdmin }) {
     if (result.retriable) {
       const outcome = db.markSocialPostJobRetryOrFailed(job.id, result.error, MAX_ATTEMPTS);
       if (outcome.status === 'failed') {
-        await notifyAdmin(`❌ Habs ${job.platform} #${job.id} (3 retries exhausted): ${result.error}`);
+        await safeNotify(notifyAdmin, `❌ Habs ${job.platform} #${job.id} (${MAX_ATTEMPTS} retries exhausted): ${result.error}`);
       }
     } else {
       // Permanent failure → force-fail (pass 1 as maxAttempts so attempts >= 1 always fails).
       db.markSocialPostJobRetryOrFailed(job.id, result.error, 1);
-      await notifyAdmin(`❌ Habs ${job.platform} #${job.id}: ${result.error}`);
+      await safeNotify(notifyAdmin, `❌ Habs ${job.platform} #${job.id}: ${result.error}`);
     }
+  }
+}
+
+// Wrapper qui ne propage jamais : si notifyAdmin throws (caller violated
+// the contract), on log et on continue. Évite que la boucle abandonne
+// les jobs lockés en `posting` qui n'ont pas encore été traités.
+async function safeNotify(notifyAdmin, message) {
+  try {
+    await notifyAdmin(message);
+  } catch (err) {
+    console.error('[habs:worker] notifyAdmin threw (ignored):', err && err.message, '|', message);
   }
 }
 

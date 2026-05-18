@@ -203,3 +203,48 @@ test('tickOnce: payload includes caption + cashtags + stats', async () => {
   assert.deepStrictEqual(received.cashtags, ['AAPL', 'TSLA']);
   assert.strictEqual(received.source, 'habs-recap');
 });
+
+test('tickOnce: adapter throws → treated as retriable network error', async () => {
+  const db = makeFakeDb();
+  db.insertSocialPostJob({
+    platform: 'stocktwits', caption: 'x', sourceMessageId: 'm1', ocrHash: 'h1',
+  });
+
+  const notifyCalls = [];
+  const throwingAdapter = async () => { throw new Error('connection reset'); };
+
+  await tickOnce({
+    db,
+    adapters: { stocktwits: throwingAdapter },
+    webhookUrls: { stocktwits: 'https://hooks.zapier.com/catch/x' },
+    notifyAdmin: async (msg) => notifyCalls.push(msg),
+  });
+
+  // First attempt: adapter threw → retriable → status reverts to 'pending'
+  assert.strictEqual(db.jobs[0].status, 'pending');
+  assert.strictEqual(db.jobs[0].attempts, 1);
+  assert.match(db.jobs[0].last_error, /connection reset/);
+  assert.strictEqual(notifyCalls.length, 0);
+});
+
+test('tickOnce: notifyAdmin throwing does not abort the loop', async () => {
+  const db = makeFakeDb();
+  db.insertSocialPostJob({
+    platform: 'stocktwits', caption: 'x', sourceMessageId: 'm1', ocrHash: 'h1',
+  });
+  db.insertSocialPostJob({
+    platform: 'stocktwits', caption: 'y', sourceMessageId: 'm2', ocrHash: 'h2',
+  });
+
+  // Both jobs fail permanently; admin notifier throws on each call. We expect
+  // both jobs to still be marked 'failed' (i.e. the loop did not abort).
+  await tickOnce({
+    db,
+    adapters: makeAdapterMap({ ok: false, retriable: false, error: 'HTTP 400' }),
+    webhookUrls: { stocktwits: 'https://hooks.zapier.com/catch/x' },
+    notifyAdmin: async () => { throw new Error('discord down'); },
+  });
+
+  assert.strictEqual(db.jobs[0].status, 'failed');
+  assert.strictEqual(db.jobs[1].status, 'failed');
+});

@@ -53,6 +53,7 @@ function fakeMessage({
   channelId = 'c1',
   authorId = 'u1',
   authorUsername = 'alice',
+  authorTag = null,  // null = use `${authorUsername}#0`
   bot = false,
   content = '',
   embeds = [],
@@ -61,7 +62,12 @@ function fakeMessage({
   return {
     id,
     channel: { id: channelId, name: channelName },
-    author: { id: authorId, username: authorUsername, bot },
+    author: {
+      id: authorId,
+      username: authorUsername,
+      tag: authorTag || (authorUsername + '#0'),
+      bot,
+    },
     content,
     embeds,
     createdTimestamp: ts,
@@ -122,16 +128,117 @@ test('handleMessage seeds watchlist for non-bot + ticker + price in message', as
   assert.strictEqual(row.first_seen_at, 1700000111111);
 });
 
-test('handleMessage does NOT seed watchlist for bot messages', async () => {
+test('handleMessage seeds watchlist for bot messages by default (no blocklist)', async () => {
   process.env.TRADING_CHANNEL = 'trading-floor';
+  delete process.env.ANALYST_AUTHOR_BLOCKLIST;
   await watchlist.handleMessage(fakeMessage({
-    id: 'seed-bot-1',
+    id: 'seed-bot-default-1',
     bot: true,
+    authorUsername: 'TrendVision',
     content: '$TSLA volume spike at $300',
   }));
-  // Audit OK, but no watchlist entry
-  assert.ok(db.getTrackedMessage('seed-bot-1'));
-  assert.strictEqual(db.getWatchlistEntry('TSLA'), null);
+  // Audit OK + watchlist entry seeded (relay bots are no longer filtered).
+  assert.ok(db.getTrackedMessage('seed-bot-default-1'));
+  const row = db.getWatchlistEntry('TSLA');
+  assert.ok(row, 'bot-authored watchlist entry should be seeded');
+  assert.strictEqual(row.mentioned_by_username, 'TrendVision');
+  assert.strictEqual(row.initial_price, 300);
+});
+
+test('handleMessage does NOT seed watchlist for blocklisted author (by username)', async () => {
+  process.env.TRADING_CHANNEL = 'trading-floor';
+  await watchlist.handleMessage(fakeMessage({
+    id: 'seed-block-username-1',
+    bot: true,
+    authorUsername: 'TrendVision',
+    content: '$AMD breakout at $150',
+  }), { authorBlocklist: ['TrendVision'] });
+  assert.ok(db.getTrackedMessage('seed-block-username-1'));
+  assert.strictEqual(db.getWatchlistEntry('AMD'), null,
+    'blocklisted username should not seed watchlist');
+});
+
+test('handleMessage does NOT seed watchlist for blocklisted author (by tag with discriminator)', async () => {
+  process.env.TRADING_CHANNEL = 'trading-floor';
+  await watchlist.handleMessage(fakeMessage({
+    id: 'seed-block-tag-1',
+    bot: true,
+    authorUsername: 'FrogOracle',
+    authorTag: 'FrogOracle#9417',
+    content: '$NIO target $25',
+  }), { authorBlocklist: ['FrogOracle#9417'] });
+  assert.ok(db.getTrackedMessage('seed-block-tag-1'));
+  assert.strictEqual(db.getWatchlistEntry('NIO'), null,
+    'blocklisted tag should not seed watchlist');
+});
+
+test('handleMessage does NOT seed watchlist for blocklisted author (by Discord ID)', async () => {
+  process.env.TRADING_CHANNEL = 'trading-floor';
+  await watchlist.handleMessage(fakeMessage({
+    id: 'seed-block-id-1',
+    authorId: '123456789012345678',
+    authorUsername: 'SomeBot',
+    bot: true,
+    content: '$INTC at $30',
+  }), { authorBlocklist: ['123456789012345678'] });
+  assert.ok(db.getTrackedMessage('seed-block-id-1'));
+  assert.strictEqual(db.getWatchlistEntry('INTC'), null,
+    'blocklisted user ID should not seed watchlist');
+});
+
+test('handleMessage reads ANALYST_AUTHOR_BLOCKLIST env var when no option passed', async () => {
+  process.env.TRADING_CHANNEL = 'trading-floor';
+  process.env.ANALYST_AUTHOR_BLOCKLIST = 'TrendVision, FrogOracle#9417';
+  try {
+    await watchlist.handleMessage(fakeMessage({
+      id: 'seed-env-1',
+      bot: true,
+      authorUsername: 'TrendVision',
+      content: '$BAC at $40',
+    }));
+    assert.strictEqual(db.getWatchlistEntry('BAC'), null,
+      'env-var blocklist should filter TrendVision');
+  } finally {
+    delete process.env.ANALYST_AUTHOR_BLOCKLIST;
+  }
+});
+
+test('parseAuthorBlocklist trims spaces and drops empty entries', () => {
+  assert.deepStrictEqual(
+    watchlist.parseAuthorBlocklist('TrendVision, FrogOracle#9417 ,, '),
+    ['TrendVision', 'FrogOracle#9417']
+  );
+  assert.deepStrictEqual(watchlist.parseAuthorBlocklist(''), []);
+  assert.deepStrictEqual(watchlist.parseAuthorBlocklist(null), []);
+  assert.deepStrictEqual(watchlist.parseAuthorBlocklist(undefined), []);
+});
+
+test('isBlockedAuthor returns false for empty or missing blocklist', () => {
+  const author = { id: '123', username: 'TrendVision', tag: 'TrendVision#0' };
+  assert.strictEqual(watchlist.isBlockedAuthor(author, []), false);
+  assert.strictEqual(watchlist.isBlockedAuthor(author, null), false);
+  assert.strictEqual(watchlist.isBlockedAuthor(author, undefined), false);
+});
+
+test('isBlockedAuthor matches case-insensitively', () => {
+  const author = { id: '123', username: 'TrendVision', tag: 'TrendVision#0' };
+  assert.strictEqual(watchlist.isBlockedAuthor(author, ['trendvision']), true);
+  assert.strictEqual(watchlist.isBlockedAuthor(author, ['TRENDVISION']), true);
+  assert.strictEqual(watchlist.isBlockedAuthor(author, ['TrendVision']), true);
+});
+
+test('isBlockedAuthor matches by tag for legacy discriminator accounts', () => {
+  const author = { id: '999', username: 'FrogOracle', tag: 'FrogOracle#9417' };
+  assert.strictEqual(watchlist.isBlockedAuthor(author, ['FrogOracle#9417']), true);
+  assert.strictEqual(watchlist.isBlockedAuthor(author, ['FrogOracle#1234']), false,
+    'wrong discriminator should not match');
+});
+
+test('isBlockedAuthor matches by Discord user ID (17+ digits)', () => {
+  const author = { id: '123456789012345678', username: 'SomeBot', tag: 'SomeBot#0' };
+  assert.strictEqual(watchlist.isBlockedAuthor(author, ['123456789012345678']), true);
+  assert.strictEqual(watchlist.isBlockedAuthor(author, ['12345']), false,
+    'short numeric strings are not treated as IDs');
 });
 
 test('handleMessage seeds with market price fallback when message has no price', async () => {

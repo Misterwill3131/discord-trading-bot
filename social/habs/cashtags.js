@@ -11,6 +11,7 @@ function normalizeTicker(t) {
 }
 
 function computeGain(trade) {
+  if (!trade) return null;
   if (trade.gainPct != null && Number.isFinite(Number(trade.gainPct))) {
     return Number(trade.gainPct);
   }
@@ -30,6 +31,8 @@ function topWinners(trades, n = 3) {
       gain: computeGain(t || {}),
       idx,
     }))
+    // Include flatline trades (gain === 0) intentionally — "top moves" can
+    // include zero-move closes when nothing else is greener.
     .filter(x => x.ticker && x.gain != null);
   // Sort by gain desc; ties broken by original idx (stable).
   scored.sort((a, b) => b.gain - a.gain || a.idx - b.idx);

@@ -2117,7 +2117,7 @@ function insertSocialPostJob({
   `);
   const info = stmt.run(
     platform, assetType, assetUrl, assetPath, caption,
-    JSON.stringify(cashtags), sourceKind, sourceMessageId, ocrHash,
+    JSON.stringify(Array.isArray(cashtags) ? cashtags : []), sourceKind, sourceMessageId, ocrHash,
   );
   return info.changes > 0 ? info.lastInsertRowid : null;
 }
@@ -2171,7 +2171,7 @@ function markSocialPostJobRetryOrFailed(id, errorMessage, maxAttempts = 3) {
   // Backoff [1s, 5s, 30s] indexé sur attempts (1-based : déjà incrémenté
   // lors du markPosting). attempt=1 → 1s, attempt=2 → 5s, attempt=3 → 30s.
   const backoff = [1, 5, 30];
-  const seconds = backoff[Math.min(row.attempts - 1, backoff.length - 1)];
+  const seconds = backoff[Math.max(0, Math.min(row.attempts - 1, backoff.length - 1))];
   db.prepare(`
     UPDATE social_post_jobs
     SET status = 'pending', last_error = ?,

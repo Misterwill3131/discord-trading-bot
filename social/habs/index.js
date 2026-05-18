@@ -35,6 +35,10 @@ function llmCaptionFn(ocrResult) {
 
 // Production boot. Wires real DB + real Zapier adapter + real Discord notify.
 async function start(client) {
+  if (_workerHandle) {
+    console.warn('[habs] start() called but worker already running — ignoring');
+    return;
+  }
   const db = require('../../db/sqlite');
   const webhookUrls = {
     stocktwits: process.env.HABS_ZAPIER_STOCKTWITS_WEBHOOK_URL || null,

@@ -9,7 +9,7 @@
 // Cf docs/superpowers/specs/2026-05-18-habs-design.md section 6.
 // ─────────────────────────────────────────────────────────────────────
 
-const { topWinners, normalizeTicker, computeGain } = require('./cashtags');
+const { normalizeTicker, computeGain } = require('./cashtags');
 
 const BANNED_PATTERNS = [
   /https?:\/\//i,

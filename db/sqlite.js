@@ -2181,6 +2181,23 @@ function markSocialPostJobRetryOrFailed(id, errorMessage, maxAttempts = 3) {
   return { status: 'pending', attempts: row.attempts, retryInSeconds: seconds };
 }
 
+// Boot-time recovery : si le bot a crashé entre markPosting et done/retry,
+// le job reste bloqué en 'posting' indéfiniment (getPendingSocialPostJobs
+// ne ramène que les 'pending'). Cette fonction est appelée au boot par
+// social/habs/index.js#start pour reset ces orphelins → 'pending' et
+// permettre au worker de les re-tenter. Idempotent : safe à appeler à
+// chaque boot.
+function resetStuckPostingSocialPostJobs() {
+  const stmt = db.prepare(`
+    UPDATE social_post_jobs
+    SET status = 'pending', last_error = COALESCE(last_error, '') ||
+        (CASE WHEN last_error IS NULL OR last_error = '' THEN '' ELSE ' | ' END) ||
+        'recovered from stuck posting state at boot'
+    WHERE status = 'posting'
+  `);
+  return stmt.run().changes;
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // daily_recaps : idempotence par date pour les recaps auto-déclenchés
 // ─────────────────────────────────────────────────────────────────────
@@ -2518,6 +2535,7 @@ module.exports = {
   markSocialPostJobPosting,
   markSocialPostJobDone,
   markSocialPostJobRetryOrFailed,
+  resetStuckPostingSocialPostJobs,
 
   // daily_recaps (idempotence recap auto-déclenché)
   tryClaimRecapDate,

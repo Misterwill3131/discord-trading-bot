@@ -40,6 +40,16 @@ async function start(client) {
     return;
   }
   const db = require('../../db/sqlite');
+
+  // Recover jobs left in 'posting' state from a previous crash. Without
+  // this, the worker (which only picks up 'pending') would silently skip
+  // them forever. Idempotent — safe to run on every boot.
+  if (typeof db.resetStuckPostingSocialPostJobs === 'function') {
+    const recovered = db.resetStuckPostingSocialPostJobs();
+    if (recovered > 0) {
+      console.log(`[habs] recovered ${recovered} stuck 'posting' jobs to pending`);
+    }
+  }
   const webhookUrls = {
     stocktwits: process.env.HABS_ZAPIER_STOCKTWITS_WEBHOOK_URL || null,
   };

@@ -35,20 +35,28 @@ function toFixed2(n) {
   return (Math.round(Number(n) * 100) / 100).toFixed(2);
 }
 
-// Format compact : `🚀 (AAPL 200.00-240.00) +20% — by @alice`.
-// Le `gainPct` est déductible du couple initial/current, donc on ne
-// l'affiche plus explicitement. Mention `@username` en plain text — le
-// caller met allowedMentions:[] pour empêcher Discord de ping
-// l'utilisateur à chaque palier.
+// Format compact : `🚀 (AAPL 200.00-240.00) +20.00% — by @alice`.
+// Le pourcentage affiché est le gain RÉEL calculé depuis les deux prix
+// (à 2 décimales), pas le palier-bucket — l'utilisateur veut voir la
+// performance réelle (ex: +403.57% si SBFM passe de 0.28 à 1.41), pas
+// `+100%` parce que c'est le seuil qu'on a franchi.
+// `milestonePct` reste dans la signature : utile au caller pour savoir
+// quel palier fire (mark-then-send), mais on ne l'affiche plus.
+// Mention `@username` en plain text — le caller met allowedMentions:[]
+// pour empêcher Discord de ping l'utilisateur à chaque palier.
 function buildAlertMessage({
   ticker, milestonePct, initialPrice, currentPrice, mentionedByUsername,
 }) {
+  void milestonePct;  // explicitly unused — see comment above
   const name = mentionedByUsername || 'analyst';
+  const initial = Number(initialPrice);
+  const current = Number(currentPrice);
+  const gainPct = initial > 0 ? ((current - initial) / initial) * 100 : 0;
   return '🚀 ('
     + ticker + ' '
-    + toFixed2(initialPrice) + '-'
-    + toFixed2(currentPrice) + ') +'
-    + milestonePct + '% — by @' + name;
+    + toFixed2(initial) + '-'
+    + toFixed2(current) + ') +'
+    + toFixed2(gainPct) + '% — by @' + name;
 }
 
 // Parse les paliers depuis l'env var (CSV d'entiers positifs, trié).

@@ -49,7 +49,7 @@ test('nextMilestone handles non-default thresholds', () => {
 
 const { buildAlertMessage } = require('./milestone-checker');
 
-test('buildAlertMessage produces the canonical compact reply', () => {
+test('buildAlertMessage produces the canonical compact reply with actual gain', () => {
   const msg = buildAlertMessage({
     ticker: 'AAPL',
     milestonePct: 20,
@@ -57,7 +57,7 @@ test('buildAlertMessage produces the canonical compact reply', () => {
     currentPrice: 240,
     mentionedByUsername: 'alice',
   });
-  assert.strictEqual(msg, '🚀 (AAPL 200.00-240.00) +20% — by @alice');
+  assert.strictEqual(msg, '🚀 (AAPL 200.00-240.00) +20.00% — by @alice');
 });
 
 test('buildAlertMessage uses fallback username when missing', () => {
@@ -71,7 +71,7 @@ test('buildAlertMessage uses fallback username when missing', () => {
   assert.ok(msg.endsWith('by @analyst'));
 });
 
-test('buildAlertMessage formats decimal prices to 2 places', () => {
+test('buildAlertMessage formats decimal prices and gain to 2 places', () => {
   const msg = buildAlertMessage({
     ticker: 'HOOD',
     milestonePct: 50,
@@ -79,7 +79,22 @@ test('buildAlertMessage formats decimal prices to 2 places', () => {
     currentPrice: 18.555,
     mentionedByUsername: 'bob',
   });
-  assert.strictEqual(msg, '🚀 (HOOD 12.35-18.56) +50% — by @bob');
+  // gain = (18.555 - 12.345) / 12.345 * 100 ≈ 50.30%
+  assert.strictEqual(msg, '🚀 (HOOD 12.35-18.56) +50.30% — by @bob');
+});
+
+test('buildAlertMessage shows actual gain, not the milestone bucket', () => {
+  // SBFM-style real-world case: milestone bucket +100%, but the ticker
+  // actually moved from 0.28 to 1.41 = +403.57%. The display must
+  // reflect the actual move, not the bucket label.
+  const msg = buildAlertMessage({
+    ticker: 'SBFM',
+    milestonePct: 100,
+    initialPrice: 0.28,
+    currentPrice: 1.41,
+    mentionedByUsername: 'traderzz1m',
+  });
+  assert.strictEqual(msg, '🚀 (SBFM 0.28-1.41) +403.57% — by @traderzz1m');
 });
 
 const { tick } = require('./milestone-checker');
@@ -207,7 +222,7 @@ test('tick fires +20 milestone when gain reaches 25%', async () => {
   assert.strictEqual(fakeDb._calls.insertMilestoneAlert.length, 1);
   assert.strictEqual(fakeDb._calls.insertMilestoneAlert[0].milestonePct, 20);
   assert.strictEqual(fakeClient._replies.length, 1);
-  assert.ok(fakeClient._replies[0].content.includes('+20%'));
+  assert.ok(fakeClient._replies[0].content.includes('+25.00%'));
   // updateWatchlistAfterAlert must have been called with the reply id
   assert.strictEqual(fakeDb._calls.updateWatchlistAfterAlert.length, 1);
   assert.strictEqual(fakeDb._calls.updateWatchlistAfterAlert[0].lastMilestonePct, 20);
@@ -406,7 +421,7 @@ test('tick mode reply : env var empty → behaviour inchangé (sourceMsg.reply)'
   });
   assert.strictEqual(fakeClient._replies.length, 1);
   assert.strictEqual(fakeClient._sends.length, 0);
-  assert.ok(fakeClient._replies[0].content.includes('+20%'));
+  assert.ok(fakeClient._replies[0].content.includes('+25.00%'));
   assert.ok(!fakeClient._replies[0].content.includes('📎'));
   assert.strictEqual(fakeDb._calls.updateWatchlistAfterAlert.length, 1);
 });
@@ -431,7 +446,7 @@ test('tick mode canal dédié : env var set → channel.send + lien source', asy
     });
     assert.strictEqual(fakeClient._replies.length, 0);
     assert.strictEqual(fakeClient._sends.length, 1);
-    assert.ok(fakeClient._sends[0].content.includes('+20%'));
+    assert.ok(fakeClient._sends[0].content.includes('+25.00%'));
     assert.ok(fakeClient._sends[0].content.includes(
       '📎 https://discord.com/channels/guild-xyz/chan-1/src-1'
     ));
@@ -466,7 +481,7 @@ test('tick mode canal dédié : source message gone → post sans lien (graceful
     });
     assert.strictEqual(fakeClient._sends.length, 1);
     assert.ok(!fakeClient._sends[0].content.includes('📎'));
-    assert.ok(fakeClient._sends[0].content.includes('+20%'));
+    assert.ok(fakeClient._sends[0].content.includes('+25.00%'));
     assert.strictEqual(fakeDb._calls.updateWatchlistAfterAlert.length, 1);
   } finally {
     delete process.env.MILESTONE_ALERTS_CHANNEL_ID;

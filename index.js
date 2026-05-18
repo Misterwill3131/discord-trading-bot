@@ -438,6 +438,18 @@ client.once('ready', () => {
   console.log('Bot connected as ' + client.user.tag);
   console.log('Listening for channels containing: ' + TRADING_CHANNEL);
   newsPoller.startPolling({ client, channelId: NEWS_CHANNEL_ID });
+
+  // Habs : auto-publish vers réseaux sociaux. Garde-feature flag +
+  // webhook URL required pour activer.
+  if (process.env.HABS_ENABLED !== 'false' && process.env.HABS_ZAPIER_STOCKTWITS_WEBHOOK_URL) {
+    try {
+      require('./social/habs').start(client);
+    } catch (err) {
+      console.error('[habs] start failed:', err.message);
+    }
+  } else {
+    console.log('[habs] disabled (HABS_ENABLED=false or no HABS_ZAPIER_STOCKTWITS_WEBHOOK_URL)');
+  }
 });
 
 // Defensive login : un token invalide/absent ne doit pas tuer le process

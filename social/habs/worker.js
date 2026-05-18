@@ -31,13 +31,13 @@ async function tickOnce({ db, adapters, webhookUrls, notifyAdmin }) {
     if (!adapter) {
       const err = `no adapter for platform '${job.platform}'`;
       db.markSocialPostJobRetryOrFailed(job.id, err, 1);  // force-fail (no retry for unknown platform)
-      await notifyAdmin(`Habs ${job.platform} #${job.id}: ${err}`);
+      await notifyAdmin(`❌ Habs ${job.platform} #${job.id}: ${err}`);
       continue;
     }
     if (!webhookUrl) {
       const err = `no webhook URL for platform '${job.platform}'`;
       db.markSocialPostJobRetryOrFailed(job.id, err, 1);
-      await notifyAdmin(`Habs ${job.platform} #${job.id}: ${err}`);
+      await notifyAdmin(`❌ Habs ${job.platform} #${job.id}: ${err}`);
       continue;
     }
 
@@ -66,12 +66,12 @@ async function tickOnce({ db, adapters, webhookUrls, notifyAdmin }) {
     if (result.retriable) {
       const outcome = db.markSocialPostJobRetryOrFailed(job.id, result.error, MAX_ATTEMPTS);
       if (outcome.status === 'failed') {
-        await notifyAdmin(`Habs ${job.platform} #${job.id} (3 retries exhausted): ${result.error}`);
+        await notifyAdmin(`❌ Habs ${job.platform} #${job.id} (3 retries exhausted): ${result.error}`);
       }
     } else {
       // Permanent failure → force-fail (pass 1 as maxAttempts so attempts >= 1 always fails).
       db.markSocialPostJobRetryOrFailed(job.id, result.error, 1);
-      await notifyAdmin(`Habs ${job.platform} #${job.id}: ${result.error}`);
+      await notifyAdmin(`❌ Habs ${job.platform} #${job.id}: ${result.error}`);
     }
   }
 }

@@ -580,6 +580,21 @@ async function handleRecapImageMessage({ message, channelId, deps = {} }) {
       outputChannelId: channelId,
     }));
 
+    // Habs : auto-publish vers réseaux sociaux (v0.1 = Stocktwits via Zapier).
+    // Non-blocking : si Habs HS ou désactivé, recap Discord continue normal.
+    // Cf docs/superpowers/specs/2026-05-18-habs-design.md.
+    if (process.env.HABS_ENABLED !== 'false') {
+      try {
+        const habs = require('../social/habs');
+        await habs.enqueue({
+          ocrResult,
+          messageId: message.id,
+        });
+      } catch (err) {
+        console.warn(`[recap-image-handler] habs enqueue failed: ${err.message}`);
+      }
+    }
+
     return {
       enqueued: true,
       jobId,

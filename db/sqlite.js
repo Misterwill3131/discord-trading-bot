@@ -524,6 +524,39 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_cost_events_ts      ON cost_events(ts_ms);
   CREATE INDEX IF NOT EXISTS idx_cost_events_service ON cost_events(service, ts_ms);
+
+  -- Habs social-publishing queue. Mirroir de render_jobs pour les posts
+  -- vers réseaux sociaux (v0.1 = Stocktwits via Zapier webhook).
+  -- Dedup atomique via UNIQUE index : impossible de poster 2x le même
+  -- recap (même Discord message_id + même OCR hash → INSERT no-op).
+  --
+  -- Le worker (social/habs/worker.js) tick toutes les ~5s : SELECT
+  -- pending jobs ready, dispatch sur platforms/<platform>.js, applique
+  -- retry backoff [1s, 5s, 30s], puis status='failed' + Discord notif
+  -- admin si tout fail. Cf docs/superpowers/specs/2026-05-18-habs-design.md.
+  CREATE TABLE IF NOT EXISTS social_post_jobs (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    platform            TEXT    NOT NULL,
+    asset_type          TEXT    NOT NULL DEFAULT 'text',
+    asset_url           TEXT,
+    asset_path          TEXT,
+    caption             TEXT    NOT NULL,
+    cashtags_json       TEXT    NOT NULL DEFAULT '[]',
+    source_kind         TEXT    NOT NULL DEFAULT 'recap',
+    source_message_id   TEXT    NOT NULL,
+    ocr_hash            TEXT    NOT NULL,
+    status              TEXT    NOT NULL DEFAULT 'pending',
+    attempts            INTEGER NOT NULL DEFAULT 0,
+    last_error          TEXT,
+    next_attempt_at     TEXT,
+    post_url            TEXT,
+    created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+    posted_at           TEXT
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_social_post_jobs_dedup
+    ON social_post_jobs (platform, source_message_id, ocr_hash);
+  CREATE INDEX IF NOT EXISTS idx_social_post_jobs_pending
+    ON social_post_jobs (status, next_attempt_at);
 `);
 
 // ── Trend module: daily-reference signals — column migrations ─────────
@@ -2059,6 +2092,112 @@ function markRenderJobFailed(id, errorMessage) {
   stmtMarkRenderJobFailed.run(errorMessage || 'unknown error', id);
 }
 
+// ─── Habs social-publishing queue helpers ────────────────────────────
+// Mirroir de render_jobs helpers. Cf docs/superpowers/specs/2026-05-18-habs-design.md.
+
+// Insère un job pending. Retourne l'id inséré ou null si dedup index a
+// bloqué (déjà queue/posté). INSERT OR IGNORE = no-op silencieux en cas
+// de conflit sur (platform, source_message_id, ocr_hash).
+function insertSocialPostJob({
+  platform,
+  assetType = 'text',
+  assetUrl = null,
+  assetPath = null,
+  caption,
+  cashtags = [],
+  sourceKind = 'recap',
+  sourceMessageId,
+  ocrHash,
+}) {
+  const stmt = db.prepare(`
+    INSERT OR IGNORE INTO social_post_jobs
+      (platform, asset_type, asset_url, asset_path, caption,
+       cashtags_json, source_kind, source_message_id, ocr_hash)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const info = stmt.run(
+    platform, assetType, assetUrl, assetPath, caption,
+    JSON.stringify(Array.isArray(cashtags) ? cashtags : []), sourceKind, sourceMessageId, ocrHash,
+  );
+  return info.changes > 0 ? info.lastInsertRowid : null;
+}
+
+// Récupère jusqu'à `limit` jobs pending dont le retry timer est echu.
+// Trie par id ASC (FIFO). Le worker locke ensuite via markSocialPostJobPosting.
+function getPendingSocialPostJobs(limit = 10) {
+  const stmt = db.prepare(`
+    SELECT * FROM social_post_jobs
+    WHERE status = 'pending'
+      AND (next_attempt_at IS NULL OR next_attempt_at <= datetime('now'))
+    ORDER BY id ASC
+    LIMIT ?
+  `);
+  return stmt.all(limit);
+}
+
+// Locke un job en 'posting' (avec UPDATE conditionnel sur status='pending'
+// pour prévenir race entre 2 ticks). Renvoie true si le lock a réussi.
+function markSocialPostJobPosting(id) {
+  const stmt = db.prepare(`
+    UPDATE social_post_jobs
+    SET status = 'posting', attempts = attempts + 1
+    WHERE id = ? AND status = 'pending'
+  `);
+  return stmt.run(id).changes > 0;
+}
+
+function markSocialPostJobDone(id, postUrl = null) {
+  const stmt = db.prepare(`
+    UPDATE social_post_jobs
+    SET status = 'done', posted_at = datetime('now'), post_url = ?
+    WHERE id = ?
+  `);
+  return stmt.run(postUrl, id).changes > 0;
+}
+
+// Re-met le job en pending avec next_attempt_at, OU status='failed' si
+// retry épuisé. Le worker passe maxAttempts (typiquement 3) et l'erreur.
+function markSocialPostJobRetryOrFailed(id, errorMessage, maxAttempts = 3) {
+  const row = db.prepare('SELECT attempts FROM social_post_jobs WHERE id = ?').get(id);
+  if (!row) return { status: null };
+  if (row.attempts >= maxAttempts) {
+    db.prepare(`
+      UPDATE social_post_jobs
+      SET status = 'failed', last_error = ?
+      WHERE id = ?
+    `).run(errorMessage, id);
+    return { status: 'failed', attempts: row.attempts };
+  }
+  // Backoff [1s, 5s, 30s] indexé sur attempts (1-based : déjà incrémenté
+  // lors du markPosting). attempt=1 → 1s, attempt=2 → 5s, attempt=3 → 30s.
+  const backoff = [1, 5, 30];
+  const seconds = backoff[Math.max(0, Math.min(row.attempts - 1, backoff.length - 1))];
+  db.prepare(`
+    UPDATE social_post_jobs
+    SET status = 'pending', last_error = ?,
+        next_attempt_at = datetime('now', '+' || ? || ' seconds')
+    WHERE id = ?
+  `).run(errorMessage, seconds, id);
+  return { status: 'pending', attempts: row.attempts, retryInSeconds: seconds };
+}
+
+// Boot-time recovery : si le bot a crashé entre markPosting et done/retry,
+// le job reste bloqué en 'posting' indéfiniment (getPendingSocialPostJobs
+// ne ramène que les 'pending'). Cette fonction est appelée au boot par
+// social/habs/index.js#start pour reset ces orphelins → 'pending' et
+// permettre au worker de les re-tenter. Idempotent : safe à appeler à
+// chaque boot.
+function resetStuckPostingSocialPostJobs() {
+  const stmt = db.prepare(`
+    UPDATE social_post_jobs
+    SET status = 'pending', last_error = COALESCE(last_error, '') ||
+        (CASE WHEN last_error IS NULL OR last_error = '' THEN '' ELSE ' | ' END) ||
+        'recovered from stuck posting state at boot'
+    WHERE status = 'posting'
+  `);
+  return stmt.run().changes;
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // daily_recaps : idempotence par date pour les recaps auto-déclenchés
 // ─────────────────────────────────────────────────────────────────────
@@ -2389,6 +2528,14 @@ module.exports = {
   getAbGroupedJobs,
   markRenderJobDone,
   markRenderJobFailed,
+
+  // Habs social-publishing queue
+  insertSocialPostJob,
+  getPendingSocialPostJobs,
+  markSocialPostJobPosting,
+  markSocialPostJobDone,
+  markSocialPostJobRetryOrFailed,
+  resetStuckPostingSocialPostJobs,
 
   // daily_recaps (idempotence recap auto-déclenché)
   tryClaimRecapDate,

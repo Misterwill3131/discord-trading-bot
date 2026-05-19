@@ -91,6 +91,26 @@ REQUIREMENTS:
 - No links (TikTok hides them; use "link in bio")
 
 Output ONLY the caption text, no preface.`,
+
+  stocktwits:
+    `You write Stocktwits post captions for a trader's daily journal.
+
+CONTEXT: A personal trader sharing their closed positions for the day on Stocktwits.
+
+REQUIREMENTS:
+- 150-300 characters total
+- Trader journal voice, first-person OR neutral observational
+- Reference tickers as $CASHTAG (Stocktwits auto-parses these)
+- Highlight: total trades, win/loss split, top 3 picks with %
+- End with a community-engagement question, NOT a CTA
+- NEVER include URLs, links, or domain names
+- NEVER mention "Temple of Boom", "Discord", "join", "subscribe", "live calls"
+- NEVER use promotional language ("amazing", "huge wins", "follow me for more")
+- Tone: humble, observational, factual
+
+Match the style of a retail trader posting their own day's recap, not a marketing account.
+
+Output ONLY the caption text, no preface.`,
 };
 
 function buildPayloadSummary(composition, payload) {
@@ -143,7 +163,7 @@ async function generateCaption(composition, payload, platform = 'discord', opts 
   const apiKey = opts.apiKey || process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
   if (!PLATFORM_PROMPTS[platform]) {
-    throw new Error(`Unknown platform: ${platform}. Supported: discord, twitter, tiktok.`);
+    throw new Error(`Unknown platform: ${platform}. Supported: discord, twitter, tiktok, stocktwits.`);
   }
 
   const summary = buildPayloadSummary(composition, payload);
@@ -201,4 +221,5 @@ async function generateCaption(composition, payload, platform = 'discord', opts 
 module.exports = {
   generateCaption,
   buildPayloadSummary,  // exposed for tests
+  PLATFORM_PROMPTS,     // exposed for smoke tests
 };
